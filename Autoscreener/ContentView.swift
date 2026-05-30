@@ -27,9 +27,11 @@ struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 360)
-            Button("Open Settings…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+            SettingsLink {
+                Text("Open Settings…")
             }
+            .keyboardShortcut(",", modifiers: [.command])
+
             Button("I've signed in — recheck") {
                 Task { isSignedIn = await AppDependencies.shared.tokens.load() != nil }
             }

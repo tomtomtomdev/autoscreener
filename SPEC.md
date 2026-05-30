@@ -250,6 +250,17 @@ Bottom toolbar: "Run", "Load more", page indicator, total rows.
 
 ---
 
-## 13. Status
+## 13. Sandbox entitlements
 
-Project skeleton in place (Xcode project, `AutoscreenerApp.swift`, `ContentView.swift`). No feature code yet. Next steps: scaffold the file layout in §2, then implement Auth pipeline (§3), then Screener (§4 + §7).
+`Autoscreener/Autoscreener.entitlements` (wired via `CODE_SIGN_ENTITLEMENTS` in every build config):
+
+| Key | Value | Why |
+|---|---|---|
+| `com.apple.security.app-sandbox` | `true` | matches `ENABLE_APP_SANDBOX = YES` |
+| `com.apple.security.network.client` | `true` | required for any outgoing URLSession traffic — without it `URLSession` returns `NSURLErrorCannotFindHost` ("server with specified name could not be found") in a sandboxed app |
+
+If you ever need to talk to a non-HTTPS host, add a per-host `NSAppTransportSecurity` exception in `Info.plist`. We don't — all Stockbit endpoints are HTTPS.
+
+## 14. Status
+
+Auth pipeline (§3), Settings sign-in UI (§6), and Screener feature (§4 + §7) all shipped and tested (25 unit tests + UI smoke). Sandbox network-client entitlement added. App is launchable and signs in against the real `exodus.stockbit.com` backend. Open items remain in §12 (response-shape confirmation, paywall handling, full metric catalog).
