@@ -11,7 +11,7 @@ final class AppDependencies {
     var isSignedInSync: Bool {
         // Synchronous Keychain probe for initial view state.
         (tokens as? KeychainTokenStore).map { _ in
-            var query: [String: Any] = [
+            let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: "com.tom.tom.tom.Autoscreener",
                 kSecAttrAccount as String: "stockbit-tokens",
@@ -25,8 +25,9 @@ final class AppDependencies {
 
     private init() {
         let store = KeychainTokenStore()
-        let login = LoginService(tokens: store)
-        let client = APIClient(tokens: store)
+        let session = LoggingHTTPSession(URLSession.shared)
+        let login = LoginService(session: session, tokens: store)
+        let client = APIClient(session: session, tokens: store)
 
         self.tokens = store
         self.loginService = login
