@@ -13,5 +13,8 @@ struct AutoscreenerApp: App {
         WindowGroup {
             ContentView()
         }
+        Settings {
+            SettingsView()
+        }
     }
 }
