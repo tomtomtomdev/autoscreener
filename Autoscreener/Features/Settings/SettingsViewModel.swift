@@ -34,6 +34,8 @@ final class SettingsViewModel {
             isSignedIn = true
         } catch LoginError.invalidCredentials {
             error = "Invalid username or password."
+        } catch LoginError.deviceVerificationRequired {
+            error = "New device detected. Open the Stockbit mobile app, verify this device, then try again."
         } catch LoginError.malformedResponse {
             error = "Unexpected server response. Please try again."
         } catch LoginError.network(let detail) {

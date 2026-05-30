@@ -99,6 +99,19 @@ final class StubSession: HTTPSession, @unchecked Sendable {
         #expect(pair.refreshToken == "R")
     }
 
+    @Test func mapsMultiFactorEnvelopeToDeviceVerification() async {
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"""
+            {"message":"You have been successfully logged in","data":{"new_device":{"multi_factor":{"login_token":"L","verification_token":"V"}}}}
+            """#.utf8)
+        )])
+        let svc = LoginService(session: session, tokens: InMemoryTokenStore())
+        await #expect(throws: LoginError.deviceVerificationRequired) {
+            try await svc.login(user: "u", password: "p")
+        }
+    }
+
     @Test func mapsHttp401ToInvalidCredentials() async {
         let session = StubSession([.init(status: 401, body: Data())])
         let svc = LoginService(session: session, tokens: InMemoryTokenStore())

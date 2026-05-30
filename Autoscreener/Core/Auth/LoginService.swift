@@ -4,6 +4,7 @@ nonisolated enum LoginError: Error, Equatable {
     case invalidCredentials
     case network(String)
     case malformedResponse
+    case deviceVerificationRequired
 }
 
 nonisolated protocol LoginServicing: Sendable {
@@ -58,6 +59,13 @@ nonisolated final class LoginService: LoginServicing {
         }
         switch http.statusCode {
         case 200..<300:
+            // Stockbit returns 200 even when MFA / new-device verification is required.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let payload = json["data"] as? [String: Any],
+               let newDevice = payload["new_device"] as? [String: Any],
+               newDevice["multi_factor"] != nil {
+                throw LoginError.deviceVerificationRequired
+            }
             do {
                 let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
                 return TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
