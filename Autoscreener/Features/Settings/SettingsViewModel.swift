@@ -33,13 +33,16 @@ final class SettingsViewModel {
     private let loginService: any LoginServicing
     private let verificationService: any DeviceVerificationServicing
     private let tokens: any TokenStoring
+    private let authState: AuthState?
 
     init(loginService: any LoginServicing,
          verificationService: any DeviceVerificationServicing,
-         tokens: any TokenStoring) {
+         tokens: any TokenStoring,
+         authState: AuthState? = nil) {
         self.loginService = loginService
         self.verificationService = verificationService
         self.tokens = tokens
+        self.authState = authState
         Task { await refreshSignedInState() }
     }
 
@@ -59,6 +62,7 @@ final class SettingsViewModel {
             case .authenticated:
                 password = ""
                 phase = .signedIn
+                authState?.setSignedIn()
             case .needsDeviceVerification(let loginToken, let verificationToken):
                 password = ""
                 let state = VerificationState(loginToken: loginToken, verificationToken: verificationToken)
@@ -82,6 +86,7 @@ final class SettingsViewModel {
         password = ""
         error = nil
         phase = .signIn
+        authState?.setSignedOut()
     }
 
     func updateOTP(_ value: String) {
@@ -177,6 +182,7 @@ final class SettingsViewModel {
             let pair = try await verificationService.completeNewDevice(loginToken: state.loginToken)
             await loginService.storeTokens(pair)
             phase = .signedIn
+            authState?.setSignedIn()
         } catch DeviceVerificationError.challengeExpired {
             phase = .signIn
             error = "Verification challenge expired. Please sign in again."
@@ -194,6 +200,7 @@ final class SettingsViewModel {
     private func refreshSignedInState() async {
         if await tokens.load() != nil {
             phase = .signedIn
+            authState?.setSignedIn()
         }
     }
 

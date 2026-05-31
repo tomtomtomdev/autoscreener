@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ScreenerView: View {
     @State private var vm: ScreenerViewModel
+    @State private var log = NetworkLog.shared
+    @State private var showingLogs = false
 
     init() {
         let deps = AppDependencies.shared
@@ -25,6 +27,19 @@ struct ScreenerView: View {
         }
         .frame(minWidth: 720, minHeight: 480)
         .task { await vm.autoRunIfNeeded() }
+        .sheet(isPresented: $showingLogs) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Network log").font(.title3).fontWeight(.semibold)
+                    Spacer()
+                    Button("Done") { showingLogs = false }
+                        .keyboardShortcut(.cancelAction)
+                }
+                NetworkLogPanel(log: log)
+            }
+            .padding()
+            .frame(minWidth: 700, idealWidth: 820, minHeight: 480, idealHeight: 600)
+        }
     }
 
     private var toolbar: some View {
@@ -37,6 +52,12 @@ struct ScreenerView: View {
             if vm.isLoading {
                 ProgressView().controlSize(.small)
             }
+            Button {
+                showingLogs = true
+            } label: {
+                Label("Logs (\(log.entries.count))", systemImage: "doc.text.magnifyingglass")
+            }
+            .keyboardShortcut("l", modifiers: [.command])
             Button("Refresh") { Task { await vm.refresh() } }
                 .keyboardShortcut("r", modifiers: [.command])
                 .disabled(vm.isLoading)

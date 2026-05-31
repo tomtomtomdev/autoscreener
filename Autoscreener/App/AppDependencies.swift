@@ -9,23 +9,9 @@ final class AppDependencies {
     let paywallService: any PaywallServicing
     let screenerTemplateService: any ScreenerTemplateServicing
     let screenerService: any ScreenerServicing
+    let authState = AuthState()
 
     static let shared = AppDependencies()
-
-    var isSignedInSync: Bool {
-        // Synchronous Keychain probe for initial view state.
-        (tokens as? KeychainTokenStore).map { _ in
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: "com.tom.tom.tom.Autoscreener",
-                kSecAttrAccount as String: "stockbit-tokens",
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
-            var item: CFTypeRef?
-            return SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess
-        } ?? false
-    }
 
     private init() {
         let store = KeychainTokenStore()

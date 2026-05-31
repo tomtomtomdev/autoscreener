@@ -1,18 +1,24 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var isSignedIn: Bool = AppDependencies.shared.isSignedInSync
+    @State private var auth = AppDependencies.shared.authState
 
     var body: some View {
         Group {
-            if isSignedIn {
+            switch auth.phase {
+            case .unknown:
+                ProgressView("Checking session…")
+                    .frame(minWidth: 480, minHeight: 320)
+            case .signedIn:
                 ScreenerView()
-            } else {
+            case .signedOut:
                 signInPrompt
             }
         }
         .task {
-            isSignedIn = await AppDependencies.shared.tokens.load() != nil
+            if auth.phase == .unknown {
+                auth.phase = await AppDependencies.shared.tokens.load() != nil ? .signedIn : .signedOut
+            }
         }
     }
 
@@ -31,10 +37,6 @@ struct ContentView: View {
                 Text("Open Settings…")
             }
             .keyboardShortcut(",", modifiers: [.command])
-
-            Button("I've signed in — recheck") {
-                Task { isSignedIn = await AppDependencies.shared.tokens.load() != nil }
-            }
         }
         .padding(40)
         .frame(minWidth: 480, minHeight: 320)
