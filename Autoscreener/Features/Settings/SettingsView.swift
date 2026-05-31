@@ -11,7 +11,7 @@ struct SettingsView: View {
             verificationService: deps.deviceVerificationService,
             tokens: deps.tokens,
             authState: deps.authState,
-            autoRehydrate: !ProcessInfo.processInfo.isRunningUnitTests
+            autoRehydrate: !ProcessInfo.processInfo.isRunningTests
         ))
     }
 

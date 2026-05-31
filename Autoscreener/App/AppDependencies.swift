@@ -1,12 +1,17 @@
 import Foundation
 
 extension ProcessInfo {
-    /// True when the current process was launched by xctest. Xcode sets
-    /// `XCTestConfigurationFilePath` in the host-app environment when bundling
-    /// unit tests, so we use it to skip Keychain reads that would otherwise
-    /// re-prompt for ACL trust on every fresh Debug build.
-    var isRunningUnitTests: Bool {
+    /// True when the current process was launched by xctest **or** by a UI test
+    /// runner. We skip Keychain reads in both cases — every fresh Debug build
+    /// changes the binary's code-sign hash, which makes `SecItemCopyMatching`
+    /// prompt to re-trust the saved entry.
+    ///
+    /// - Unit tests: Xcode sets `XCTestConfigurationFilePath` on the host process.
+    /// - UI tests: the SUT is a separate process that doesn't inherit that env
+    ///   var, so the runner passes `-UITesting` as a launch argument instead.
+    var isRunningTests: Bool {
         environment["XCTestConfigurationFilePath"] != nil
+            || arguments.contains("-UITesting")
     }
 }
 

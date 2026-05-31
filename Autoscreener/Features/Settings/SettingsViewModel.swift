@@ -45,9 +45,9 @@ final class SettingsViewModel {
         self.tokens = tokens
         self.authState = authState
         // The production SettingsView passes `autoRehydrate: false` while running under
-        // xctest so the host-app boot doesn't fire SecItemCopyMatching, which would
-        // re-prompt for Keychain ACL trust on every fresh Debug build. Unit tests
-        // construct directly and accept the default (true) so phase hydrates properly.
+        // any test runner (xctest host or UI-test SUT) so the host-app boot doesn't fire
+        // SecItemCopyMatching, which would re-prompt for Keychain ACL trust on every
+        // fresh Debug build. Unit tests construct directly and accept the default (true).
         if autoRehydrate {
             Task { await refreshSignedInState() }
         }

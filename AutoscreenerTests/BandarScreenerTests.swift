@@ -102,6 +102,32 @@ import Testing
         #expect(result.config.universe == .ihsg)
         #expect(result.page.rows.isEmpty)
     }
+
+    /// Regression: when the GET response ships only rows (no template metadata),
+    /// the parser must use a templateID-specific filter default — not a single shared
+    /// canned set. Otherwise bandar-above-ma20's page 2+ POSTs run with bandar-accumulating's
+    /// 2-filter set and silently cap the results at bandar-accumulating's total.
+    @Test func parseChoosesTemplateSpecificFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        // Real-world Stockbit GET response: just data.calcs, no template field.
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let accumulating = try await svc.load(templateID: "6676213")
+        let aboveMA20    = try await svc.load(templateID: "6676217")
+
+        // bandar-accumulating: compare (value > MA20) + basic (value > 0) = 2 filters
+        #expect(accumulating.config.filters.count == 2)
+        // bandar-above-ma20: compare-only = 1 filter (this is the "less criteria" the
+        // sidebar advertises). With the wrong fallback, this would be 2.
+        #expect(aboveMA20.config.filters.count == 1)
+        #expect(aboveMA20.config.filters.first?.type == .compare)
+    }
 }
 
 // MARK: - ScreenerService row enrichment
@@ -206,9 +232,15 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
             page: ScreenerPage(rows: [], total: 0, page: 1)
         )
     }())
+    /// When non-nil, takes precedence over `result` — returns the entry whose key matches
+    /// the requested templateID. Lets a single fake serve multiple screeners.
+    var resultsByTemplateID: [String: Result<ScreenerInitialResult, Error>]?
     private(set) var loadCalls: [String] = []
     func load(templateID: String) async throws -> ScreenerInitialResult {
         loadCalls.append(templateID)
+        if let byID = resultsByTemplateID, let scoped = byID[templateID] {
+            return try scoped.get()
+        }
         return try result.get()
     }
 }
@@ -379,22 +411,21 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         #expect(paywall.incrementCalls.count == 1)
     }
 
-    @Test func templateLoadFailureFallsBackToPOSTPage1WithCannedConfig() async {
+    @Test func templateLoadFailureSurfacesErrorWithoutPOSTFallback() async {
+        // The canned ScreenerConfig() defaults match bandar-accumulating only, so falling
+        // back to POST for any other templateID would silently leak bandar-accumulating's
+        // rows. Surface an error instead — no implicit POST.
         let paywall = FakePaywallService()
         let templates = FakeTemplateService()
         templates.result = .failure(ScreenerError.malformedResponse)
         let svc = FakeScreenerService()
-        svc.outcomes = [.success(ScreenerPage(rows: [
-            ScreenerRow(symbol: "X", name: "X", values: [1, 2], lastPrice: nil, pctChange: nil),
-        ], total: 1, page: 1))]
         let vm = ScreenerViewModel(service: svc, paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
 
-        #expect(vm.config.name == "bandar-accumulating") // canned default
-        #expect(svc.calls.count == 1)                    // POST was used as a fallback
-        #expect(svc.calls.first?.page == 1)
-        #expect(vm.rows.count == 1)
+        #expect(svc.calls.isEmpty)
+        #expect(vm.rows.isEmpty)
+        #expect(vm.error != nil)
     }
 
     @Test func bootstrapAppliesTemplateSortOrderToReturnedRows() async {
@@ -425,5 +456,75 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
 
         #expect(vm.paywallMessage == "Upgrade to use the screener.")
         #expect(vm.rows.count == 1) // still attempts; server-side will gate if needed
+    }
+
+    /// Regression: two ScreenerViewModels for different screeners must keep independent
+    /// rows after bootstrap. If switching tabs accidentally shared state, bandar-above-ma20
+    /// would surface bandar-accumulating's rows (and counts).
+    @Test func twoScreenerVMsBootstrapIndependentlyByTemplateID() async {
+        func config(named name: String, screenerID: String) -> ScreenerConfig {
+            var c = ScreenerConfig()
+            c.name = name
+            c.screenerID = screenerID
+            c.sequence = [14399, 14426]
+            c.orderColumn = 2
+            c.orderType = "desc"
+            return c
+        }
+        let templates = FakeTemplateService()
+        templates.resultsByTemplateID = [
+            "6676213": .success(ScreenerInitialResult(
+                config: config(named: "bandar-accumulating", screenerID: "6676213"),
+                page: ScreenerPage(
+                    rows: (0..<25).map { ScreenerRow(symbol: "ACC\($0)", name: "A", values: [Double(100 - $0), 0], lastPrice: nil, pctChange: nil) },
+                    total: 120, page: 1
+                ))),
+            "6676217": .success(ScreenerInitialResult(
+                config: config(named: "bandar-above-ma20", screenerID: "6676217"),
+                page: ScreenerPage(
+                    rows: (0..<3).map { ScreenerRow(symbol: "ABV\($0)", name: "B", values: [Double(10 - $0), 0], lastPrice: nil, pctChange: nil) },
+                    total: 3, page: 1
+                ))),
+        ]
+        let svc = FakeScreenerService()
+        let accumVM = ScreenerViewModel(service: svc, paywall: FakePaywallService(),
+                                        templates: templates, templateID: "6676213")
+        let aboveVM = ScreenerViewModel(service: svc, paywall: FakePaywallService(),
+                                        templates: templates, templateID: "6676217")
+
+        await accumVM.autoRunIfNeeded()
+        await aboveVM.autoRunIfNeeded()
+
+        #expect(templates.loadCalls == ["6676213", "6676217"])
+        #expect(accumVM.rows.count == 25)
+        #expect(aboveVM.rows.count == 3)
+        #expect(accumVM.config.screenerID == "6676213")
+        #expect(aboveVM.config.screenerID == "6676217")
+        #expect(accumVM.rows.first?.symbol.hasPrefix("ACC") == true)
+        #expect(aboveVM.rows.first?.symbol.hasPrefix("ABV") == true)
+    }
+
+    /// Regression: when the GET template+page1 path fails for a non-default screener
+    /// (e.g. bandar-above-ma20 / 6676217), bootstrap must NOT silently POST with the
+    /// canned `ScreenerConfig()` defaults (which are bandar-accumulating's filters and
+    /// screenerID). Otherwise both screeners surface bandar-accumulating's data whenever
+    /// the GET path fails.
+    @Test func templateLoadFailureForNonDefaultTemplateDoesNotLeakBandarAccumulatingRows() async {
+        let paywall = FakePaywallService()
+        let templates = FakeTemplateService()
+        templates.result = .failure(ScreenerError.malformedResponse)
+        let svc = FakeScreenerService()
+        svc.outcomes = [.success(ScreenerPage(rows: [
+            ScreenerRow(symbol: "ACCUM_LEAK", name: "leak", values: [1, 2], lastPrice: nil, pctChange: nil),
+        ], total: 1, page: 1))]
+        let vm = ScreenerViewModel(service: svc, paywall: paywall,
+                                   templates: templates, templateID: "6676217")
+
+        await vm.autoRunIfNeeded()
+
+        // No silent fallback to POST with bandar-accumulating's canned filters.
+        #expect(svc.calls.isEmpty)
+        #expect(vm.rows.isEmpty)
+        #expect(vm.error != nil)
     }
 }

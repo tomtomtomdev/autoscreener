@@ -71,7 +71,7 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         var config = ScreenerConfig()
         config.name = name
         config.description = description
-        config.filters = filters.isEmpty ? ScreenerFilter.bandarValueAboveMA20 : filters
+        config.filters = filters.isEmpty ? defaultFilters(forTemplateID: templateID) : filters
         config.universe = universe
         config.sequence = sequence.isEmpty ? [14399, 14426] : sequence
         config.orderColumn = orderColumn
@@ -79,6 +79,18 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         config.limit = limit
         config.screenerID = templateID
         return config
+    }
+
+    /// Picks the per-screener filter set used when the GET response doesn't carry
+    /// template metadata. The Stockbit `GET /screener/templates/{id}` ships only
+    /// `data.calcs` (rows) in production — without templateID-aware defaults, every
+    /// screener inherits bandar-accumulating's 2 filters and page-2+ POSTs collapse
+    /// to bandar-accumulating's results.
+    private static func defaultFilters(forTemplateID id: String) -> [ScreenerFilter] {
+        switch id {
+        case "6676217": return ScreenerFilter.bandarAboveMA20
+        default:        return ScreenerFilter.bandarAccumulating
+        }
     }
 
     /// Walk the tree to find the dict that carries the screener template fields.

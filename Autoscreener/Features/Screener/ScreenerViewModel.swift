@@ -89,8 +89,12 @@ final class ScreenerViewModel {
                 error = "Session expired. Please sign in again."
                 return
             } catch {
-                // Fall through to POST-based run with the canned config.
+                // No silent POST fallback: the canned ScreenerConfig() defaults are
+                // bandar-accumulating's filters/screenerID, so falling back for any
+                // other templateID would silently surface bandar-accumulating's rows.
                 isLoading = false
+                self.error = "Couldn't load screener configuration."
+                return
             }
         }
         await run()

@@ -28,7 +28,9 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
         case type, operator_ = "operator", item1, item1_name, item2, item2_name, multiplier
     }
 
-    static let bandarValueAboveMA20: [ScreenerFilter] = [
+    /// Bandar Accumulating (templateID 6676213): Bandar Value > Bandar Value MA20 **and**
+    /// Bandar Value > 0. The basic > 0 filter excludes negative accumulation.
+    static let bandarAccumulating: [ScreenerFilter] = [
         .init(type: .compare,
               operator_: ">",
               item1: 14399, item1_name: "Bandar Value",
@@ -40,11 +42,21 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "0", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Bandar Above MA20 (templateID 6676217): Bandar Value > Bandar Value MA20 only.
+    /// One fewer filter than `bandarAccumulating` — fewer criteria, more matches.
+    static let bandarAboveMA20: [ScreenerFilter] = [
+        .init(type: .compare,
+              operator_: ">",
+              item1: 14399, item1_name: "Bandar Value",
+              item2: "14426", item2_name: "Bandar Value MA 20",
+              multiplier: "1"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Sendable {
     var name: String = "bandar-accumulating"
-    var filters: [ScreenerFilter] = ScreenerFilter.bandarValueAboveMA20
+    var filters: [ScreenerFilter] = ScreenerFilter.bandarAccumulating
     var universe: ScreenerUniverse = .ihsg
     var sequence: [Int] = [14399, 14426]
     var orderColumn: Int = 2
