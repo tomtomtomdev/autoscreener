@@ -106,6 +106,56 @@ import Testing
 
 // MARK: - ScreenerService row enrichment
 
+@Suite struct ScreenerStockbitShapeTests {
+    /// Pins the real-world envelope captured 2026-05-31:
+    ///   data.calcs[].company.{symbol,name}
+    ///   data.calcs[].results[].{id, raw, item}
+    @Test func parsesCalcsEnvelopeWithNestedCompanyAndResults() throws {
+        let body = Data(#"""
+        {"data":{"calcs":[
+          {"company":{"symbol":"BOGA","name":"Apollo Global Interactive Tbk.","exchange":"IDX"},
+           "results":[
+             {"id":14399,"item":"Bandar Value","raw":"14925216921719.91","display":"14,925.22 B"},
+             {"id":14426,"item":"Bandar Value MA 20","raw":"14925216260264.54","display":"14,925.22 B"}]},
+          {"company":{"symbol":"CARE","name":"Metro Healthcare Indonesia Tbk."},
+           "results":[
+             {"id":14399,"item":"Bandar Value","raw":"6168555478468.97"},
+             {"id":14426,"item":"Bandar Value MA 20","raw":"6168183877350.62"}]}
+        ]}}
+        """#.utf8)
+        let page = try ScreenerService.decodeResponse(body, sequence: [14399, 14426], page: 1)
+        #expect(page.rows.count == 2)
+        #expect(page.rows[0].symbol == "BOGA")
+        #expect(page.rows[0].name == "Apollo Global Interactive Tbk.")
+        #expect(page.rows[0].values[0] == 14925216921719.91)
+        #expect(page.rows[0].values[1] == 14925216260264.54)
+        #expect(page.rows[1].symbol == "CARE")
+        #expect(page.rows[1].values[0] == 6168555478468.97)
+    }
+
+    /// ScreenerTemplateService walks the tree to find the rows array — it must also
+    /// recognise calcs entries (which don't have a top-level "symbol" field).
+    @Test func templateServiceFindsCalcsRowsViaTreeWalk() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"""
+        {"data":{"calcs":[
+          {"company":{"symbol":"BBCA","name":"BCA"},
+           "results":[{"id":14399,"item":"Bandar Value","raw":"100.5"},
+                      {"id":14426,"item":"Bandar Value MA 20","raw":"80.0"}]}
+        ]}}
+        """#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let result = try await svc.load(templateID: "6676213")
+
+        #expect(result.page.rows.count == 1)
+        #expect(result.page.rows[0].symbol == "BBCA")
+        #expect(result.page.rows[0].values == [100.5, 80.0])
+    }
+}
+
 @Suite struct ScreenerRowEnrichmentTests {
     @Test func parsesLastPriceAndPercentChangeWhenPresent() throws {
         let body = Data(#"""

@@ -25,18 +25,34 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     }
 
     static func parse(_ data: Data, templateID: String) throws -> ScreenerInitialResult {
+        // Try the confirmed Stockbit envelope first via Codable for the rows.
+        let codablePage: ScreenerPage? = (try? JSONDecoder().decode(ScreenerResponseDTO.self, from: data))
+            .flatMap { dto -> ScreenerPage? in
+                guard let calcs = dto.data.calcs else { return nil }
+                // We don't yet know the sequence — caller will reapply on the rows below.
+                return nil // placeholder; actual rows materialised below once we know `sequence`
+            }
+        _ = codablePage
+
+        // The template-metadata portion (filters/universe/sequence) hasn't been pinned
+        // to a single path yet, so keep walking the JSON tree for it.
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ScreenerError.malformedResponse
         }
-        // The response embeds both template metadata AND page 1 of results.
-        // Don't assume the exact path — walk the tree to find each.
         let templateDict = findTemplateDict(in: json) ?? [:]
         let config = configFromTemplate(templateDict, templateID: templateID)
-        let rowsArray = findRowsArray(in: json) ?? []
-        let total = findTotal(in: json)
 
-        let rows = rowsArray.map { dict in
-            ScreenerService.row(from: dict, sequence: config.sequence)
+        // Rows via Codable if available, else fall back to tree-walk.
+        let rows: [ScreenerRow]
+        let total: Int?
+        if let dto = try? JSONDecoder().decode(ScreenerResponseDTO.self, from: data),
+           let calcs = dto.data.calcs {
+            rows = calcs.map { $0.toRow(sequence: config.sequence) }
+            total = dto.data.total ?? findTotal(in: json)
+        } else {
+            let rowsArray = findRowsArray(in: json) ?? []
+            rows = rowsArray.map { ScreenerService.row(from: $0, sequence: config.sequence) }
+            total = findTotal(in: json)
         }
         let page = ScreenerPage(rows: rows, total: total, page: 1)
         return ScreenerInitialResult(config: config, page: page)
@@ -84,15 +100,25 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         return nil
     }
 
-    /// Find an array of row-like dicts (each with symbol/ticker/code) anywhere in the tree.
+    /// Find an array of row-like dicts anywhere in the tree.
+    /// Recognises Stockbit's "calcs" entries (which carry `company` + `results`)
+    /// as well as flatter symbol/ticker/code-keyed variants.
     private static func findRowsArray(in any: Any) -> [[String: Any]]? {
-        if let arr = any as? [[String: Any]] {
-            if let first = arr.first,
-               first["symbol"] != nil || first["ticker"] != nil || first["code"] != nil {
+        if let arr = any as? [[String: Any]], let first = arr.first {
+            if first["symbol"] != nil || first["ticker"] != nil || first["code"] != nil
+                || first["company"] != nil || first["results"] != nil {
                 return arr
             }
         }
         if let dict = any as? [String: Any] {
+            // Prefer "calcs" / "rows" / "data" / "results" keys when present.
+            for key in ["calcs", "rows", "data", "results"] {
+                if let arr = dict[key] as? [[String: Any]], let first = arr.first,
+                   first["company"] != nil || first["symbol"] != nil
+                    || first["ticker"] != nil || first["results"] != nil {
+                    return arr
+                }
+            }
             for (_, v) in dict {
                 if let found = findRowsArray(in: v) { return found }
             }
