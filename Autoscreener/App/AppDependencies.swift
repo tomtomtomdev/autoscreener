@@ -4,6 +4,7 @@ import Foundation
 final class AppDependencies {
     let tokens: any TokenStoring
     let loginService: any LoginServicing
+    let deviceVerificationService: any DeviceVerificationServicing
     let apiClient: APIClient
 
     static let shared = AppDependencies()
@@ -27,10 +28,12 @@ final class AppDependencies {
         let store = KeychainTokenStore()
         let session = LoggingHTTPSession(URLSession.shared)
         let login = LoginService(session: session, tokens: store)
+        let verifier = DeviceVerificationService(session: session)
         let client = APIClient(session: session, tokens: store)
 
         self.tokens = store
         self.loginService = login
+        self.deviceVerificationService = verifier
         self.apiClient = client
 
         Task { [client, login] in

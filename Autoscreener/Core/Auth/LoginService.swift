@@ -4,12 +4,17 @@ nonisolated enum LoginError: Error, Equatable {
     case invalidCredentials
     case network(String)
     case malformedResponse
-    case deviceVerificationRequired
+}
+
+nonisolated enum LoginOutcome: Equatable, Sendable {
+    case authenticated(TokenPair)
+    case needsDeviceVerification(loginToken: String, verificationToken: String)
 }
 
 nonisolated protocol LoginServicing: Sendable {
-    func login(user: String, password: String) async throws -> TokenPair
+    func login(user: String, password: String) async throws -> LoginOutcome
     func refresh(refreshToken: String) async throws -> TokenPair
+    func storeTokens(_ pair: TokenPair) async
     func signOut() async
 }
 
@@ -22,14 +27,32 @@ nonisolated final class LoginService: LoginServicing {
         self.tokens = tokens
     }
 
-    func login(user: String, password: String) async throws -> TokenPair {
+    func login(user: String, password: String) async throws -> LoginOutcome {
         let body = try JSONEncoder().encode(
             LoginRequest(user: user, password: password, player_id: DeviceInfo.playerID)
         )
         let endpoint = Endpoint(method: .post, path: "login/v6/username", body: body, requiresAuth: false)
-        let pair = try await call(endpoint)
-        await tokens.save(pair)
-        return pair
+        let data = try await call(endpoint)
+
+        // Stockbit returns 200 either with tokens (trusted device) or with an
+        // MFA challenge envelope (untrusted device). Inspect the body to decide.
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let payload = json["data"] as? [String: Any],
+           let newDevice = payload["new_device"] as? [String: Any],
+           let mfa = newDevice["multi_factor"] as? [String: Any],
+           let loginToken = mfa["login_token"] as? String,
+           let verificationToken = mfa["verification_token"] as? String {
+            return .needsDeviceVerification(loginToken: loginToken, verificationToken: verificationToken)
+        }
+
+        do {
+            let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
+            let pair = TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
+            await tokens.save(pair)
+            return .authenticated(pair)
+        } catch {
+            throw LoginError.malformedResponse
+        }
     }
 
     func refresh(refreshToken: String) async throws -> TokenPair {
@@ -39,14 +62,24 @@ nonisolated final class LoginService: LoginServicing {
             requiresAuth: false,
             extraHeaders: ["authorization": "Bearer \(refreshToken)"]
         )
-        return try await call(endpoint)
+        let data = try await call(endpoint)
+        do {
+            let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
+            return TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
+        } catch {
+            throw LoginError.malformedResponse
+        }
+    }
+
+    func storeTokens(_ pair: TokenPair) async {
+        await tokens.save(pair)
     }
 
     func signOut() async {
         await tokens.clear()
     }
 
-    private func call(_ endpoint: Endpoint) async throws -> TokenPair {
+    private func call(_ endpoint: Endpoint) async throws -> Data {
         let request = endpoint.makeRequest(token: nil)
         let (data, response): (Data, URLResponse)
         do {
@@ -59,19 +92,7 @@ nonisolated final class LoginService: LoginServicing {
         }
         switch http.statusCode {
         case 200..<300:
-            // Stockbit returns 200 even when MFA / new-device verification is required.
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let payload = json["data"] as? [String: Any],
-               let newDevice = payload["new_device"] as? [String: Any],
-               newDevice["multi_factor"] != nil {
-                throw LoginError.deviceVerificationRequired
-            }
-            do {
-                let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
-                return TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
-            } catch {
-                throw LoginError.malformedResponse
-            }
+            return data
         case 400, 401:
             throw LoginError.invalidCredentials
         default:

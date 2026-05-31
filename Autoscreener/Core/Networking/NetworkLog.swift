@@ -66,8 +66,35 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
     private static func preview(_ data: Data, limit: Int = 800) -> String? {
         guard !data.isEmpty else { return nil }
         if let s = String(data: data.prefix(limit), encoding: .utf8) {
-            return data.count > limit ? s + "… (\(data.count) bytes total)" : s
+            let truncated = data.count > limit ? s + "… (\(data.count) bytes total)" : s
+            return redact(truncated)
         }
         return "<\(data.count) bytes binary>"
+    }
+
+    /// Replace the values of sensitive JSON keys with "***" so the log panel
+    /// doesn't leak passwords, OTPs, or tokens into screenshots / shared captures.
+    private static let sensitiveKeys = [
+        "password", "otp",
+        "login_token", "verification_token",
+        "access_token", "refresh_token",
+        "authorization",
+    ]
+
+    private static let redactionRegexes: [NSRegularExpression] = {
+        sensitiveKeys.compactMap { key in
+            // matches: "key":"value"  (with any whitespace)
+            let pattern = "(\"\(key)\"\\s*:\\s*\")[^\"]*(\")"
+            return try? NSRegularExpression(pattern: pattern, options: .caseInsensitive)
+        }
+    }()
+
+    static func redact(_ s: String) -> String {
+        var out = s
+        for re in redactionRegexes {
+            let range = NSRange(out.startIndex..., in: out)
+            out = re.stringByReplacingMatches(in: out, range: range, withTemplate: "$1***$2")
+        }
+        return out
     }
 }

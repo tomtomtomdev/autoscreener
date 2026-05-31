@@ -70,9 +70,10 @@ final class StubSession: HTTPSession, @unchecked Sendable {
         let store = InMemoryTokenStore()
         let svc = LoginService(session: session, tokens: store)
 
-        let pair = try await svc.login(user: "tommy", password: "secret")
+        let outcome = try await svc.login(user: "tommy", password: "secret")
+        let pair = TokenPair(accessToken: "A1", refreshToken: "R1")
 
-        #expect(pair == TokenPair(accessToken: "A1", refreshToken: "R1"))
+        #expect(outcome == .authenticated(pair))
         #expect(await store.load() == pair)
 
         let req = session.received[0]
@@ -94,22 +95,22 @@ final class StubSession: HTTPSession, @unchecked Sendable {
             body: Data(#"{"data":{"access_token":"A","refresh_token":"R"}}"#.utf8)
         )])
         let svc = LoginService(session: session, tokens: InMemoryTokenStore())
-        let pair = try await svc.login(user: "u", password: "p")
-        #expect(pair.accessToken == "A")
-        #expect(pair.refreshToken == "R")
+        let outcome = try await svc.login(user: "u", password: "p")
+        #expect(outcome == .authenticated(TokenPair(accessToken: "A", refreshToken: "R")))
     }
 
-    @Test func mapsMultiFactorEnvelopeToDeviceVerification() async {
+    @Test func returnsNeedsDeviceVerificationOnMultiFactorEnvelope() async throws {
         let session = StubSession([.init(
             status: 200,
             body: Data(#"""
             {"message":"You have been successfully logged in","data":{"new_device":{"multi_factor":{"login_token":"L","verification_token":"V"}}}}
             """#.utf8)
         )])
-        let svc = LoginService(session: session, tokens: InMemoryTokenStore())
-        await #expect(throws: LoginError.deviceVerificationRequired) {
-            try await svc.login(user: "u", password: "p")
-        }
+        let store = InMemoryTokenStore()
+        let svc = LoginService(session: session, tokens: store)
+        let outcome = try await svc.login(user: "u", password: "p")
+        #expect(outcome == .needsDeviceVerification(loginToken: "L", verificationToken: "V"))
+        #expect(await store.load() == nil) // tokens are NOT stored at this point
     }
 
     @Test func mapsHttp401ToInvalidCredentials() async {
