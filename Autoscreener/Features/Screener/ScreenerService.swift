@@ -81,29 +81,33 @@ nonisolated final class ScreenerService: ScreenerServicing {
             throw ScreenerError.malformedResponse
         }
 
-        let rows = rowsArray.map { dict -> ScreenerRow in
-            let symbol = (dict["symbol"] as? String)
-                ?? (dict["ticker"] as? String)
-                ?? (dict["code"] as? String) ?? "?"
-            let name = (dict["name"] as? String)
-                ?? (dict["company_name"] as? String) ?? ""
-            let values: [Double?] = sequence.map { id in
-                if let arr = dict["values"] as? [Any], let idx = sequence.firstIndex(of: id), idx < arr.count {
-                    return Self.asDouble(arr[idx])
-                }
-                return Self.asDouble(dict[String(id)])
-            }
-            let last = Self.asDouble(dict["last_price"])
-                ?? Self.asDouble(dict["last"])
-                ?? Self.asDouble(dict["price"])
-                ?? Self.asDouble(dict["close"])
-            let change = Self.asDouble(dict["pct_change"])
-                ?? Self.asDouble(dict["change_pct"])
-                ?? Self.asDouble(dict["change_percent"])
-                ?? Self.asDouble(dict["percent_change"])
-            return ScreenerRow(symbol: symbol, name: name, values: values, lastPrice: last, pctChange: change)
-        }
+        let rows = rowsArray.map { row(from: $0, sequence: sequence) }
         return ScreenerPage(rows: rows, total: total, page: page)
+    }
+
+    /// Build a ScreenerRow from a row dict — tolerant of several field names and value layouts.
+    /// Shared with ScreenerTemplateService for the page-1 rows embedded in the GET response.
+    static func row(from dict: [String: Any], sequence: [Int]) -> ScreenerRow {
+        let symbol = (dict["symbol"] as? String)
+            ?? (dict["ticker"] as? String)
+            ?? (dict["code"] as? String) ?? "?"
+        let name = (dict["name"] as? String)
+            ?? (dict["company_name"] as? String) ?? ""
+        let values: [Double?] = sequence.map { id in
+            if let arr = dict["values"] as? [Any], let idx = sequence.firstIndex(of: id), idx < arr.count {
+                return asDouble(arr[idx])
+            }
+            return asDouble(dict[String(id)])
+        }
+        let last = asDouble(dict["last_price"])
+            ?? asDouble(dict["last"])
+            ?? asDouble(dict["price"])
+            ?? asDouble(dict["close"])
+        let change = asDouble(dict["pct_change"])
+            ?? asDouble(dict["change_pct"])
+            ?? asDouble(dict["change_percent"])
+            ?? asDouble(dict["percent_change"])
+        return ScreenerRow(symbol: symbol, name: name, values: values, lastPrice: last, pctChange: change)
     }
 
     private static func asDouble(_ v: Any?) -> Double? {

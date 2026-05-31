@@ -1,14 +1,19 @@
 import Foundation
 
+nonisolated struct ScreenerInitialResult: Sendable {
+    let config: ScreenerConfig
+    let page: ScreenerPage  // page 1 of rows returned alongside the template
+}
+
 nonisolated protocol ScreenerTemplateServicing: Sendable {
-    func load(templateID: String) async throws -> ScreenerConfig
+    func load(templateID: String) async throws -> ScreenerInitialResult
 }
 
 nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     private let apiClient: APIClient
     init(apiClient: APIClient) { self.apiClient = apiClient }
 
-    func load(templateID: String) async throws -> ScreenerConfig {
+    func load(templateID: String) async throws -> ScreenerInitialResult {
         let endpoint = Endpoint(
             method: .get,
             path: "screener/templates/\(templateID)",
@@ -19,22 +24,30 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         return try Self.parse(data, templateID: templateID)
     }
 
-    static func parse(_ data: Data, templateID: String) throws -> ScreenerConfig {
+    static func parse(_ data: Data, templateID: String) throws -> ScreenerInitialResult {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ScreenerError.malformedResponse
         }
-        let payload = (json["data"] as? [String: Any]) ?? json
+        // The response embeds both template metadata AND page 1 of results.
+        // Don't assume the exact path — walk the tree to find each.
+        let templateDict = findTemplateDict(in: json) ?? [:]
+        let config = configFromTemplate(templateDict, templateID: templateID)
+        let rowsArray = findRowsArray(in: json) ?? []
+        let total = findTotal(in: json)
 
-        let name = (payload["name"] as? String) ?? "screener"
+        let rows = rowsArray.map { dict in
+            ScreenerService.row(from: dict, sequence: config.sequence)
+        }
+        let page = ScreenerPage(rows: rows, total: total, page: 1)
+        return ScreenerInitialResult(config: config, page: page)
+    }
+
+    private static func configFromTemplate(_ payload: [String: Any], templateID: String) -> ScreenerConfig {
+        let name = (payload["name"] as? String) ?? "bandar-accumulating"
         let description = (payload["description"] as? String) ?? ""
-
-        // filters & universe arrive as JSON-encoded strings, same shape as the request body.
-        let filters: [ScreenerFilter] = parseFilters(payload["filters"])
-        let universe: ScreenerUniverse = parseUniverse(payload["universe"]) ?? .ihsg
-
-        // sequence may be a comma-separated string OR an array of ints.
-        let sequence: [Int] = parseSequence(payload["sequence"])
-
+        let filters = parseFilters(payload["filters"])
+        let universe = parseUniverse(payload["universe"]) ?? .ihsg
+        let sequence = parseSequence(payload["sequence"])
         let orderColumn = (payload["ordercol"] as? Int) ?? (payload["order_col"] as? Int) ?? 2
         let orderType = (payload["ordertype"] as? String) ?? (payload["order_type"] as? String) ?? "desc"
         let limit = (payload["limit"] as? Int) ?? 25
@@ -50,6 +63,57 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         config.limit = limit
         config.screenerID = templateID
         return config
+    }
+
+    /// Walk the tree to find the dict that carries the screener template fields.
+    /// Heuristic: contains at least one of {filters, universe, sequence} and ideally a name.
+    private static func findTemplateDict(in any: Any) -> [String: Any]? {
+        if let dict = any as? [String: Any] {
+            if dict["filters"] != nil || dict["universe"] != nil || dict["sequence"] != nil {
+                return dict
+            }
+            for (_, v) in dict {
+                if let found = findTemplateDict(in: v) { return found }
+            }
+        }
+        if let arr = any as? [Any] {
+            for v in arr {
+                if let found = findTemplateDict(in: v) { return found }
+            }
+        }
+        return nil
+    }
+
+    /// Find an array of row-like dicts (each with symbol/ticker/code) anywhere in the tree.
+    private static func findRowsArray(in any: Any) -> [[String: Any]]? {
+        if let arr = any as? [[String: Any]] {
+            if let first = arr.first,
+               first["symbol"] != nil || first["ticker"] != nil || first["code"] != nil {
+                return arr
+            }
+        }
+        if let dict = any as? [String: Any] {
+            for (_, v) in dict {
+                if let found = findRowsArray(in: v) { return found }
+            }
+        }
+        if let arr = any as? [Any] {
+            for v in arr {
+                if let found = findRowsArray(in: v) { return found }
+            }
+        }
+        return nil
+    }
+
+    private static func findTotal(in any: Any) -> Int? {
+        if let dict = any as? [String: Any] {
+            if let n = dict["total"] as? Int { return n }
+            if let n = dict["total_count"] as? Int { return n }
+            for (_, v) in dict {
+                if let n = findTotal(in: v) { return n }
+            }
+        }
+        return nil
     }
 
     private static func parseFilters(_ raw: Any?) -> [ScreenerFilter] {

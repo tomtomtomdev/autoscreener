@@ -52,33 +52,44 @@ import Testing
 // MARK: - ScreenerTemplateService
 
 @Suite struct ScreenerTemplateServiceTests {
-    @Test func loadParsesStringifiedFiltersAndUniverse() async throws {
+    @Test func loadParsesStringifiedFiltersAndUniverseAndPage1Rows() async throws {
         let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
-        // Template response with filters/universe as stringified JSON, like the wire format
+        // Template GET response carries both the template metadata AND page 1 rows.
         let body = Data(#"""
         {"data":{
-          "name":"bandar-accumulating",
-          "description":"",
-          "filters":"[{\"operator\":\">\",\"item1_name\":\"Bandar Value\",\"multiplier\":\"1\",\"type\":\"compare\",\"item1\":14399,\"item2\":\"14426\",\"item2_name\":\"Bandar Value MA 20\"}]",
-          "universe":"{\"scopeID\":\"0\",\"name\":\"IHSG\",\"scope\":\"IHSG\"}",
-          "sequence":"14399,14426",
-          "ordercol":2,"ordertype":"desc","limit":25}}
+          "template":{
+            "name":"bandar-accumulating",
+            "description":"",
+            "filters":"[{\"operator\":\">\",\"item1_name\":\"Bandar Value\",\"multiplier\":\"1\",\"type\":\"compare\",\"item1\":14399,\"item2\":\"14426\",\"item2_name\":\"Bandar Value MA 20\"}]",
+            "universe":"{\"scopeID\":\"0\",\"name\":\"IHSG\",\"scope\":\"IHSG\"}",
+            "sequence":"14399,14426",
+            "ordercol":2,"ordertype":"desc","limit":25
+          },
+          "screener":{
+            "data":[
+              {"symbol":"BBCA","name":"BCA","values":[1.0, 0.5]},
+              {"symbol":"BBRI","name":"BRI","values":[2.0, 1.0]}
+            ],
+            "total":120
+          }
+        }}
         """#.utf8)
         let session = StubSession([.init(status: 200, body: body)])
         let client = APIClient(session: session, tokens: store)
         let svc = ScreenerTemplateService(apiClient: client)
 
-        let config = try await svc.load(templateID: "6676213")
+        let result = try await svc.load(templateID: "6676213")
 
-        #expect(config.name == "bandar-accumulating")
-        #expect(config.filters.count == 1)
-        #expect(config.filters[0].item1 == 14399)
-        #expect(config.filters[0].type == .compare)
-        #expect(config.universe == .ihsg)
-        #expect(config.sequence == [14399, 14426])
-        #expect(config.orderColumn == 2)
-        #expect(config.orderType == "desc")
-        #expect(config.screenerID == "6676213")
+        #expect(result.config.name == "bandar-accumulating")
+        #expect(result.config.filters.count == 1)
+        #expect(result.config.filters[0].item1 == 14399)
+        #expect(result.config.universe == .ihsg)
+        #expect(result.config.sequence == [14399, 14426])
+        #expect(result.config.screenerID == "6676213")
+
+        #expect(result.page.rows.map(\.symbol) == ["BBCA", "BBRI"])
+        #expect(result.page.total == 120)
+        #expect(result.page.page == 1)
     }
 
     @Test func loadFallsBackToCannedDefaultsWhenFieldsMissing() async throws {
@@ -86,9 +97,10 @@ import Testing
         let session = StubSession([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
         let client = APIClient(session: session, tokens: store)
         let svc = ScreenerTemplateService(apiClient: client)
-        let config = try await svc.load(templateID: "X")
-        #expect(config.sequence == [14399, 14426])  // fell back to canned defaults
-        #expect(config.universe == .ihsg)
+        let result = try await svc.load(templateID: "X")
+        #expect(result.config.sequence == [14399, 14426])  // fell back to canned defaults
+        #expect(result.config.universe == .ihsg)
+        #expect(result.page.rows.isEmpty)
     }
 }
 
@@ -133,16 +145,19 @@ final class FakePaywallService: PaywallServicing, @unchecked Sendable {
 }
 
 final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable {
-    var result: Result<ScreenerConfig, Error> = .success({
+    var result: Result<ScreenerInitialResult, Error> = .success({
         var c = ScreenerConfig()
         c.name = "loaded-template"
         c.sequence = [14399, 14426]
         c.orderColumn = 2
         c.orderType = "desc"
-        return c
+        return ScreenerInitialResult(
+            config: c,
+            page: ScreenerPage(rows: [], total: 0, page: 1)
+        )
     }())
     private(set) var loadCalls: [String] = []
-    func load(templateID: String) async throws -> ScreenerConfig {
+    func load(templateID: String) async throws -> ScreenerInitialResult {
         loadCalls.append(templateID)
         return try result.get()
     }
@@ -150,19 +165,27 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
 
 @MainActor
 @Suite struct ScreenerBootstrapTests {
-    private func screener(rows: [ScreenerRow], total: Int = 2) -> FakeScreenerService {
-        let svc = FakeScreenerService()
-        svc.outcomes = [.success(ScreenerPage(rows: rows, total: total, page: 1))]
-        return svc
+    private func templateWithRows(_ rows: [ScreenerRow], total: Int? = nil) -> FakeTemplateService {
+        let templates = FakeTemplateService()
+        var c = ScreenerConfig()
+        c.name = "loaded-template"
+        c.sequence = [14399, 14426]
+        c.orderColumn = 2
+        c.orderType = "desc"
+        templates.result = .success(ScreenerInitialResult(
+            config: c,
+            page: ScreenerPage(rows: rows, total: total ?? rows.count, page: 1)
+        ))
+        return templates
     }
 
-    @Test func autoRunCallsPaywallCheckIncrementTemplateLoadThenRun() async {
+    @Test func autoRunCallsPaywallCheckIncrementAndUsesTemplatePage1Rows() async {
         let paywall = FakePaywallService()
-        let templates = FakeTemplateService()
-        let screenerSvc = screener(rows: [
+        let templates = templateWithRows([
             ScreenerRow(symbol: "A", name: "A", values: [1, 2], lastPrice: nil, pctChange: nil),
             ScreenerRow(symbol: "B", name: "B", values: [3, 4], lastPrice: nil, pctChange: nil),
-        ])
+        ], total: 100)
+        let screenerSvc = FakeScreenerService()  // should NOT be called for page 1
         let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
@@ -172,12 +195,36 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         #expect(templates.loadCalls == ["6676213"])
         #expect(vm.config.name == "loaded-template")
         #expect(vm.rows.count == 2)
+        #expect(vm.currentPage == 1)
+        #expect(vm.total == 100)
+        #expect(screenerSvc.calls.isEmpty)  // POST never fires when GET supplied page 1
+    }
+
+    @Test func loadMoreUsesPOSTPage2AfterBootstrap() async {
+        let paywall = FakePaywallService()
+        let templates = templateWithRows([
+            ScreenerRow(symbol: "A", name: "A", values: [10, 0], lastPrice: nil, pctChange: nil),
+        ], total: 2)
+        let screenerSvc = FakeScreenerService()
+        screenerSvc.outcomes = [.success(ScreenerPage(
+            rows: [ScreenerRow(symbol: "B", name: "B", values: [5, 0], lastPrice: nil, pctChange: nil)],
+            total: 2, page: 2))]
+        let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
+
+        await vm.autoRunIfNeeded()
+        await vm.loadMore()
+
+        #expect(screenerSvc.calls.count == 1)
+        #expect(screenerSvc.calls[0].page == 2)
+        // ordercol=2 desc → A(10) before B(5)
+        #expect(vm.rows.map(\.symbol) == ["A", "B"])
+        #expect(vm.currentPage == 2)
     }
 
     @Test func autoRunIsIdempotentAcrossMultipleCalls() async {
         let paywall = FakePaywallService()
-        let templates = FakeTemplateService()
-        let svc = screener(rows: [])
+        let templates = templateWithRows([])
+        let svc = FakeScreenerService()
         let vm = ScreenerViewModel(service: svc, paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
@@ -188,31 +235,32 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         #expect(paywall.incrementCalls.count == 1)
     }
 
-    @Test func templateLoadFailureFallsBackToCannedConfig() async {
+    @Test func templateLoadFailureFallsBackToPOSTPage1WithCannedConfig() async {
         let paywall = FakePaywallService()
         let templates = FakeTemplateService()
         templates.result = .failure(ScreenerError.malformedResponse)
-        let svc = screener(rows: [
+        let svc = FakeScreenerService()
+        svc.outcomes = [.success(ScreenerPage(rows: [
             ScreenerRow(symbol: "X", name: "X", values: [1, 2], lastPrice: nil, pctChange: nil),
-        ])
+        ], total: 1, page: 1))]
         let vm = ScreenerViewModel(service: svc, paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
 
         #expect(vm.config.name == "bandar-accumulating") // canned default
+        #expect(svc.calls.count == 1)                    // POST was used as a fallback
+        #expect(svc.calls[0].page == 1)
         #expect(vm.rows.count == 1)
     }
 
-    @Test func runResetsSortToTemplateDefault() async {
+    @Test func bootstrapAppliesTemplateSortOrderToReturnedRows() async {
         let paywall = FakePaywallService()
-        let templates = FakeTemplateService()
-        let svc = FakeScreenerService()
-        svc.outcomes = [.success(ScreenerPage(rows: [
+        let templates = templateWithRows([
             ScreenerRow(symbol: "A", name: "A", values: [10, 0], lastPrice: nil, pctChange: nil),
             ScreenerRow(symbol: "B", name: "B", values: [50, 0], lastPrice: nil, pctChange: nil),
             ScreenerRow(symbol: "C", name: "C", values: [30, 0], lastPrice: nil, pctChange: nil),
-        ], total: 3, page: 1))]
-        let vm = ScreenerViewModel(service: svc, paywall: paywall, templates: templates)
+        ])
+        let vm = ScreenerViewModel(service: FakeScreenerService(), paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
 
@@ -224,11 +272,10 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
         let paywall = FakePaywallService()
         paywall.eligibility = PaywallEligibility(eligible: false, message: "Upgrade to use the screener.")
-        let templates = FakeTemplateService()
-        let svc = screener(rows: [
+        let templates = templateWithRows([
             ScreenerRow(symbol: "A", name: "A", values: [1, 2], lastPrice: nil, pctChange: nil),
         ])
-        let vm = ScreenerViewModel(service: svc, paywall: paywall, templates: templates)
+        let vm = ScreenerViewModel(service: FakeScreenerService(), paywall: paywall, templates: templates)
 
         await vm.autoRunIfNeeded()
 

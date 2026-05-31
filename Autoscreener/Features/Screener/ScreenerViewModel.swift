@@ -47,7 +47,11 @@ final class ScreenerViewModel {
 
     private func bootstrap(templateID: String) async {
         paywallMessage = nil
-        // Eligibility — surface a banner, but never hard-block; the user might still hit quota.
+        rows = []
+        total = nil
+        currentPage = 0
+        error = nil
+
         if let paywall {
             let eligibility = await paywall.check(.screener)
             if !eligibility.eligible {
@@ -55,19 +59,39 @@ final class ScreenerViewModel {
             }
             await paywall.increment(.screener)
         }
-        // Load the saved template so the view doesn't hardcode metric IDs / order.
-        // Fall back to the in-code ScreenerConfig if the load fails.
-        if let templates, let loaded = try? await templates.load(templateID: templateID) {
-            self.config = loaded
+        // The GET /screener/templates/{id} response carries BOTH the template config
+        // AND page 1 of rows — so we land the first page here without a POST.
+        // Subsequent pages go through POST /screener/templates with page ≥ 2.
+        if let templates {
+            isLoading = true
+            do {
+                let initial = try await templates.load(templateID: templateID)
+                self.config = initial.config
+                self.rows = initial.page.rows
+                self.total = initial.page.total
+                self.currentPage = 1
+                applyTemplateSort()
+                isLoading = false
+                return
+            } catch ScreenerError.unauthorized {
+                isLoading = false
+                error = "Session expired. Please sign in again."
+                return
+            } catch {
+                // Fall through to POST-based run with the canned config.
+                isLoading = false
+            }
         }
         await run()
     }
 
+    /// Explicit re-run via the POST endpoint with page=1. Used as a fallback when the
+    /// GET template+page1 path failed, or when something other than the bootstrap is
+    /// driving the screener (e.g. a future filter editor).
     func run() async {
         rows = []
         currentPage = 0
         await load(page: 1)
-        // Reset sort to template's preferred order — first metric, descending by default.
         applyTemplateSort()
     }
 
