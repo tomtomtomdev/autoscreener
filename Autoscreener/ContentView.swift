@@ -10,7 +10,7 @@ struct ContentView: View {
                 ProgressView("Checking session…")
                     .frame(minWidth: 480, minHeight: 320)
             case .signedIn:
-                ScreenerView()
+                MainSidebarView()
             case .signedOut:
                 signInPrompt
             }

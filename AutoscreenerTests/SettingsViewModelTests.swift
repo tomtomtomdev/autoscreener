@@ -113,6 +113,23 @@ private func makeVM(login: FakeLoginService = .init(),
         #expect(vm.isSignedIn == false)
     }
 
+    @Test func signOutFlipsAuthStateBackToSignedOut() async {
+        let svc = FakeLoginService()
+        let auth = AuthState()
+        auth.setSignedIn()
+        let vm = SettingsViewModel(
+            loginService: svc,
+            verificationService: FakeDeviceVerificationService(),
+            tokens: InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R")),
+            authState: auth
+        )
+
+        await vm.signOut()
+
+        #expect(svc.signOutCount == 1)
+        #expect(auth.phase == .signedOut)
+    }
+
     @Test func ignoresSubmitWhenFieldsEmpty() async {
         let svc = FakeLoginService()
         let vm = makeVM(login: svc)

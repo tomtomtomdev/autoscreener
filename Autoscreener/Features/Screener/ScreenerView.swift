@@ -1,15 +1,10 @@
 import SwiftUI
 
 struct ScreenerView: View {
-    @State private var vm: ScreenerViewModel
+    @Bindable var vm: ScreenerViewModel
 
-    init() {
-        let deps = AppDependencies.shared
-        _vm = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService
-        ))
+    init(vm: ScreenerViewModel) {
+        self.vm = vm
     }
 
     var body: some View {
@@ -142,4 +137,11 @@ struct ScreenerView: View {
     }
 }
 
-#Preview { ScreenerView() }
+#Preview {
+    let deps = AppDependencies.shared
+    return ScreenerView(vm: ScreenerViewModel(
+        service: deps.screenerService,
+        paywall: deps.paywallService,
+        templates: deps.screenerTemplateService
+    ))
+}

@@ -19,13 +19,16 @@ final class ScreenerViewModel {
     private let service: any ScreenerServicing
     private let paywall: (any PaywallServicing)?
     private let templates: (any ScreenerTemplateServicing)?
+    let templateID: String
 
     init(service: any ScreenerServicing,
          paywall: (any PaywallServicing)? = nil,
-         templates: (any ScreenerTemplateServicing)? = nil) {
+         templates: (any ScreenerTemplateServicing)? = nil,
+         templateID: String = "6676213") {
         self.service = service
         self.paywall = paywall
         self.templates = templates
+        self.templateID = templateID
     }
 
     /// True only if we believe another page exists. False once the server gave us:
@@ -39,16 +42,15 @@ final class ScreenerViewModel {
         return rows.count % config.limit == 0
     }
 
-    /// One-shot bootstrap intended for app launch — auto-runs the bandar-accumulating
-    /// screener after a paywall eligibility check + counter increment + template load.
+    /// One-shot bootstrap — runs once per ViewModel lifetime (per screener tab).
     /// No-ops on subsequent calls so re-appearing views don't re-trigger paywall counters.
-    func autoRunIfNeeded(templateID: String = "6676213") async {
+    func autoRunIfNeeded() async {
         guard !didAutoRun else { return }
         didAutoRun = true
         await bootstrap(templateID: templateID)
     }
 
-    func refresh(templateID: String = "6676213") async {
+    func refresh() async {
         await bootstrap(templateID: templateID)
     }
 
