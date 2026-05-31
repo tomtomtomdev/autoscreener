@@ -10,7 +10,8 @@ struct SettingsView: View {
             loginService: deps.loginService,
             verificationService: deps.deviceVerificationService,
             tokens: deps.tokens,
-            authState: deps.authState
+            authState: deps.authState,
+            autoRehydrate: !ProcessInfo.processInfo.isRunningUnitTests
         ))
     }
 

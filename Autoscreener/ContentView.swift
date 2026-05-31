@@ -16,6 +16,10 @@ struct ContentView: View {
             }
         }
         .task {
+            // Skip the Keychain probe when the app is being launched as a unit-test
+            // host — otherwise each fresh Debug build re-prompts for ACL trust on the
+            // stockbit-tokens item and stalls the test runner waiting for user input.
+            guard !ProcessInfo.processInfo.isRunningUnitTests else { return }
             if auth.phase == .unknown {
                 auth.phase = await AppDependencies.shared.tokens.load() != nil ? .signedIn : .signedOut
             }

@@ -1,5 +1,15 @@
 import Foundation
 
+extension ProcessInfo {
+    /// True when the current process was launched by xctest. Xcode sets
+    /// `XCTestConfigurationFilePath` in the host-app environment when bundling
+    /// unit tests, so we use it to skip Keychain reads that would otherwise
+    /// re-prompt for ACL trust on every fresh Debug build.
+    var isRunningUnitTests: Bool {
+        environment["XCTestConfigurationFilePath"] != nil
+    }
+}
+
 @MainActor
 final class AppDependencies {
     let tokens: any TokenStoring
