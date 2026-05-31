@@ -4,6 +4,27 @@ import Security
 nonisolated struct TokenPair: Codable, Equatable, Sendable {
     var accessToken: String
     var refreshToken: String
+    var accessExpiresAt: Date?
+    var refreshExpiresAt: Date?
+
+    /// Effective access expiry — prefers the server-supplied `expired_at`,
+    /// falls back to decoding the JWT `exp` claim.
+    var effectiveAccessExpiry: Date? {
+        accessExpiresAt ?? JWT(accessToken)?.expiresAt
+    }
+    var effectiveRefreshExpiry: Date? {
+        refreshExpiresAt ?? JWT(refreshToken)?.expiresAt
+    }
+
+    func isAccessExpiring(within seconds: TimeInterval) -> Bool {
+        guard let exp = effectiveAccessExpiry else { return false }
+        return exp.timeIntervalSinceNow < seconds
+    }
+
+    var isRefreshExpired: Bool {
+        guard let exp = effectiveRefreshExpiry else { return false }
+        return exp.timeIntervalSinceNow <= 0
+    }
 }
 
 nonisolated protocol TokenStoring: Sendable {

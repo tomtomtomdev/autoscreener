@@ -35,9 +35,28 @@ actor APIClient {
         try await perform(endpoint, retriedAfterRefresh: false)
     }
 
+    /// Refresh proactively when the access token has this many seconds (or fewer) of life left.
+    /// Prevents a guaranteed 401 round-trip on the next request.
+    private let preflightRefreshWindow: TimeInterval = 60
+
     private func perform(_ endpoint: Endpoint, retriedAfterRefresh: Bool) async throws -> Data {
-        let token = endpoint.requiresAuth ? await tokens.load()?.accessToken : nil
-        if endpoint.requiresAuth && token == nil { throw APIError.notSignedIn }
+        let token: String?
+        if endpoint.requiresAuth {
+            if !retriedAfterRefresh, let pair = await tokens.load() {
+                if pair.isRefreshExpired {
+                    // Refresh token itself is dead — force a re-login.
+                    await tokens.clear()
+                    throw APIError.unauthorized
+                }
+                if pair.isAccessExpiring(within: preflightRefreshWindow) {
+                    try await refreshTokens()
+                }
+            }
+            token = await tokens.load()?.accessToken
+            if token == nil { throw APIError.notSignedIn }
+        } else {
+            token = nil
+        }
 
         let request = endpoint.makeRequest(token: token)
         let (data, response) = try await session.data(for: request)

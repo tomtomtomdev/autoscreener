@@ -92,7 +92,12 @@ nonisolated final class DeviceVerificationService: DeviceVerificationServicing {
         let data = try await call(endpoint)
         do {
             let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
-            return TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
+            return TokenPair(
+                accessToken: dto.accessToken,
+                refreshToken: dto.refreshToken,
+                accessExpiresAt: dto.accessExpiresAt,
+                refreshExpiresAt: dto.refreshExpiresAt
+            )
         } catch {
             throw DeviceVerificationError.malformedResponse
         }

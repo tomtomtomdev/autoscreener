@@ -99,6 +99,48 @@ final class StubSession: HTTPSession, @unchecked Sendable {
         #expect(outcome == .authenticated(TokenPair(accessToken: "A", refreshToken: "R")))
     }
 
+    @Test func parsesExpiredAtFromTrustedEnvelope() async throws {
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"""
+            {"data":{"login":{"token_data":{
+              "access":{"token":"A","expired_at":"2026-06-01T09:28:29Z"},
+              "refresh":{"token":"R","expired_at":"2026-06-07T09:28:29Z"}}}}}
+            """#.utf8)
+        )])
+        let store = InMemoryTokenStore()
+        let svc = LoginService(session: session, tokens: store)
+        _ = try await svc.login(user: "u", password: "p")
+
+        let saved = await store.load()
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        #expect(saved?.accessExpiresAt == f.date(from: "2026-06-01T09:28:29Z"))
+        #expect(saved?.refreshExpiresAt == f.date(from: "2026-06-07T09:28:29Z"))
+    }
+
+    @Test func decodesTrustedDeviceLoginEnvelope() async throws {
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"""
+            {"message":"You have been successfully logged in",
+             "data":{"login":{
+               "user":{"id":248236,"username":"tommyyohanesreal"},
+               "token_data":{
+                 "access":{"token":"ACC.JWT","expired_at":"2026-06-01T09:28:29Z"},
+                 "refresh":{"token":"REF.JWT","expired_at":"2026-06-07T09:28:29Z"}},
+               "support":{"id":"abc"}}}}
+            """#.utf8)
+        )])
+        let svc = LoginService(session: session, tokens: InMemoryTokenStore())
+        let outcome = try await svc.login(user: "u", password: "p")
+        guard case .authenticated(let pair) = outcome else { Issue.record("expected .authenticated"); return }
+        #expect(pair.accessToken == "ACC.JWT")
+        #expect(pair.refreshToken == "REF.JWT")
+        #expect(pair.accessExpiresAt != nil)
+        #expect(pair.refreshExpiresAt != nil)
+    }
+
     @Test func decodesNestedAccessRefreshEnvelope() async throws {
         let session = StubSession([.init(
             status: 200,
@@ -194,6 +236,46 @@ final class StubSession: HTTPSession, @unchecked Sendable {
             try await client.sendRaw(Endpoint(method: .get, path: "screener/favorites"))
         }
         #expect(await store.load() == nil)
+    }
+
+    @Test func preflightRefreshesWhenAccessExpiresWithin60Seconds() async throws {
+        let nearExpiry = Date().addingTimeInterval(10) // 10s left
+        let store = InMemoryTokenStore(initial: TokenPair(
+            accessToken: "OLD", refreshToken: "REF",
+            accessExpiresAt: nearExpiry, refreshExpiresAt: Date().addingTimeInterval(86400)
+        ))
+        let session = StubSession([
+            // Pre-emptive refresh hits no network here — the refresher closure returns directly
+            .init(status: 200, body: Data(#"{"ok":1}"#.utf8)),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        await client.setRefresher { _ in
+            TokenPair(accessToken: "NEW", refreshToken: "REF2",
+                      accessExpiresAt: Date().addingTimeInterval(86400),
+                      refreshExpiresAt: Date().addingTimeInterval(86400 * 7))
+        }
+
+        _ = try await client.sendRaw(Endpoint(method: .get, path: "x"))
+
+        // The actual request goes out with the NEW token, no 401 dance.
+        #expect(session.received.count == 1)
+        #expect(session.received[0].value(forHTTPHeaderField: "authorization") == "Bearer NEW")
+    }
+
+    @Test func clearsTokensWhenRefreshHasExpired() async {
+        let store = InMemoryTokenStore(initial: TokenPair(
+            accessToken: "A", refreshToken: "R",
+            accessExpiresAt: Date().addingTimeInterval(-10),
+            refreshExpiresAt: Date().addingTimeInterval(-10) // also expired
+        ))
+        let session = StubSession([])
+        let client = APIClient(session: session, tokens: store)
+
+        await #expect(throws: APIError.unauthorized) {
+            try await client.sendRaw(Endpoint(method: .get, path: "x"))
+        }
+        #expect(await store.load() == nil)
+        #expect(session.received.isEmpty)  // never reached the network
     }
 
     @Test func unauthedEndpointDoesNotRequireToken() async throws {

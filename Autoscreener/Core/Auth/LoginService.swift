@@ -47,7 +47,12 @@ nonisolated final class LoginService: LoginServicing {
 
         do {
             let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
-            let pair = TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
+            let pair = TokenPair(
+                accessToken: dto.accessToken,
+                refreshToken: dto.refreshToken,
+                accessExpiresAt: dto.accessExpiresAt,
+                refreshExpiresAt: dto.refreshExpiresAt
+            )
             await tokens.save(pair)
             return .authenticated(pair)
         } catch {
@@ -65,7 +70,12 @@ nonisolated final class LoginService: LoginServicing {
         let data = try await call(endpoint)
         do {
             let dto = try JSONDecoder().decode(LoginResponse.self, from: data)
-            return TokenPair(accessToken: dto.accessToken, refreshToken: dto.refreshToken)
+            return TokenPair(
+                accessToken: dto.accessToken,
+                refreshToken: dto.refreshToken,
+                accessExpiresAt: dto.accessExpiresAt,
+                refreshExpiresAt: dto.refreshExpiresAt
+            )
         } catch {
             throw LoginError.malformedResponse
         }
