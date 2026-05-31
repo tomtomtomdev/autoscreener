@@ -78,11 +78,14 @@ struct MainSidebarView: View {
     private var detail: some View {
         switch selection {
         case .bandarAccumulating:
-            ScreenerView(vm: bandarAccumulatingVM)
+            ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
+                .id(SidebarItem.bandarAccumulating)
         case .bandarAboveMA20:
-            ScreenerView(vm: bandarAboveMA20VM)
+            ScreenerView(vm: bandarAboveMA20VM, title: SidebarItem.bandarAboveMA20.title)
+                .id(SidebarItem.bandarAboveMA20)
         case .appSettings:
             AppSettingsView()
+                .id(SidebarItem.appSettings)
         case .none:
             ContentUnavailableView("Pick a screener", systemImage: "sidebar.left")
         }

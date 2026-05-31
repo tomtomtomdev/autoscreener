@@ -2,9 +2,11 @@ import SwiftUI
 
 struct ScreenerView: View {
     @Bindable var vm: ScreenerViewModel
+    let title: String
 
-    init(vm: ScreenerViewModel) {
+    init(vm: ScreenerViewModel, title: String) {
         self.vm = vm
+        self.title = title
     }
 
     var body: some View {
@@ -25,7 +27,7 @@ struct ScreenerView: View {
     private var toolbar: some View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
-                Text(vm.config.name).font(.headline)
+                Text(title).font(.headline)
                 Text(vm.config.universe.scope).font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -56,7 +58,7 @@ struct ScreenerView: View {
         } else if vm.rows.isEmpty && !vm.isLoading {
             ContentUnavailableView("No matches",
                                    systemImage: "tablecells",
-                                   description: Text("Press Refresh to re-run \(vm.config.name)."))
+                                   description: Text("\(title) returned no rows in IHSG."))
         } else {
             resultsTable
         }
@@ -139,9 +141,12 @@ struct ScreenerView: View {
 
 #Preview {
     let deps = AppDependencies.shared
-    return ScreenerView(vm: ScreenerViewModel(
-        service: deps.screenerService,
-        paywall: deps.paywallService,
-        templates: deps.screenerTemplateService
-    ))
+    return ScreenerView(
+        vm: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService
+        ),
+        title: "Preview"
+    )
 }
