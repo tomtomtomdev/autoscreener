@@ -15,6 +15,7 @@ final class ScreenerViewModel {
 
     private(set) var currentPage: Int = 0
     private var didAutoRun: Bool = false
+    private var serverSaysDone: Bool = false  // set when last fetch returned 0 rows or < limit rows
     private let service: any ScreenerServicing
     private let paywall: (any PaywallServicing)?
     private let templates: (any ScreenerTemplateServicing)?
@@ -27,9 +28,15 @@ final class ScreenerViewModel {
         self.templates = templates
     }
 
+    /// True only if we believe another page exists. False once the server gave us:
+    ///  - an empty page, OR
+    ///  - a partial page (< config.limit rows), OR
+    ///  - total reached.
     var hasMore: Bool {
-        guard let total else { return !rows.isEmpty && rows.count % config.limit == 0 }
-        return rows.count < total
+        if serverSaysDone { return false }
+        if rows.isEmpty { return false }
+        if let total { return rows.count < total }
+        return rows.count % config.limit == 0
     }
 
     /// One-shot bootstrap intended for app launch — auto-runs the bandar-accumulating
@@ -50,6 +57,7 @@ final class ScreenerViewModel {
         rows = []
         total = nil
         currentPage = 0
+        serverSaysDone = false
         error = nil
 
         if let paywall {
@@ -70,6 +78,7 @@ final class ScreenerViewModel {
                 self.rows = initial.page.rows
                 self.total = initial.page.total
                 self.currentPage = 1
+                updateServerSaysDone(returnedRowCount: initial.page.rows.count)
                 applyTemplateSort()
                 isLoading = false
                 return
@@ -91,6 +100,7 @@ final class ScreenerViewModel {
     func run() async {
         rows = []
         currentPage = 0
+        serverSaysDone = false
         await load(page: 1)
         applyTemplateSort()
     }
@@ -99,6 +109,14 @@ final class ScreenerViewModel {
         guard !isLoading, hasMore else { return }
         await load(page: currentPage + 1)
         applyTemplateSort()
+    }
+
+    /// Triggered by ScreenerView when the last row scrolls into view. Idempotent —
+    /// re-firing while we're already loading is a no-op, and we stop once the server
+    /// signals it's out of pages.
+    func rowDidAppear(at index: Int) async {
+        guard index >= rows.count - 1, hasMore, !isLoading else { return }
+        await loadMore()
     }
 
     private func load(page: Int) async {
@@ -110,6 +128,7 @@ final class ScreenerViewModel {
             rows.append(contentsOf: result.rows)
             total = result.total
             currentPage = page
+            updateServerSaysDone(returnedRowCount: result.rows.count)
         } catch ScreenerError.unauthorized {
             error = "Session expired. Please sign in again."
         } catch ScreenerError.paywall {
@@ -121,6 +140,20 @@ final class ScreenerViewModel {
         } catch let err {
             error = err.localizedDescription
         }
+    }
+
+    private func updateServerSaysDone(returnedRowCount: Int) {
+        if returnedRowCount == 0 {
+            serverSaysDone = true
+            return
+        }
+        // Trust server-supplied `total` when present — it's authoritative.
+        if let total {
+            if rows.count >= total { serverSaysDone = true }
+            return
+        }
+        // No total → infer end-of-list from a partial page.
+        if returnedRowCount < config.limit { serverSaysDone = true }
     }
 
     /// Stockbit's `ordercol` is 1-based; columns 1 = symbol, 2 = first metric, etc. The canned

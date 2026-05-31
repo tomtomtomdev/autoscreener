@@ -224,7 +224,7 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         c.orderType = "desc"
         templates.result = .success(ScreenerInitialResult(
             config: c,
-            page: ScreenerPage(rows: rows, total: total ?? rows.count, page: 1)
+            page: ScreenerPage(rows: rows, total: total, page: 1)
         ))
         return templates
     }
@@ -250,6 +250,100 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         #expect(screenerSvc.calls.isEmpty)  // POST never fires when GET supplied page 1
     }
 
+    @Test func rowDidAppearAtLastIndexTriggersNextPage() async {
+        let paywall = FakePaywallService()
+        let templates = templateWithRows([
+            ScreenerRow(symbol: "A", name: "A", values: [10, 0], lastPrice: nil, pctChange: nil),
+            ScreenerRow(symbol: "B", name: "B", values: [5, 0], lastPrice: nil, pctChange: nil),
+        ], total: 50)
+        let screenerSvc = FakeScreenerService()
+        screenerSvc.outcomes = [
+            // Page 2: full 25 limit — should still have more
+            .success(ScreenerPage(
+                rows: (0..<25).map { i in
+                    ScreenerRow(symbol: "P2_\(i)", name: "P2_\(i)", values: [Double(100 - i), 0],
+                                lastPrice: nil, pctChange: nil)
+                }, total: 50, page: 2))
+        ]
+        let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
+        await vm.autoRunIfNeeded()
+        #expect(vm.rows.count == 2)
+        #expect(vm.hasMore)
+
+        // Simulate the last row appearing on screen.
+        await vm.rowDidAppear(at: vm.rows.count - 1)
+
+        #expect(screenerSvc.calls.count == 1)
+        #expect(screenerSvc.calls.first?.page == 2)
+        #expect(vm.rows.count == 27)
+    }
+
+    @Test func emptyPageEndsAutoPagination() async {
+        let paywall = FakePaywallService()
+        // Full first page (== config.limit) + an advertised total so bootstrap leaves us "more available".
+        let firstPage = (0..<25).map { i in
+            ScreenerRow(symbol: "R\(i)", name: "R\(i)", values: [Double(100 - i), 0],
+                        lastPrice: nil, pctChange: nil)
+        }
+        let templates = templateWithRows(firstPage, total: 50)
+        let screenerSvc = FakeScreenerService()
+        screenerSvc.outcomes = [
+            .success(ScreenerPage(rows: [], total: nil, page: 2)),  // server says done
+        ]
+        let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
+        await vm.autoRunIfNeeded()
+
+        await vm.rowDidAppear(at: vm.rows.count - 1)  // triggers POST page 2
+        #expect(screenerSvc.calls.count == 1)
+        #expect(vm.hasMore == false)
+
+        // Subsequent triggers must NOT fire another request.
+        await vm.rowDidAppear(at: vm.rows.count - 1)
+        await vm.rowDidAppear(at: vm.rows.count - 1)
+        #expect(screenerSvc.calls.count == 1)
+    }
+
+    @Test func partialPageBelowLimitMarksDone() async {
+        let paywall = FakePaywallService()
+        // Page 1 returns 25 rows (== config.limit), still has more
+        let firstPage = (0..<25).map { i in
+            ScreenerRow(symbol: "R\(i)", name: "R\(i)", values: [Double(100 - i), 0],
+                        lastPrice: nil, pctChange: nil)
+        }
+        let templates = templateWithRows(firstPage)
+        let screenerSvc = FakeScreenerService()
+        // Page 2 returns 10 rows (< limit) → that's the last page
+        screenerSvc.outcomes = [
+            .success(ScreenerPage(
+                rows: (0..<10).map { i in
+                    ScreenerRow(symbol: "P2_\(i)", name: "P2_\(i)", values: [Double(10 - i), 0],
+                                lastPrice: nil, pctChange: nil)
+                }, total: nil, page: 2))
+        ]
+        let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
+        await vm.autoRunIfNeeded()
+        await vm.rowDidAppear(at: vm.rows.count - 1)
+
+        #expect(vm.rows.count == 35)
+        #expect(vm.hasMore == false)
+    }
+
+    @Test func rowAppearBeforeLastIsIgnored() async {
+        let paywall = FakePaywallService()
+        let templates = templateWithRows([
+            ScreenerRow(symbol: "A", name: "A", values: [10, 0], lastPrice: nil, pctChange: nil),
+            ScreenerRow(symbol: "B", name: "B", values: [5, 0], lastPrice: nil, pctChange: nil),
+        ], total: 50)
+        let screenerSvc = FakeScreenerService()
+        let vm = ScreenerViewModel(service: screenerSvc, paywall: paywall, templates: templates)
+        await vm.autoRunIfNeeded()
+
+        // Appears reported for non-last rows must not page.
+        await vm.rowDidAppear(at: 0)
+
+        #expect(screenerSvc.calls.isEmpty)
+    }
+
     @Test func loadMoreUsesPOSTPage2AfterBootstrap() async {
         let paywall = FakePaywallService()
         let templates = templateWithRows([
@@ -265,7 +359,7 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
         await vm.loadMore()
 
         #expect(screenerSvc.calls.count == 1)
-        #expect(screenerSvc.calls[0].page == 2)
+        #expect(screenerSvc.calls.first?.page == 2)
         // ordercol=2 desc → A(10) before B(5)
         #expect(vm.rows.map(\.symbol) == ["A", "B"])
         #expect(vm.currentPage == 2)
@@ -299,7 +393,7 @@ final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable 
 
         #expect(vm.config.name == "bandar-accumulating") // canned default
         #expect(svc.calls.count == 1)                    // POST was used as a fallback
-        #expect(svc.calls[0].page == 1)
+        #expect(svc.calls.first?.page == 1)
         #expect(vm.rows.count == 1)
     }
 

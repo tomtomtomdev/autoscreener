@@ -95,9 +95,18 @@ struct ScreenerView: View {
         let cols = vm.config.columns
         let firstName = cols.first?.name ?? "Metric 1"
         let secondName = cols.count > 1 ? cols[1].name : "Metric 2"
+        let lastSymbol = vm.rows.last?.symbol
         return Table(vm.rows, sortOrder: $vm.sort) {
             TableColumn("Symbol", value: \.symbol) { row in
-                Text(row.symbol).monospaced()
+                Text(row.symbol)
+                    .monospaced()
+                    .onAppear {
+                        // Last row scrolled into view → kick the next page.
+                        // Idempotent and no-op once the server signals we're done.
+                        if row.symbol == lastSymbol {
+                            Task { await vm.rowDidAppear(at: vm.rows.count - 1) }
+                        }
+                    }
             }
             .width(min: 80, ideal: 100)
 

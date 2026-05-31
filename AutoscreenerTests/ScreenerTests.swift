@@ -150,7 +150,7 @@ private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow 
         #expect(vm.rows.count == 2)
         #expect(vm.total == 2)
         #expect(vm.currentPage == 1)
-        #expect(svc.calls[0].page == 1)
+        #expect(svc.calls.first?.page == 1)
         #expect(vm.error == nil)
     }
 
