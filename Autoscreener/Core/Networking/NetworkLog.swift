@@ -63,7 +63,7 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
         }
     }
 
-    private static func preview(_ data: Data, limit: Int = 800) -> String? {
+    private static func preview(_ data: Data, limit: Int = 4000) -> String? {
         guard !data.isEmpty else { return nil }
         if let s = String(data: data.prefix(limit), encoding: .utf8) {
             let truncated = data.count > limit ? s + "… (\(data.count) bytes total)" : s

@@ -99,6 +99,23 @@ final class StubSession: HTTPSession, @unchecked Sendable {
         #expect(outcome == .authenticated(TokenPair(accessToken: "A", refreshToken: "R")))
     }
 
+    @Test func decodesNestedAccessRefreshEnvelope() async throws {
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"""
+            {"message":"You have been successfully logged in",
+             "data":{
+               "user":{"id":248236,"username":"tommyyohanesreal"},
+               "access":{"token":"ACC.JWT"},
+               "refresh":{"token":"REF.JWT"}
+             }}
+            """#.utf8)
+        )])
+        let svc = LoginService(session: session, tokens: InMemoryTokenStore())
+        let outcome = try await svc.login(user: "u", password: "p")
+        #expect(outcome == .authenticated(TokenPair(accessToken: "ACC.JWT", refreshToken: "REF.JWT")))
+    }
+
     @Test func returnsNeedsDeviceVerificationOnMultiFactorEnvelope() async throws {
         let session = StubSession([.init(
             status: 200,
