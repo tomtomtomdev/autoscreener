@@ -13,11 +13,15 @@ final class SettingsViewModel {
     struct VerificationState: Equatable {
         var loginToken: String
         var verificationToken: String
-        var availableChannels: [OTPChannel] = OTPChannel.allCases
+        var availableChannels: [OTPChallengeChannel] = OTPChannel.allCases.map { OTPChallengeChannel(channel: $0, target: nil) }
         var sentChannel: OTPChannel?
+        var sentTarget: String?
         var otp: String = ""
         var isSubmitting: Bool = false
         var error: String?
+        /// Increments each time the server demands an additional OTP challenge.
+        /// 1 = first OTP (e.g. email), 2 = second OTP (e.g. phone), etc.
+        var step: Int = 1
     }
 
     var phase: Phase = .signIn
@@ -99,11 +103,16 @@ final class SettingsViewModel {
         state.isSubmitting = true
         phase = .verifying(state)
         do {
-            let channels = try await verificationService.startChallenge(verificationToken: state.verificationToken)
+            let offer = try await verificationService.startChallenge(verificationToken: state.verificationToken)
             if case .verifying(var s) = phase {
-                s.availableChannels = channels
+                if !offer.channels.isEmpty { s.availableChannels = offer.channels }
                 s.isSubmitting = false
                 phase = .verifying(s)
+            }
+            // Stockbit gates this sequentially (email mandatory first, then phone) — auto-send
+            // via the server-suggested default channel so the user doesn't pick.
+            if let channel = offer.defaultChannel ?? offer.channels.first?.channel {
+                await requestOTP(via: channel)
             }
         } catch {
             if case .verifying(var s) = phase {
@@ -123,6 +132,7 @@ final class SettingsViewModel {
             try await verificationService.sendOTP(verificationToken: state.verificationToken, channel: channel)
             if case .verifying(var s) = phase {
                 s.sentChannel = channel
+                s.sentTarget = s.availableChannels.first(where: { $0.channel == channel })?.target
                 s.otp = ""
                 s.isSubmitting = false
                 phase = .verifying(s)
@@ -144,7 +154,26 @@ final class SettingsViewModel {
         state.error = nil
         phase = .verifying(state)
         do {
-            try await verificationService.verifyOTP(verificationToken: state.verificationToken, otp: trimmed)
+            let outcome = try await verificationService.verifyOTP(verificationToken: state.verificationToken, otp: trimmed)
+            if outcome.needsAnotherChallenge {
+                // Server wants a second OTP — usually a different channel set (e.g. phone after email).
+                if case .verifying(var s) = phase {
+                    s.step += 1
+                    s.availableChannels = outcome.nextChannels.isEmpty
+                        ? OTPChannel.allCases.map { OTPChallengeChannel(channel: $0, target: nil) }
+                        : outcome.nextChannels
+                    s.sentChannel = nil
+                    s.sentTarget = nil
+                    s.otp = ""
+                    s.isSubmitting = false
+                    phase = .verifying(s)
+                }
+                // Auto-send the next step via the server-default channel.
+                if let next = outcome.defaultChannel ?? outcome.nextChannels.first?.channel {
+                    await requestOTP(via: next)
+                }
+                return
+            }
             let pair = try await verificationService.completeNewDevice(loginToken: state.loginToken)
             await loginService.storeTokens(pair)
             phase = .signedIn

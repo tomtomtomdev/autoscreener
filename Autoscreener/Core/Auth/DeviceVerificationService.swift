@@ -3,14 +3,40 @@ import Foundation
 nonisolated enum OTPChannel: String, CaseIterable, Identifiable, Sendable {
     case email = "CHANNEL_EMAIL"
     case whatsapp = "CHANNEL_WHATSAPP"
+    case sms = "CHANNEL_SMS"
 
     var id: String { rawValue }
     var displayName: String {
         switch self {
         case .email: return "Email"
         case .whatsapp: return "WhatsApp"
+        case .sms: return "SMS"
         }
     }
+    var iconName: String {
+        switch self {
+        case .email: return "envelope"
+        case .whatsapp: return "message"
+        case .sms: return "message.badge"
+        }
+    }
+}
+
+nonisolated struct OTPChallengeChannel: Equatable, Sendable {
+    let channel: OTPChannel
+    let target: String?  // server-masked destination, e.g. "628******506"
+}
+
+nonisolated struct OTPChallengeOffer: Equatable, Sendable {
+    let channels: [OTPChallengeChannel]
+    let defaultChannel: OTPChannel?
+}
+
+nonisolated struct OTPVerifyOutcome: Equatable, Sendable {
+    /// True if the server still wants another OTP step before we may call `completeNewDevice`.
+    let needsAnotherChallenge: Bool
+    let nextChannels: [OTPChallengeChannel]
+    let defaultChannel: OTPChannel?
 }
 
 nonisolated enum DeviceVerificationError: Error, Equatable {
@@ -22,9 +48,9 @@ nonisolated enum DeviceVerificationError: Error, Equatable {
 }
 
 nonisolated protocol DeviceVerificationServicing: Sendable {
-    func startChallenge(verificationToken: String) async throws -> [OTPChannel]
+    func startChallenge(verificationToken: String) async throws -> OTPChallengeOffer
     func sendOTP(verificationToken: String, channel: OTPChannel) async throws
-    func verifyOTP(verificationToken: String, otp: String) async throws
+    func verifyOTP(verificationToken: String, otp: String) async throws -> OTPVerifyOutcome
     func completeNewDevice(loginToken: String) async throws -> TokenPair
 }
 
@@ -32,11 +58,11 @@ nonisolated final class DeviceVerificationService: DeviceVerificationServicing {
     private let session: HTTPSession
     init(session: HTTPSession = URLSession.shared) { self.session = session }
 
-    func startChallenge(verificationToken: String) async throws -> [OTPChannel] {
+    func startChallenge(verificationToken: String) async throws -> OTPChallengeOffer {
         let body = try JSONSerialization.data(withJSONObject: ["verification_token": verificationToken])
         let endpoint = Endpoint(method: .post, path: "mfa/verification/v1/challenge/start", body: body, requiresAuth: false)
         let data = try await call(endpoint)
-        return Self.parseChannels(data)
+        return Self.parseChallengeOffer(data)
     }
 
     func sendOTP(verificationToken: String, channel: OTPChannel) async throws {
@@ -48,13 +74,14 @@ nonisolated final class DeviceVerificationService: DeviceVerificationServicing {
         _ = try await call(endpoint)
     }
 
-    func verifyOTP(verificationToken: String, otp: String) async throws {
+    func verifyOTP(verificationToken: String, otp: String) async throws -> OTPVerifyOutcome {
         let body = try JSONSerialization.data(withJSONObject: [
             "verification_token": verificationToken,
             "otp": otp,
         ])
         let endpoint = Endpoint(method: .post, path: "mfa/verification/v1/challenge/otp/verify", body: body, requiresAuth: false)
-        _ = try await call(endpoint)
+        let data = try await call(endpoint)
+        return Self.parseVerifyOutcome(data)
     }
 
     func completeNewDevice(loginToken: String) async throws -> TokenPair {
@@ -103,15 +130,62 @@ nonisolated final class DeviceVerificationService: DeviceVerificationServicing {
         return message.contains("expired") || errorType.contains("expired") || errorType.contains("invalid_token")
     }
 
-    private static func parseChannels(_ data: Data) -> [OTPChannel] {
+    private static func parseChallengeOffer(_ data: Data) -> OTPChallengeOffer {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return OTPChannel.allCases
+            return Self.fallbackOffer(defaultChannel: .email)
         }
         let payload = (json["data"] as? [String: Any]) ?? json
-        if let raw = payload["channels"] as? [String] {
-            let parsed = raw.compactMap(OTPChannel.init(rawValue:))
-            if !parsed.isEmpty { return parsed }
+        let inner = (payload["supporting_data"] as? [String: Any])?["otp"] as? [String: Any] ?? payload
+
+        let channels: [OTPChallengeChannel]
+        if let arr = inner["channels"] as? [[String: Any]] {
+            channels = arr.compactMap { dict in
+                guard let raw = dict["channel"] as? String, let ch = OTPChannel(rawValue: raw) else { return nil }
+                return OTPChallengeChannel(channel: ch, target: dict["target"] as? String)
+            }
+        } else if let arr = inner["channels"] as? [String] {
+            channels = arr.compactMap(OTPChannel.init(rawValue:))
+                .map { OTPChallengeChannel(channel: $0, target: nil) }
+        } else {
+            channels = []
         }
-        return OTPChannel.allCases
+
+        let defaultChannel = (inner["default_channel"] as? String).flatMap(OTPChannel.init(rawValue:))
+        if channels.isEmpty {
+            return Self.fallbackOffer(defaultChannel: defaultChannel ?? .email)
+        }
+        return OTPChallengeOffer(channels: channels, defaultChannel: defaultChannel ?? channels.first?.channel)
+    }
+
+    private static func fallbackOffer(defaultChannel: OTPChannel) -> OTPChallengeOffer {
+        OTPChallengeOffer(
+            channels: [OTPChallengeChannel(channel: defaultChannel, target: nil)],
+            defaultChannel: defaultChannel
+        )
+    }
+
+    private static func parseVerifyOutcome(_ data: Data) -> OTPVerifyOutcome {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = json["data"] as? [String: Any] else {
+            return OTPVerifyOutcome(needsAnotherChallenge: false, nextChannels: [], defaultChannel: nil)
+        }
+        let nextChallenge = payload["next_challenge"] as? String
+        let supporting = (payload["supporting_data"] as? [String: Any])?["otp"] as? [String: Any] ?? [:]
+
+        let channelsRaw = supporting["channels"] as? [[String: Any]] ?? []
+        let channels = channelsRaw.compactMap { dict -> OTPChallengeChannel? in
+            guard let raw = dict["channel"] as? String, let ch = OTPChannel(rawValue: raw) else { return nil }
+            return OTPChallengeChannel(channel: ch, target: dict["target"] as? String)
+        }
+        let defaultChannel = (supporting["default_channel"] as? String).flatMap(OTPChannel.init(rawValue:))
+
+        // The server signals "another OTP needed" via next_challenge == "CHALLENGE_OTP";
+        // anything missing/null/"NONE"/etc. means we're done with the MFA scope.
+        let needsAnother = (nextChallenge?.uppercased() == "CHALLENGE_OTP")
+        return OTPVerifyOutcome(
+            needsAnotherChallenge: needsAnother,
+            nextChannels: channels,
+            defaultChannel: defaultChannel
+        )
     }
 }

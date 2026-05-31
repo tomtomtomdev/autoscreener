@@ -3,16 +3,22 @@ import Testing
 @testable import Autoscreener
 
 @Suite struct DeviceVerificationServiceTests {
-    @Test func startChallengeSendsVerificationTokenAndReturnsChannels() async throws {
+    @Test func startChallengeReturnsRichChannelOffer() async throws {
         let session = StubSession([.init(
             status: 200,
-            body: Data(#"{"data":{"channels":["CHANNEL_EMAIL","CHANNEL_WHATSAPP"]}}"#.utf8)
+            body: Data(#"""
+            {"data":{"supporting_data":{"otp":{
+              "channels":[{"channel":"CHANNEL_EMAIL","target":"t***@e.com"}],
+              "default_channel":"CHANNEL_EMAIL"
+            }}}}
+            """#.utf8)
         )])
         let svc = DeviceVerificationService(session: session)
 
-        let channels = try await svc.startChallenge(verificationToken: "V")
+        let offer = try await svc.startChallenge(verificationToken: "V")
 
-        #expect(channels == [.email, .whatsapp])
+        #expect(offer.channels == [OTPChallengeChannel(channel: .email, target: "t***@e.com")])
+        #expect(offer.defaultChannel == .email)
         let req = session.received[0]
         #expect(req.url?.path == "/mfa/verification/v1/challenge/start")
         #expect(req.value(forHTTPHeaderField: "authorization") == nil)
@@ -20,11 +26,38 @@ import Testing
         #expect(body["verification_token"] == "V")
     }
 
-    @Test func startChallengeFallsBackToAllChannelsWhenResponseLacksList() async throws {
+    @Test func startChallengeFallsBackWhenResponseLacksChannels() async throws {
         let session = StubSession([.init(status: 200, body: Data("{}".utf8))])
         let svc = DeviceVerificationService(session: session)
-        let channels = try await svc.startChallenge(verificationToken: "V")
-        #expect(channels == OTPChannel.allCases)
+        let offer = try await svc.startChallenge(verificationToken: "V")
+        #expect(offer.defaultChannel == .email)
+        #expect(offer.channels == [OTPChallengeChannel(channel: .email, target: nil)])
+    }
+
+    @Test func verifyOTPDetectsAnotherChallenge() async throws {
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"""
+            {"message":"Verifikasi OTP sukses","data":{"next_challenge":"CHALLENGE_OTP","supporting_data":{"otp":{
+              "channels":[
+                {"channel":"CHANNEL_WHATSAPP","target":"628******506"},
+                {"channel":"CHANNEL_SMS","target":"628******506"}],
+              "default_channel":"CHANNEL_WHATSAPP"}}}}
+            """#.utf8)
+        )])
+        let svc = DeviceVerificationService(session: session)
+        let outcome = try await svc.verifyOTP(verificationToken: "V", otp: "1")
+        #expect(outcome.needsAnotherChallenge)
+        #expect(outcome.defaultChannel == .whatsapp)
+        #expect(outcome.nextChannels.map(\.channel) == [.whatsapp, .sms])
+        #expect(outcome.nextChannels[0].target == "628******506")
+    }
+
+    @Test func verifyOTPReportsDoneWhenNoNextChallenge() async throws {
+        let session = StubSession([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
+        let svc = DeviceVerificationService(session: session)
+        let outcome = try await svc.verifyOTP(verificationToken: "V", otp: "1")
+        #expect(outcome.needsAnotherChallenge == false)
     }
 
     @Test func sendOTPSerializesChannel() async throws {

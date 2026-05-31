@@ -73,15 +73,15 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func verificationRows(_ state: SettingsViewModel.VerificationState) -> some View {
-        Text("New device detected. Choose where Stockbit should send your one-time code.")
+        Text(prompt(for: state))
             .font(.callout)
             .foregroundStyle(.secondary)
 
         HStack(spacing: 8) {
-            ForEach(state.availableChannels) { channel in
-                Button(action: { Task { await vm.requestOTP(via: channel) } }) {
-                    Label(buttonLabel(for: channel, state: state),
-                          systemImage: icon(for: channel))
+            ForEach(state.availableChannels, id: \.channel) { item in
+                Button(action: { Task { await vm.requestOTP(via: item.channel) } }) {
+                    Label(buttonLabel(for: item.channel, state: state),
+                          systemImage: item.channel.iconName)
                 }
                 .disabled(state.isSubmitting)
             }
@@ -91,7 +91,7 @@ struct SettingsView: View {
         }
 
         if let sent = state.sentChannel {
-            Label("Code sent via \(sent.displayName). Check your inbox / chats.",
+            Label(sentCopy(channel: sent, target: state.sentTarget),
                   systemImage: "envelope.badge")
                 .font(.callout)
                 .foregroundStyle(.green)
@@ -119,17 +119,27 @@ struct SettingsView: View {
         }
     }
 
+    private func prompt(for state: SettingsViewModel.VerificationState) -> String {
+        switch state.step {
+        case 1:
+            return "New device detected. Choose where Stockbit should send your one-time code."
+        default:
+            return "One more step. Stockbit needs to verify your phone number too — pick a channel for the next code."
+        }
+    }
+
+    private func sentCopy(channel: OTPChannel, target: String?) -> String {
+        if let target {
+            return "Code sent via \(channel.displayName) to \(target)."
+        } else {
+            return "Code sent via \(channel.displayName). Check your inbox / chats."
+        }
+    }
+
     private func buttonLabel(for channel: OTPChannel, state: SettingsViewModel.VerificationState) -> String {
         if state.sentChannel == channel { return "Resend \(channel.displayName)" }
         if state.sentChannel != nil { return "Switch to \(channel.displayName)" }
         return "Send via \(channel.displayName)"
-    }
-
-    private func icon(for channel: OTPChannel) -> String {
-        switch channel {
-        case .email: return "envelope"
-        case .whatsapp: return "message"
-        }
     }
 }
 

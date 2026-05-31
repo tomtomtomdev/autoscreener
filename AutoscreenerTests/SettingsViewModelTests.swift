@@ -26,7 +26,13 @@ final class FakeLoginService: LoginServicing, @unchecked Sendable {
 }
 
 final class FakeDeviceVerificationService: DeviceVerificationServicing, @unchecked Sendable {
-    var channels: [OTPChannel] = OTPChannel.allCases
+    var startOffer = OTPChallengeOffer(
+        channels: [OTPChallengeChannel(channel: .email, target: "t***@e.com")],
+        defaultChannel: .email
+    )
+    var verifyOutcomes: [OTPVerifyOutcome] = [
+        OTPVerifyOutcome(needsAnotherChallenge: false, nextChannels: [], defaultChannel: nil)
+    ]
     var startError: Error?
     var sendError: Error?
     var verifyError: Error?
@@ -38,18 +44,21 @@ final class FakeDeviceVerificationService: DeviceVerificationServicing, @uncheck
     private(set) var verifyCalls: [(token: String, otp: String)] = []
     private(set) var completeCalls: [String] = []
 
-    func startChallenge(verificationToken: String) async throws -> [OTPChannel] {
+    func startChallenge(verificationToken: String) async throws -> OTPChallengeOffer {
         startCalls.append(verificationToken)
         if let startError { throw startError }
-        return channels
+        return startOffer
     }
     func sendOTP(verificationToken: String, channel: OTPChannel) async throws {
         sendCalls.append((verificationToken, channel))
         if let sendError { throw sendError }
     }
-    func verifyOTP(verificationToken: String, otp: String) async throws {
+    func verifyOTP(verificationToken: String, otp: String) async throws -> OTPVerifyOutcome {
         verifyCalls.append((verificationToken, otp))
         if let verifyError { throw verifyError }
+        return verifyOutcomes.isEmpty
+            ? OTPVerifyOutcome(needsAnotherChallenge: false, nextChannels: [], defaultChannel: nil)
+            : verifyOutcomes.removeFirst()
     }
     func completeNewDevice(loginToken: String) async throws -> TokenPair {
         completeCalls.append(loginToken)
@@ -113,7 +122,7 @@ private func makeVM(login: FakeLoginService = .init(),
 
     // MARK: - Device verification flow
 
-    @Test func mfaFlowEntersVerificationPhaseAndStartsChallenge() async {
+    @Test func mfaFlowAutoSendsDefaultChannelOnEntry() async {
         let svc = FakeLoginService()
         svc.outcome = .success(.needsDeviceVerification(loginToken: "L", verificationToken: "V"))
         let verifier = FakeDeviceVerificationService()
@@ -127,43 +136,53 @@ private func makeVM(login: FakeLoginService = .init(),
         }
         #expect(state.loginToken == "L")
         #expect(state.verificationToken == "V")
+        #expect(state.step == 1)
         #expect(verifier.startCalls == ["V"])
+        #expect(verifier.sendCalls.map(\.channel) == [.email])
+        #expect(state.sentChannel == .email)
+        #expect(state.sentTarget == "t***@e.com")
         #expect(vm.password == "")
     }
 
-    @Test func requestOTPMarksSentChannel() async {
+    @Test func multiStepFlowChainsEmailThenPhoneThenCompletes() async {
         let svc = FakeLoginService()
         svc.outcome = .success(.needsDeviceVerification(loginToken: "L", verificationToken: "V"))
         let verifier = FakeDeviceVerificationService()
+        verifier.verifyOutcomes = [
+            // After email OTP — server demands phone OTP
+            OTPVerifyOutcome(
+                needsAnotherChallenge: true,
+                nextChannels: [
+                    OTPChallengeChannel(channel: .whatsapp, target: "628******506"),
+                    OTPChallengeChannel(channel: .sms, target: "628******506"),
+                ],
+                defaultChannel: .whatsapp
+            ),
+            // After phone OTP — done
+            OTPVerifyOutcome(needsAnotherChallenge: false, nextChannels: [], defaultChannel: nil),
+        ]
         let vm = makeVM(login: svc, verifier: verifier)
         vm.username = "u"; vm.password = "p"
+
         await vm.submit()
+        // step 1: email auto-sent
+        vm.updateOTP("111111")
+        await vm.verifyOTP()
 
-        await vm.requestOTP(via: .email)
+        guard case .verifying(let mid) = vm.phase else {
+            Issue.record("expected .verifying after email OTP"); return
+        }
+        #expect(mid.step == 2)
+        #expect(mid.sentChannel == .whatsapp)
+        #expect(mid.sentTarget == "628******506")
+        #expect(verifier.completeCalls.isEmpty)
 
-        guard case .verifying(let s) = vm.phase else { Issue.record("expected .verifying"); return }
-        #expect(s.sentChannel == .email)
-        #expect(verifier.sendCalls.count == 1)
-        #expect(verifier.sendCalls[0].channel == .email)
-        #expect(verifier.sendCalls[0].token == "V")
-    }
-
-    @Test func verifyOTPCompletesNewDeviceAndStoresTokens() async {
-        let svc = FakeLoginService()
-        svc.outcome = .success(.needsDeviceVerification(loginToken: "L", verificationToken: "V"))
-        let verifier = FakeDeviceVerificationService()
-        verifier.completeReturn = TokenPair(accessToken: "ACC", refreshToken: "REF")
-        let vm = makeVM(login: svc, verifier: verifier)
-        vm.username = "u"; vm.password = "p"
-        await vm.submit()
-        await vm.requestOTP(via: .email)
-        vm.updateOTP("123456")
-
+        // step 2: phone OTP
+        vm.updateOTP("222222")
         await vm.verifyOTP()
 
         #expect(vm.phase == .signedIn)
-        #expect(verifier.verifyCalls.count == 1)
-        #expect(verifier.verifyCalls[0].otp == "123456")
+        #expect(verifier.verifyCalls.map(\.otp) == ["111111", "222222"])
         #expect(verifier.completeCalls == ["L"])
         #expect(svc.storeCalls.contains(TokenPair(accessToken: "ACC", refreshToken: "REF")))
     }
@@ -176,7 +195,6 @@ private func makeVM(login: FakeLoginService = .init(),
         let vm = makeVM(login: svc, verifier: verifier)
         vm.username = "u"; vm.password = "p"
         await vm.submit()
-        await vm.requestOTP(via: .email)
         vm.updateOTP("000000")
 
         await vm.verifyOTP()
@@ -196,7 +214,6 @@ private func makeVM(login: FakeLoginService = .init(),
         let vm = makeVM(login: svc, verifier: verifier)
         vm.username = "u"; vm.password = "p"
         await vm.submit()
-        await vm.requestOTP(via: .email)
         vm.updateOTP("123456")
 
         await vm.verifyOTP()
