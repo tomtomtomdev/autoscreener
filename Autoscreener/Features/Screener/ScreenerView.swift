@@ -97,6 +97,15 @@ struct ScreenerView: View {
         let secondName = cols.count > 1 ? cols[1].name : "Metric 2"
         let lastSymbol = vm.rows.last?.symbol
         return Table(vm.rows, sortOrder: $vm.sort) {
+            TableColumn("No") { row in
+                if let i = vm.rows.firstIndex(where: { $0.id == row.id }) {
+                    Text("\(i + 1)")
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .width(min: 36, ideal: 48)
+
             TableColumn("Symbol", value: \.symbol) { row in
                 Text(row.symbol)
                     .monospaced()
@@ -113,16 +122,6 @@ struct ScreenerView: View {
             TableColumn("Name", value: \.name)
                 .width(min: 160, ideal: 220)
 
-            TableColumn("Last") { row in
-                priceCell(row.lastPrice)
-            }
-            .width(min: 70, ideal: 90)
-
-            TableColumn("Δ%") { row in
-                changeCell(row.pctChange)
-            }
-            .width(min: 60, ideal: 70)
-
             TableColumn(firstName) { row in metricCell(row.value(at: 0)) }
             TableColumn(secondName) { row in metricCell(row.value(at: 1)) }
         }
@@ -135,26 +134,6 @@ struct ScreenerView: View {
     private func metricCell(_ value: Double?) -> some View {
         if let v = value {
             Text(formatDecimal(v)).monospacedDigit()
-        } else {
-            Text("—").foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func priceCell(_ value: Double?) -> some View {
-        if let v = value {
-            Text(formatPrice(v)).monospacedDigit()
-        } else {
-            Text("—").foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    private func changeCell(_ value: Double?) -> some View {
-        if let v = value {
-            Text(formatPercent(v))
-                .monospacedDigit()
-                .foregroundStyle(v >= 0 ? .green : .red)
         } else {
             Text("—").foregroundStyle(.secondary)
         }
@@ -188,18 +167,6 @@ struct ScreenerView: View {
         f.numberStyle = .decimal
         f.maximumFractionDigits = 2
         return f.string(from: NSNumber(value: v)) ?? String(v)
-    }
-
-    private func formatPrice(_ v: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.maximumFractionDigits = v < 100 ? 2 : 0
-        return f.string(from: NSNumber(value: v)) ?? String(v)
-    }
-
-    private func formatPercent(_ v: Double) -> String {
-        let sign = v >= 0 ? "+" : ""
-        return "\(sign)\(String(format: "%.2f", v))%"
     }
 }
 
