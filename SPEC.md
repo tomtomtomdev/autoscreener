@@ -294,7 +294,7 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 
 ### 7.2 Toolbar + status bar
 
-- Header row: `config.name` (template name) and `config.universe.scope`, plus **Logs (N)** button (⌘L) that opens a sheet with the full network log, and **Refresh** (⌘R) which re-runs the bootstrap.
+- Header row: `config.name` (template name) and `config.universe.scope`, plus a `ProgressView` while a fetch is in flight. No action buttons — the screener auto-runs on launch and auto-paginates on scroll, and the network log lives in Settings.
 - Status bar (below the table): "N of T rows · page P" when total is known, "N rows · page P" otherwise.
 
 ---
@@ -376,7 +376,7 @@ v1 + bandar-accumulating screener all shipped and exercised end-to-end against t
 - Sign-in works for trusted devices (token grant) and new devices (MFA flow with sequential email→phone OTPs auto-fired on `default_channel`).
 - Tokens persist with their `expired_at`; `APIClient` auto-refreshes inside the 60-second window and surrenders cleanly when the refresh JWT is dead.
 - `AuthState` (`@Observable`) drives ContentView's main → signin transition without a synchronous Keychain probe, eliminating the unit-test Keychain trust prompt.
-- Settings has the redacted network log; ScreenerView has a "Logs (N)" sheet (⌘L) so the wire trace is one click away from the main window.
+- Settings has the redacted network log (⌘,); the main screener window keeps a minimal toolbar — just title + spinner.
 - Bandar-accumulating runs on launch: paywall check + increment → `GET /screener/templates/6676213` (page 1) → infinite-scroll POSTs for pages 2+, terminating on empty / partial-page / total-reached.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; table renders `No · Symbol · Name · <metric 1> · <metric 2>`, sorted by template default on each load.
 

@@ -12,9 +12,9 @@ Native macOS client for running [Stockbit](https://stockbit.com) screeners again
 2. If the device is new, the app walks the Stockbit MFA flow inline — auto-sends the email OTP, you type the 6 digits, server demands a second OTP on WhatsApp/SMS, repeat until tokens are issued.
 3. Tokens (access + refresh) live in the macOS Keychain; the password is never persisted.
 4. The auth layer **pre-emptively refreshes** the access token 60 seconds before it expires (using the server's `expired_at`), and falls back to a single 401-then-refresh-retry as a backstop.
-5. Pick or build a screener (canned *Bandar Value > Bandar Value MA 20* preset for now) → **Run**.
-6. Results render in a sortable, paginated `Table`.
-7. A live **network log panel** below the Settings form shows every request and response, with sensitive values (`password`, `otp`, `*_token`, `authorization`) redacted to `***` in the display while the wire keeps the real values.
+5. The canned *Bandar Value > Bandar Value MA 20* screener auto-runs on launch.
+6. Results render in a sortable `Table` (`No · Symbol · Name · Bandar Value · Bandar Value MA 20`). Scrolling to the last row auto-loads the next page; pagination stops when Stockbit returns an empty page, a partial page below `limit`, or `total` is reached.
+7. A live **network log panel** under Settings (⌘,) shows every request and response, with sensitive values (`password`, `otp`, `*_token`, `authorization`) redacted to `***` in the display while the wire keeps the real values.
 
 Full technical breakdown: [SPEC.md](SPEC.md).
 
@@ -107,6 +107,6 @@ Hosts touched: `exodus.stockbit.com` (REST), `assets.stockbit.com` (logos). Out 
 
 ## Status
 
-v1 scope is feature-complete and tested. Sign-in (trusted + new-device MFA), auto-refresh, and the screener pipeline are all wired against the real backend.
+v1 + bandar-accumulating screener are shipped and working end-to-end against the real `exodus.stockbit.com` backend. Sign-in (trusted + new-device MFA), pre-flight token refresh, four-call screener bootstrap (paywall check + increment + template-with-page-1 + POST pages 2+), and infinite-scroll pagination are all in place.
 
-**Next milestone:** end-to-end "bandar-accumulating" screener results — call the paywall counter + load the saved template + render rows with optional last price / Δ%. See [SPEC §15](SPEC.md#15-next-bandar-accumulating-screener-results-view).
+**Next milestones** — see [SPEC §15](SPEC.md#15-possible-next-milestones) for the ranked menu (filter editor, saved-screeners list, last-screener persistence, company detail, real-time WebSocket, Codable migration of the remaining JSONSerialization spots).
