@@ -6,6 +6,9 @@ final class AppDependencies {
     let loginService: any LoginServicing
     let deviceVerificationService: any DeviceVerificationServicing
     let apiClient: APIClient
+    let paywallService: any PaywallServicing
+    let screenerTemplateService: any ScreenerTemplateServicing
+    let screenerService: any ScreenerServicing
 
     static let shared = AppDependencies()
 
@@ -35,6 +38,9 @@ final class AppDependencies {
         self.loginService = login
         self.deviceVerificationService = verifier
         self.apiClient = client
+        self.paywallService = PaywallService(apiClient: client)
+        self.screenerTemplateService = ScreenerTemplateService(apiClient: client)
+        self.screenerService = ScreenerService(apiClient: client)
 
         Task { [client, login] in
             await client.setRefresher { refreshToken in

@@ -135,7 +135,7 @@ final class FakeScreenerService: ScreenerServicing, @unchecked Sendable {
 }
 
 private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow {
-    ScreenerRow(symbol: symbol, name: symbol + " Co", values: [a, b])
+    ScreenerRow(symbol: symbol, name: symbol + " Co", values: [a, b], lastPrice: nil, pctChange: nil)
 }
 
 @MainActor
@@ -164,7 +164,8 @@ private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow 
         await vm.run()
         await vm.loadMore()
 
-        #expect(vm.rows.map(\.symbol) == ["A", "B"])
+        // Template sort applies after each load — ordercol=2 desc → B(2) before A(1).
+        #expect(vm.rows.map(\.symbol) == ["B", "A"])
         #expect(vm.currentPage == 2)
         #expect(vm.hasMore == false)
     }

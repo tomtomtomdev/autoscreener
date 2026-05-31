@@ -93,7 +93,15 @@ nonisolated final class ScreenerService: ScreenerServicing {
                 }
                 return Self.asDouble(dict[String(id)])
             }
-            return ScreenerRow(symbol: symbol, name: name, values: values)
+            let last = Self.asDouble(dict["last_price"])
+                ?? Self.asDouble(dict["last"])
+                ?? Self.asDouble(dict["price"])
+                ?? Self.asDouble(dict["close"])
+            let change = Self.asDouble(dict["pct_change"])
+                ?? Self.asDouble(dict["change_pct"])
+                ?? Self.asDouble(dict["change_percent"])
+                ?? Self.asDouble(dict["percent_change"])
+            return ScreenerRow(symbol: symbol, name: name, values: values, lastPrice: last, pctChange: change)
         }
         return ScreenerPage(rows: rows, total: total, page: page)
     }

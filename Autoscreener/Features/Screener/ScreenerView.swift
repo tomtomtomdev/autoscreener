@@ -6,33 +6,53 @@ struct ScreenerView: View {
     init() {
         let deps = AppDependencies.shared
         _vm = State(initialValue: ScreenerViewModel(
-            service: ScreenerService(apiClient: deps.apiClient)
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService
         ))
     }
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
+            if let msg = vm.paywallMessage {
+                paywallBanner(msg)
+            }
             Divider()
             content
             Divider()
             statusBar
         }
         .frame(minWidth: 720, minHeight: 480)
+        .task { await vm.autoRunIfNeeded() }
     }
 
     private var toolbar: some View {
         HStack {
-            Text(vm.config.name).font(.headline)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(vm.config.name).font(.headline)
+                Text(vm.config.universe.scope).font(.caption).foregroundStyle(.secondary)
+            }
             Spacer()
             if vm.isLoading {
                 ProgressView().controlSize(.small)
             }
-            Button("Run") { Task { await vm.run() } }
-                .keyboardShortcut(.return, modifiers: [.command])
+            Button("Refresh") { Task { await vm.refresh() } }
+                .keyboardShortcut("r", modifiers: [.command])
                 .disabled(vm.isLoading)
         }
         .padding()
+    }
+
+    @ViewBuilder
+    private func paywallBanner(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text(message).font(.callout).foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal).padding(.vertical, 6)
+        .background(Color.orange.opacity(0.1))
     }
 
     @ViewBuilder
@@ -42,9 +62,9 @@ struct ScreenerView: View {
                                    systemImage: "exclamationmark.triangle",
                                    description: Text(error))
         } else if vm.rows.isEmpty && !vm.isLoading {
-            ContentUnavailableView("Press Run to fetch results",
+            ContentUnavailableView("No matches",
                                    systemImage: "tablecells",
-                                   description: Text("Filter: \(vm.config.name)"))
+                                   description: Text("Press Refresh to re-run \(vm.config.name)."))
         } else {
             resultsTable
         }
@@ -63,18 +83,48 @@ struct ScreenerView: View {
             TableColumn("Name", value: \.name)
                 .width(min: 160, ideal: 220)
 
+            TableColumn("Last") { row in
+                priceCell(row.lastPrice)
+            }
+            .width(min: 70, ideal: 90)
+
+            TableColumn("Δ%") { row in
+                changeCell(row.pctChange)
+            }
+            .width(min: 60, ideal: 70)
+
             TableColumn(firstName) { row in metricCell(row.value(at: 0)) }
             TableColumn(secondName) { row in metricCell(row.value(at: 1)) }
         }
         .onChange(of: vm.sort) { _, _ in
-            vm.rows.sort(using: vm.sort)
+            if !vm.sort.isEmpty { vm.rows.sort(using: vm.sort) }
         }
     }
 
     @ViewBuilder
     private func metricCell(_ value: Double?) -> some View {
         if let v = value {
-            Text(format(v)).monospacedDigit()
+            Text(formatDecimal(v)).monospacedDigit()
+        } else {
+            Text("—").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func priceCell(_ value: Double?) -> some View {
+        if let v = value {
+            Text(formatPrice(v)).monospacedDigit()
+        } else {
+            Text("—").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func changeCell(_ value: Double?) -> some View {
+        if let v = value {
+            Text(formatPercent(v))
+                .monospacedDigit()
+                .foregroundStyle(v >= 0 ? .green : .red)
         } else {
             Text("—").foregroundStyle(.secondary)
         }
@@ -103,11 +153,23 @@ struct ScreenerView: View {
         else { "\(vm.rows.count) rows · page \(vm.currentPage)" }
     }
 
-    private func format(_ v: Double) -> String {
+    private func formatDecimal(_ v: Double) -> String {
         let f = NumberFormatter()
         f.numberStyle = .decimal
         f.maximumFractionDigits = 2
         return f.string(from: NSNumber(value: v)) ?? String(v)
+    }
+
+    private func formatPrice(_ v: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.maximumFractionDigits = v < 100 ? 2 : 0
+        return f.string(from: NSNumber(value: v)) ?? String(v)
+    }
+
+    private func formatPercent(_ v: Double) -> String {
+        let sign = v >= 0 ? "+" : ""
+        return "\(sign)\(String(format: "%.2f", v))%"
     }
 }
 

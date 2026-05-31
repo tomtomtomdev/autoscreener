@@ -62,12 +62,24 @@ nonisolated struct ScreenerRow: Identifiable, Hashable, Sendable {
     let symbol: String
     let name: String
     let values: [Double?]
+    let lastPrice: Double?
+    let pctChange: Double?
 
     var id: String { symbol }
 
     func value(at columnIndex: Int) -> Double? {
         guard columnIndex < values.count else { return nil }
         return values[columnIndex]
+    }
+
+    /// Comparator used by ScreenerView for descending Last/Δ% sorts even when some rows are missing the value.
+    static func sortNilLast<T: Comparable>(_ a: T?, _ b: T?, ascending: Bool) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return false
+        case (nil, _): return false
+        case (_, nil): return true
+        case (let x?, let y?): return ascending ? x < y : x > y
+        }
     }
 }
 
