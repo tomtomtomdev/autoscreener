@@ -147,10 +147,6 @@ struct ScreenerView: View {
             Spacer()
             if !vm.rows.isEmpty {
                 Text(statusText).font(.callout).foregroundStyle(.secondary)
-                if vm.hasMore {
-                    Button("Load more") { Task { await vm.loadMore() } }
-                        .disabled(vm.isLoading)
-                }
             }
         }
         .padding(.horizontal)
