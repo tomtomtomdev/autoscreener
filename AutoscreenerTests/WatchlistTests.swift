@@ -14,6 +14,7 @@ import Testing
         #expect(BandarScreenerKind.shiftToday.weight         == 2.0)
         #expect(BandarScreenerKind.accumDistPositive.weight  == 1.5)
         #expect(BandarScreenerKind.foreignFlow1M.weight      == 1.0)
+        #expect(BandarScreenerKind.foreignFlow6M.weight      == 1.5)
     }
 
     @Test func templateIDsMatchSidebarMapping() {
@@ -24,14 +25,15 @@ import Testing
         #expect(BandarScreenerKind.shiftToday.templateID        == "6676221")
         #expect(BandarScreenerKind.accumDistPositive.templateID == "6676223")
         #expect(BandarScreenerKind.foreignFlow1M.templateID     == "6676225")
+        #expect(BandarScreenerKind.foreignFlow6M.templateID     == "6676228")
     }
 
     /// Regression: when the kind list grows, the WatchlistView toolbar shows the
     /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
     /// the moment a new kind is added — derive from `allCases` instead.
     @Test func maxCompositeScoreSumsAllKindWeights() {
-        // 2.0 + 1.5 + 2.0 + 1.5 + 1.0 = 8.0
-        #expect(BandarScreenerKind.maxCompositeScore == 8.0)
+        // 2.0 + 1.5 + 2.0 + 1.5 + 1.0 + 1.5 = 9.5
+        #expect(BandarScreenerKind.maxCompositeScore == 9.5)
     }
 }
 
@@ -158,6 +160,7 @@ enum WatchlistTestHelpers {
         case "6676221": c.sequence = [14399, 14425]
         case "6676223": c.sequence = [14400]
         case "6676225": c.sequence = [13580]
+        case "6676228": c.sequence = [13582]
         default:        c.sequence = [14399, 14426]
         }
         c.orderColumn = 2
@@ -200,6 +203,7 @@ enum WatchlistTestHelpers {
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
             "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
             "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
+            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
         ]
         let vm = makeVM(paywall: paywall, templates: templates)
 
@@ -207,8 +211,8 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls == [.screener])
         #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225"])
-        #expect(templates.loadCalls.count == 5)
+        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228"])
+        #expect(templates.loadCalls.count == 6)
     }
 
     @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
@@ -324,6 +328,7 @@ enum WatchlistTestHelpers {
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
             "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
             "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
+            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
         ]
         let vm = makeVM(paywall: paywall, templates: templates)
 
@@ -333,7 +338,7 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls.count == 1)
         #expect(paywall.incrementCalls.count == 1)
-        #expect(templates.loadCalls.count == 5)
+        #expect(templates.loadCalls.count == 6)
     }
 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
@@ -384,8 +389,8 @@ enum WatchlistTestHelpers {
     /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
     @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
         // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
-        // 4 other kinds: empty page 1 → 1 request each
-        // Total = 6 requests → 5 throttled sleeps.
+        // 5 other kinds: empty page 1 → 1 request each
+        // Total = 7 requests → 6 throttled sleeps.
         let templates = WatchlistFakeTemplates()
         let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
         templates.resultsByTemplateID = [
@@ -394,6 +399,7 @@ enum WatchlistTestHelpers {
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
             "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
             "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
+            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
         ]
         let screener = WatchlistFakeScreener()
         screener.pages["6676213"] = [
@@ -406,7 +412,7 @@ enum WatchlistTestHelpers {
         await vm.autoRunIfNeeded()
 
         let delays = await recorder.delays
-        #expect(delays.count == 5)
+        #expect(delays.count == 6)
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
     }
 
@@ -451,8 +457,8 @@ enum WatchlistTestHelpers {
 
     /// Serialisation regression: replacing the `async let` fan-out with a sequential
     /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
-    /// shiftToday → accumDistPositive → foreignFlow1M). If a future refactor
-    /// accidentally reverses or interleaves, this asserts the contract.
+    /// shiftToday → accumDistPositive → foreignFlow1M → foreignFlow6M). If a future
+    /// refactor accidentally reverses or interleaves, this asserts the contract.
     @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
@@ -461,11 +467,12 @@ enum WatchlistTestHelpers {
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
             "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
             "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
+            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
         ]
         let vm = makeVM(templates: templates)
 
         await vm.autoRunIfNeeded()
 
-        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225"])
+        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228"])
     }
 }
