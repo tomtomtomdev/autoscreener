@@ -118,6 +118,44 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "5", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Fresh Foreign Buy (templateID 6676238): Net Foreign Buy Streak > 0.
+    /// Same metric (13561) as `foreignBuyStreak` but the threshold is `> 0` — the
+    /// streak has *just* turned positive (≥1 day), so this surfaces names where
+    /// foreign net buying has only recently started rather than `foreignBuyStreak`'s
+    /// sustained ≥5-day run. Mirrors `bandar-master.json`'s `fresh-foreign-buy` rule
+    /// (weight 1.5).
+    static let freshForeignBuy: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 13561, item1_name: "Net Foreign Buy Streak",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// Liquidity Floor (templateID 6676314): Value MA 20 >= 5,000,000,000 IDR.
+    /// Veto gate — stocks failing this 5B 20-day-average traded-value floor are
+    /// flagged in the composite Watchlist regardless of bandar score (mirrors
+    /// `bandar-master.json`'s `liquidity-floor` rule, weight 0.5, veto: true).
+    static let liquidityFloor: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 16454, item1_name: "Value MA 20",
+              item2: "5000000000", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// Intraday Liquidity (templateID 6676320): Value >= 10,000,000,000 IDR.
+    /// Veto gate — stocks failing today's 10B traded-value floor are flagged in
+    /// the composite Watchlist (mirrors `bandar-master.json`'s `intraday-liquidity`
+    /// rule, weight 0.5, veto: true).
+    static let intradayLiquidity: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 13620, item1_name: "Value",
+              item2: "10000000000", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Codable, Sendable {
@@ -147,10 +185,12 @@ nonisolated struct ScreenerConfig: Codable, Sendable {
         case 13580: return "1M Net Foreign Flow"
         case 13581: return "3M Net Foreign Flow"
         case 13582: return "6M Net Foreign Flow"
+        case 13620: return "Value"
         case 14399: return "Bandar Value"
         case 14400: return "Bandar Accum/Dist"
         case 14425: return "Previous Bandar Value"
         case 14426: return "Bandar Value MA 20"
+        case 16454: return "Value MA 20"
         default:    return "Metric \(id)"
         }
     }

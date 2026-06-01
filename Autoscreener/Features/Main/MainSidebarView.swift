@@ -9,6 +9,9 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case foreignFlow6M
     case foreignFlow3M
     case foreignBuyStreak
+    case freshForeignBuy
+    case liquidityFloor
+    case intradayLiquidity
     case watchlist
     case appSettings
 
@@ -23,6 +26,9 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow6M:      return "6M Net Foreign Flow"
         case .foreignFlow3M:      return "3M Net Foreign Flow"
         case .foreignBuyStreak:   return "Foreign Buy Streak ≥5"
+        case .freshForeignBuy:    return "Fresh Foreign Buy"
+        case .liquidityFloor:     return "Liquidity Floor"
+        case .intradayLiquidity:  return "Intraday Liquidity"
         case .watchlist:          return "Watchlist"
         case .appSettings:        return "Settings"
         }
@@ -37,6 +43,9 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow6M:      return "globe.europe.africa"
         case .foreignFlow3M:      return "globe.americas"
         case .foreignBuyStreak:   return "flame.fill"
+        case .freshForeignBuy:    return "sparkles"
+        case .liquidityFloor:     return "drop.fill"
+        case .intradayLiquidity:  return "bolt.fill"
         case .watchlist:          return "star.circle.fill"
         case .appSettings:        return "gearshape"
         }
@@ -51,6 +60,9 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow6M:      return "6676228"
         case .foreignFlow3M:      return "6676231"
         case .foreignBuyStreak:   return "6676235"
+        case .freshForeignBuy:    return "6676238"
+        case .liquidityFloor:     return "6676314"
+        case .intradayLiquidity:  return "6676320"
         case .watchlist:          return nil
         case .appSettings:        return nil
         }
@@ -70,6 +82,9 @@ struct MainSidebarView: View {
     @State private var foreignFlow6MVM: ScreenerViewModel
     @State private var foreignFlow3MVM: ScreenerViewModel
     @State private var foreignBuyStreakVM: ScreenerViewModel
+    @State private var freshForeignBuyVM: ScreenerViewModel
+    @State private var liquidityFloorVM: ScreenerViewModel
+    @State private var intradayLiquidityVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
 
     init() {
@@ -131,6 +146,27 @@ struct MainSidebarView: View {
             snapshots: snaps,
             templateID: "6676235"
         ))
+        _freshForeignBuyVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676238"
+        ))
+        _liquidityFloorVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676314"
+        ))
+        _intradayLiquidityVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676320"
+        ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
@@ -143,7 +179,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .liquidityFloor, .intradayLiquidity, .watchlist]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -205,6 +241,15 @@ struct MainSidebarView: View {
         case .foreignBuyStreak:
             ScreenerView(vm: foreignBuyStreakVM, title: SidebarItem.foreignBuyStreak.title)
                 .id(SidebarItem.foreignBuyStreak)
+        case .freshForeignBuy:
+            ScreenerView(vm: freshForeignBuyVM, title: SidebarItem.freshForeignBuy.title)
+                .id(SidebarItem.freshForeignBuy)
+        case .liquidityFloor:
+            ScreenerView(vm: liquidityFloorVM, title: SidebarItem.liquidityFloor.title)
+                .id(SidebarItem.liquidityFloor)
+        case .intradayLiquidity:
+            ScreenerView(vm: intradayLiquidityVM, title: SidebarItem.intradayLiquidity.title)
+                .id(SidebarItem.intradayLiquidity)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)

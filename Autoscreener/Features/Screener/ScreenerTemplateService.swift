@@ -95,6 +95,9 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676228": return ScreenerFilter.foreignFlow6M
         case "6676231": return ScreenerFilter.foreignFlow3M
         case "6676235": return ScreenerFilter.foreignBuyStreak
+        case "6676238": return ScreenerFilter.freshForeignBuy
+        case "6676314": return ScreenerFilter.liquidityFloor
+        case "6676320": return ScreenerFilter.intradayLiquidity
         default:        return ScreenerFilter.bandarAccumulating
         }
     }
@@ -104,7 +107,10 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     /// (Previous Bandar Value). accum-dist-positive is single-column (14400);
     /// foreign-flow-1m is single-column (13580); foreign-flow-6m is single-column
     /// (13582); foreign-flow-3m is single-column (13581); foreign-buy-streak is
-    /// single-column (13561).
+    /// single-column (13561); fresh-foreign-buy is single-column (13561, same metric
+    /// as foreign-buy-streak but `> 0` instead of `>= 5`); liquidity-floor is
+    /// single-column (16454, Value MA 20); intraday-liquidity is single-column
+    /// (13620, Value).
     private static func defaultSequence(forTemplateID id: String) -> [Int] {
         switch id {
         case "6676221": return [14399, 14425]
@@ -113,6 +119,9 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676228": return [13582]
         case "6676231": return [13581]
         case "6676235": return [13561]
+        case "6676238": return [13561]
+        case "6676314": return [16454]
+        case "6676320": return [13620]
         default:        return [14399, 14426]
         }
     }

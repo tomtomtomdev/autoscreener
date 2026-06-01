@@ -147,6 +147,28 @@ import Testing
         #expect(accumDist.config.filters.first?.item2 == "0")
         #expect(accumDist.config.sequence == [14400])
     }
+
+    /// fresh-foreign-buy (6676238): Net Foreign Buy Streak (13561) > 0 — a `basic`,
+    /// single-column filter sharing the metric of foreign-buy-streak (6676235) but
+    /// with operator `>` and threshold "0" instead of `>=` "5". When the server omits
+    /// template metadata, the parser must pick *this* filter, not foreign-buy-streak's,
+    /// or the page-2+ POSTs would silently screen on `>= 5`.
+    @Test func parseChoosesFreshForeignBuyFilterWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let fresh = try await svc.load(templateID: "6676238")
+
+        #expect(fresh.config.filters.count == 1)
+        #expect(fresh.config.filters.first?.type == .basic)
+        #expect(fresh.config.filters.first?.item1 == 13561)
+        #expect(fresh.config.filters.first?.operator_ == ">")
+        #expect(fresh.config.filters.first?.item2 == "0")
+        #expect(fresh.config.sequence == [13561])
+    }
 }
 
 // MARK: - ScreenerService row enrichment

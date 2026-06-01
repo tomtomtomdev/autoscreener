@@ -93,8 +93,8 @@ final class WatchlistViewModel {
 
         // Serial fan-out: every screener (and every page within each screener) is
         // separated by a randomized 1000–1500ms gap via `throttle()`. Stops Stockbit
-        // from seeing an 8-way parallel burst at t=0.
-        let order: [BandarScreenerKind] = [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak]
+        // from seeing a 10-way parallel burst at t=0.
+        let order: [BandarScreenerKind] = [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .liquidityFloor, .intradayLiquidity]
         var results: [(BandarScreenerKind, Result<KindFetch, Error>)] = []
         var cancelled = false
         for kind in order {

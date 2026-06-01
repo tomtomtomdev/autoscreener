@@ -11,8 +11,8 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Settings → Account**: username + password `TextField`s, "Sign in" button. Credentials never persisted in plaintext; tokens stored in Keychain.
 - [x] **Auth pipeline**: `POST /login/v6/username` → store access + refresh JWTs → pre-flight refresh on `expired_at` proximity → 401 backstop via `POST /login/refresh` → silent retry.
 - [x] **New-device MFA**: detect `multi_factor` envelope, walk `/mfa/verification/v1/challenge/{start,otp/send,otp/verify}` then `/login/v6/new-device/verify` — sequential email → phone OTPs, auto-sent on the server's `default_channel`.
-- [x] **Screener run**: eight canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow, Foreign Buy Streak ≥5) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
-- [x] **Watchlist (composite)**: union of all eight screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc.
+- [x] **Screener run**: eleven canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow, Foreign Buy Streak ≥5, Fresh Foreign Buy, Liquidity Floor, Intraday Liquidity) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
+- [x] **Watchlist (composite)**: union of all eleven screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc. The two liquidity rules are *veto gates*: stocks missing from either are flagged "ILLIQUID" in red regardless of bandar score.
 - [x] **Configurable refresh schedule** (§16): on-demand / 15-min / hourly / daily 08:45 (IDX open) / daily 16:15 (IDX close). Auto-refresh modes persist per-screener + watchlist snapshots to Application Support and seed instant boot.
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
@@ -177,7 +177,12 @@ POST /screener/templates                                                   ← p
 | 6M Net Foreign Flow | `6676228` | `6 Month Net Foreign Flow > 0` *(basic threshold)* | `[13582]` | 1.5 |
 | 3M Net Foreign Flow | `6676231` | `3 Month Net Foreign Flow > 0` *(basic threshold)* | `[13581]` | 1.0 |
 | Foreign Buy Streak ≥5 | `6676235` | `Net Foreign Buy Streak >= 5` *(basic threshold)* | `[13561]` | 1.0 |
-| Watchlist | — | composite of all eight above, deduped by symbol | — | sum (max 11.5) |
+| Fresh Foreign Buy | `6676238` | `Net Foreign Buy Streak > 0` *(basic threshold)* | `[13561]` | 1.5 |
+| Liquidity Floor † | `6676314` | `Value MA 20 >= 5,000,000,000` *(basic threshold)* | `[16454]` | 0.5 |
+| Intraday Liquidity † | `6676320` | `Value >= 10,000,000,000` *(basic threshold)* | `[13620]` | 0.5 |
+| Watchlist | — | composite of all eleven above, deduped by symbol | — | sum (max 14.0) |
+
+† *Veto gate* — `bandar-master.json` declares these `veto: true`. Matching contributes `weight` to the composite score normally (weighted-OR), but **missing from either** trips a hard-AND "ILLIQUID" flag (red) on the row in the Watchlist tab, regardless of bandar score. The flag's tooltip lists which gate(s) the row failed.
 
 *Weights mirror `bandar-master.json` in the Ulysees repo. A symbol's Watchlist score is the sum of the weights of every screener it appears in. The two filter `type`s — `compare` (column vs column, item2 is a metric ID) and `basic` (column vs literal, item2 is a numeric string) — share the same wire shape; the Codable model `ScreenerFilter` round-trips both.
 
@@ -396,23 +401,23 @@ If you ever need to talk to a non-HTTPS host, add a per-host `NSAppTransportSecu
 
 ## 14. Status
 
-v1 + eight screeners (four bandar + three foreign-flow horizons + foreign-buy-streak) + composite Watchlist all shipped and exercised end-to-end against the real backend:
+v1 + eleven screeners (four bandar + three foreign-flow horizons + foreign-buy-streak + fresh-foreign-buy + two veto-gate liquidity rules) + composite Watchlist all shipped and exercised end-to-end against the real backend:
 - Sign-in works for trusted devices (token grant) and new devices (MFA flow with sequential email→phone OTPs auto-fired on `default_channel`).
 - Tokens persist with their `expired_at`; `APIClient` auto-refreshes inside the 60-second window and surrenders cleanly when the refresh JWT is dead.
 - `AuthState` (`@Observable`) drives ContentView's main → signin transition without a synchronous Keychain probe, eliminating the unit-test Keychain trust prompt.
 - Settings has the redacted network log (⌘,); the main screener window keeps a minimal toolbar — just title + spinner.
-- Sidebar lists eight screener tabs (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M Net Foreign Flow, 6M Net Foreign Flow, 3M Net Foreign Flow, Foreign Buy Streak ≥5) plus the composite Watchlist. Each tab holds its own `ScreenerViewModel`, so switching back-and-forth doesn't re-fire the paywall counter.
-- Each tab runs on first reveal: paywall check + increment → `GET /screener/templates/{id}` (page 1) → infinite-scroll POSTs for pages 2+, terminating on empty / partial-page / total-reached. The 2nd metric column is conditional on `sequence.count > 1` (Accum/Dist Positive, the three foreign-flow screeners, and Foreign Buy Streak ≥5 are single-column).
-- Watchlist fans out to all eight templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **11.5**), sorts descending. One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
+- Sidebar lists eleven screener tabs (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M Net Foreign Flow, 6M Net Foreign Flow, 3M Net Foreign Flow, Foreign Buy Streak ≥5, Fresh Foreign Buy, Liquidity Floor, Intraday Liquidity) plus the composite Watchlist. Each tab holds its own `ScreenerViewModel`, so switching back-and-forth doesn't re-fire the paywall counter.
+- Each tab runs on first reveal: paywall check + increment → `GET /screener/templates/{id}` (page 1) → infinite-scroll POSTs for pages 2+, terminating on empty / partial-page / total-reached. The 2nd metric column is conditional on `sequence.count > 1` (Accum/Dist Positive, the three foreign-flow screeners, Foreign Buy Streak ≥5, Fresh Foreign Buy, and both veto-gate liquidity tabs are single-column).
+- Watchlist fans out to all eleven templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **14.0**), sorts descending. Veto-gate rules (Liquidity Floor, Intraday Liquidity) flip a per-row `isVetoed` flag when the stock is missing from either gate — the table renders Symbol/Name in red and shows an "ILLIQUID" Flag column (tooltip lists which gate(s) failed). One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-112 unit tests passing. Next milestone in §16.
+111 unit tests passing. Next milestone in §16.
 
 ---
 
 ## 15. Refresh schedule and persistence
 
-User-selectable cadence applied uniformly across all eight screener tabs + the composite Watchlist. Picker lives in Settings (⌘,).
+User-selectable cadence applied uniformly across all eleven screener tabs + the composite Watchlist. Picker lives in Settings (⌘,).
 
 ### 15.1 Modes
 
@@ -432,20 +437,20 @@ ScreenerScheduler.start(refresh:)
     next = preferences.schedule.nextFireDate(after: now)
     sleep(until: next)
     await refresh()              // → WatchlistViewModel.refresh()
-    persist watchlist.json + 7× per-screener snapshots
+    persist watchlist.json + 11× per-screener snapshots
 ```
 
-The `refresh` closure handed in by `MainSidebarView` calls `watchlistVM.refresh()`. The watchlist already paces its eight calls at 1000–1500 ms (see §4.0), so the scheduler doesn't need its own throttle. As each per-kind fetch completes, the watchlist VM writes that kind's full config + rows to `~/Library/Application Support/Autoscreener/snapshots/<templateID>.json` so the per-tab `ScreenerViewModel` boots from disk on next launch.
+The `refresh` closure handed in by `MainSidebarView` calls `watchlistVM.refresh()`. The watchlist already paces its eleven calls at 1000–1500 ms (see §4.0), so the scheduler doesn't need its own throttle. As each per-kind fetch completes, the watchlist VM writes that kind's full config + rows to `~/Library/Application Support/Autoscreener/snapshots/<templateID>.json` so the per-tab `ScreenerViewModel` boots from disk on next launch.
 
 Cadence changes restart the loop immediately (`MainSidebarView.onChange` observer). `.onDemand` cancels and parks the scheduler.
 
 ### 15.3 Bootstrap with snapshots
 
 - `ScreenerViewModel.autoRunIfNeeded`: if a snapshot exists, render rows + config + `lastFetchedAt` immediately and skip the GET. Otherwise fall through to the existing `GET /screener/templates/{id}` bootstrap.
-- `WatchlistViewModel.autoRunIfNeeded`: if `watchlist.json` exists, render it and skip the eight-way fan-out.
+- `WatchlistViewModel.autoRunIfNeeded`: if `watchlist.json` exists, render it and skip the eleven-way fan-out.
 - `refresh()` (button in every toolbar) always re-fetches.
 
-This makes the first scheduled fetch the only one that pays the full eight-call latency cost — subsequent launches and tab switches are instant.
+This makes the first scheduled fetch the only one that pays the full eleven-call latency cost — subsequent launches and tab switches are instant.
 
 ### 15.4 Persistence file layout
 
@@ -459,6 +464,9 @@ This makes the first scheduled fetch the only one that pays the full eight-call 
 ├── 6676228.json   6M Net Foreign Flow
 ├── 6676231.json   3M Net Foreign Flow
 ├── 6676235.json   Foreign Buy Streak ≥5
+├── 6676238.json   Fresh Foreign Buy
+├── 6676314.json   Liquidity Floor       (veto gate)
+├── 6676320.json   Intraday Liquidity    (veto gate)
 └── watchlist.json                             { rows[], fetchedAt }
 ```
 

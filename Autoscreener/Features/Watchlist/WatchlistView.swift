@@ -46,7 +46,7 @@ struct WatchlistView: View {
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .help("Refetch all seven screeners (throttled)")
+            .help("Refetch all bandar screeners (throttled)")
             .disabled(vm.isLoading)
         }
         .padding()
@@ -99,11 +99,13 @@ struct WatchlistView: View {
 
             TableColumn("Symbol") { row in
                 Text(row.symbol).monospaced()
+                    .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
             }
             .width(min: 80, ideal: 100)
 
             TableColumn("Name") { row in
                 Text(row.name)
+                    .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
             }
             .width(min: 160, ideal: 240)
 
@@ -111,7 +113,27 @@ struct WatchlistView: View {
                 Text(formatScore(row.score)).monospacedDigit()
             }
             .width(min: 60, ideal: 80)
+
+            TableColumn("Flag") { row in
+                if row.isVetoed {
+                    Label("ILLIQUID", systemImage: "exclamationmark.octagon.fill")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .help(vetoReason(row))
+                }
+            }
+            .width(min: 110, ideal: 130)
         }
+    }
+
+    /// Lists which veto gates the row fails (e.g. "Fails: Liquidity Floor, Intraday Liquidity").
+    /// Shown as a tooltip on the ILLIQUID badge so the user can see *why* without
+    /// adding more columns.
+    private func vetoReason(_ row: WatchlistRow) -> String {
+        let missing = BandarScreenerKind.allCases
+            .filter { $0.isVeto && !row.matchedScreeners.contains($0) }
+            .map(\.displayName)
+        return missing.isEmpty ? "" : "Fails: \(missing.joined(separator: ", "))"
     }
 
     private var statusBar: some View {

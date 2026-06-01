@@ -16,6 +16,10 @@ import Testing
         #expect(BandarScreenerKind.foreignFlow1M.weight      == 1.0)
         #expect(BandarScreenerKind.foreignFlow6M.weight      == 1.5)
         #expect(BandarScreenerKind.foreignFlow3M.weight      == 1.0)
+        #expect(BandarScreenerKind.foreignBuyStreak.weight   == 1.0)
+        #expect(BandarScreenerKind.freshForeignBuy.weight    == 1.5)
+        #expect(BandarScreenerKind.liquidityFloor.weight     == 0.5)
+        #expect(BandarScreenerKind.intradayLiquidity.weight  == 0.5)
     }
 
     @Test func templateIDsMatchSidebarMapping() {
@@ -28,14 +32,27 @@ import Testing
         #expect(BandarScreenerKind.foreignFlow1M.templateID     == "6676225")
         #expect(BandarScreenerKind.foreignFlow6M.templateID     == "6676228")
         #expect(BandarScreenerKind.foreignFlow3M.templateID     == "6676231")
+        #expect(BandarScreenerKind.foreignBuyStreak.templateID  == "6676235")
+        #expect(BandarScreenerKind.freshForeignBuy.templateID   == "6676238")
+        #expect(BandarScreenerKind.liquidityFloor.templateID    == "6676314")
+        #expect(BandarScreenerKind.intradayLiquidity.templateID == "6676320")
+    }
+
+    /// `fresh-foreign-buy` shares metric 13561 with `foreign-buy-streak` but is a
+    /// distinct, heavier-weighted (1.5 vs 1.0) smart-money-flow rule — not a veto gate.
+    @Test func freshForeignBuyIsNonVetoSmartMoneyRule() {
+        #expect(BandarScreenerKind.freshForeignBuy.isVeto == false)
+        #expect(BandarScreenerKind.freshForeignBuy.displayName == "Fresh Foreign Buy")
+        // The two liquidity gates remain the only veto kinds.
+        #expect(Set(BandarScreenerKind.allCases.filter(\.isVeto)) == [.liquidityFloor, .intradayLiquidity])
     }
 
     /// Regression: when the kind list grows, the WatchlistView toolbar shows the
     /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
     /// the moment a new kind is added — derive from `allCases` instead.
     @Test func maxCompositeScoreSumsAllKindWeights() {
-        // 2.0 + 1.5 + 2.0 + 1.5 + 1.0 + 1.5 + 1.0 = 10.5
-        #expect(BandarScreenerKind.maxCompositeScore == 10.5)
+        // 2.0 + 1.5 + 2.0 + 1.5 + 1.0 + 1.5 + 1.0 + 1.0 + 1.5 + 0.5 + 0.5 = 14.0
+        #expect(BandarScreenerKind.maxCompositeScore == 14.0)
     }
 }
 
@@ -164,6 +181,10 @@ enum WatchlistTestHelpers {
         case "6676225": c.sequence = [13580]
         case "6676228": c.sequence = [13582]
         case "6676231": c.sequence = [13581]
+        case "6676235": c.sequence = [13561]
+        case "6676238": c.sequence = [13561]
+        case "6676314": c.sequence = [16454]
+        case "6676320": c.sequence = [13620]
         default:        c.sequence = [14399, 14426]
         }
         c.orderColumn = 2
@@ -215,8 +236,8 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls == [.screener])
         #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231"])
-        #expect(templates.loadCalls.count == 7)
+        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676314", "6676320"])
+        #expect(templates.loadCalls.count == 11)
     }
 
     @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
@@ -343,7 +364,7 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls.count == 1)
         #expect(paywall.incrementCalls.count == 1)
-        #expect(templates.loadCalls.count == 7)
+        #expect(templates.loadCalls.count == 11)
     }
 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
@@ -394,8 +415,8 @@ enum WatchlistTestHelpers {
     /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
     @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
         // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
-        // 6 other kinds: empty page 1 → 1 request each
-        // Total = 8 requests → 7 throttled sleeps.
+        // 10 other kinds: empty page 1 → 1 request each
+        // Total = 12 requests → 11 throttled sleeps.
         let templates = WatchlistFakeTemplates()
         let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
         templates.resultsByTemplateID = [
@@ -418,7 +439,7 @@ enum WatchlistTestHelpers {
         await vm.autoRunIfNeeded()
 
         let delays = await recorder.delays
-        #expect(delays.count == 7)
+        #expect(delays.count == 11)
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
     }
 
@@ -464,7 +485,8 @@ enum WatchlistTestHelpers {
     /// Serialisation regression: replacing the `async let` fan-out with a sequential
     /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
     /// shiftToday → accumDistPositive → foreignFlow1M → foreignFlow6M →
-    /// foreignFlow3M). If a future refactor accidentally reverses or interleaves,
+    /// foreignFlow3M → foreignBuyStreak → freshForeignBuy → liquidityFloor →
+    /// intradayLiquidity). If a future refactor accidentally reverses or interleaves,
     /// this asserts the contract.
     @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
         let templates = WatchlistFakeTemplates()
@@ -481,6 +503,6 @@ enum WatchlistTestHelpers {
 
         await vm.autoRunIfNeeded()
 
-        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231"])
+        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676314", "6676320"])
     }
 }
