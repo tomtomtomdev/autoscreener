@@ -3,7 +3,7 @@ import Foundation
 /// One of the three bandar screeners that feed the composite Watchlist.
 /// Weights mirror `screener/bandar-master.json` (Ulysees repo). The watchlist
 /// score for a stock is the sum of `weight` over every kind that returned it.
-nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
+nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
     case accumulating
     case aboveMA20
     case shiftToday
@@ -56,7 +56,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
     }
 }
 
-nonisolated struct WatchlistRow: Identifiable, Hashable, Sendable {
+nonisolated struct WatchlistRow: Identifiable, Hashable, Codable, Sendable {
     let symbol: String
     let name: String
     var matchedScreeners: Set<BandarScreenerKind>

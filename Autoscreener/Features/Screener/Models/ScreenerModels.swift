@@ -1,6 +1,6 @@
 import Foundation
 
-nonisolated struct ScreenerMetric: Hashable, Identifiable, Sendable {
+nonisolated struct ScreenerMetric: Hashable, Identifiable, Codable, Sendable {
     let id: Int
     let name: String
 }
@@ -108,7 +108,7 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
     ]
 }
 
-nonisolated struct ScreenerConfig: Sendable {
+nonisolated struct ScreenerConfig: Codable, Sendable {
     var name: String = "bandar-accumulating"
     var filters: [ScreenerFilter] = ScreenerFilter.bandarAccumulating
     var universe: ScreenerUniverse = .ihsg
@@ -121,6 +121,10 @@ nonisolated struct ScreenerConfig: Sendable {
 
     var columns: [ScreenerMetric] {
         sequence.map { ScreenerMetric(id: $0, name: Self.metricName(for: $0)) }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, filters, universe, sequence, orderColumn, orderType, limit, screenerID, description
     }
 
     /// Maps a Stockbit metric ID to its display name. Extend as new screeners
@@ -139,7 +143,7 @@ nonisolated struct ScreenerConfig: Sendable {
     }
 }
 
-nonisolated struct ScreenerRow: Identifiable, Hashable, Sendable {
+nonisolated struct ScreenerRow: Identifiable, Hashable, Codable, Sendable {
     let symbol: String
     let name: String
     let values: [Double?]

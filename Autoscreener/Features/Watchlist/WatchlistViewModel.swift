@@ -14,11 +14,15 @@ final class WatchlistViewModel {
     var isLoading: Bool = false
     var error: String?
     var paywallMessage: String?
+    /// Wall-clock when the currently-displayed composite landed (fresh fetch or
+    /// persisted snapshot). Drives the toolbar's "as of HH:mm" badge.
+    var lastFetchedAt: Date?
 
     private var didAutoRun: Bool = false
     private let paywall: any PaywallServicing
     private let templates: any ScreenerTemplateServicing
     private let screener: any ScreenerServicing
+    private let snapshots: (any ScreenerSnapshotStoring)?
     private let safetyCap: Int
     private let throttleRange: ClosedRange<UInt64>
     private let sleeper: Sleeper
@@ -29,12 +33,14 @@ final class WatchlistViewModel {
     init(paywall: any PaywallServicing,
          templates: any ScreenerTemplateServicing,
          screener: any ScreenerServicing,
+         snapshots: (any ScreenerSnapshotStoring)? = nil,
          safetyCap: Int = 20,
          throttleRange: ClosedRange<UInt64> = 1_000_000_000...1_500_000_000,
          sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) }) {
         self.paywall = paywall
         self.templates = templates
         self.screener = screener
+        self.snapshots = snapshots
         self.safetyCap = safetyCap
         self.throttleRange = throttleRange
         self.sleeper = sleeper
@@ -42,15 +48,32 @@ final class WatchlistViewModel {
 
     /// One-shot bootstrap. No-ops on repeat so re-appearing views don't re-fire
     /// the paywall counter or the 3 template loads.
+    ///
+    /// Snapshot path: if a watchlist snapshot exists, render it first so the tab
+    /// is never blank; only fire a fresh bootstrap when no snapshot is on disk
+    /// (true first run). The `ScreenerScheduler` owns periodic refreshes.
     func autoRunIfNeeded() async {
         guard !didAutoRun else { return }
         didAutoRun = true
+        let snapshotLoaded = await loadSnapshotIntoView()
+        if snapshotLoaded { return }
         await bootstrap()
     }
 
+    /// User-initiated / scheduler-driven refresh. Always re-fetches; ignores any
+    /// in-memory snapshot.
     func refresh() async {
-        didAutoRun = false
-        await autoRunIfNeeded()
+        await bootstrap()
+    }
+
+    @discardableResult
+    private func loadSnapshotIntoView() async -> Bool {
+        guard let snapshots, let snapshot = await snapshots.loadWatchlist() else {
+            return false
+        }
+        self.rows = snapshot.rows
+        self.lastFetchedAt = snapshot.fetchedAt
+        return true
     }
 
     private func bootstrap() async {
@@ -70,9 +93,9 @@ final class WatchlistViewModel {
 
         // Serial fan-out: every screener (and every page within each screener) is
         // separated by a randomized 1000–1500ms gap via `throttle()`. Stops Stockbit
-        // from seeing a 4-way parallel burst at t=0.
+        // from seeing a 7-way parallel burst at t=0.
         let order: [BandarScreenerKind] = [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M]
-        var results: [(BandarScreenerKind, Result<[ScreenerRow], Error>)] = []
+        var results: [(BandarScreenerKind, Result<KindFetch, Error>)] = []
         var cancelled = false
         for kind in order {
             let res = await fetchAll(kind)
@@ -80,7 +103,7 @@ final class WatchlistViewModel {
             // If the surrounding Task was cancelled (SwiftUI `.task` tear-down on
             // tab switch is the common case), every subsequent throttle() will
             // throw CancellationError. Stop iterating instead of marching through
-            // four guaranteed-failure rounds.
+            // remaining guaranteed-failure rounds.
             if Task.isCancelled || isCancellation(res) { cancelled = true; break }
         }
 
@@ -90,8 +113,8 @@ final class WatchlistViewModel {
         for (kind, result) in results {
             switch result {
             case .success(let fetched):
-                watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.count) rows")
-                for row in fetched {
+                watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
+                for row in fetched.rows {
                     if var existing = byID[row.symbol] {
                         existing.matchedScreeners.insert(kind)
                         byID[row.symbol] = existing
@@ -119,6 +142,24 @@ final class WatchlistViewModel {
             if a.score != b.score { return a.score > b.score }
             return a.symbol < b.symbol
         }
+        lastFetchedAt = Date()
+
+        // Persist the composite plus per-kind snapshots so the next launch — and
+        // sibling ScreenerViewModels — boot from disk instead of replaying every
+        // network call. No-op when persistence is disabled (onDemand schedule).
+        if let snapshots {
+            await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: lastFetchedAt ?? Date()))
+            for (kind, result) in results {
+                guard case .success(let fetched) = result else { continue }
+                let snap = ScreenerSnapshot(
+                    templateID: kind.templateID,
+                    config: fetched.config,
+                    rows: fetched.rows,
+                    total: nil,
+                    fetchedAt: lastFetchedAt ?? Date())
+                await snapshots.saveScreener(snap)
+            }
+        }
 
         if cancelled {
             // Allow the next view-appearance to re-bootstrap from scratch so the
@@ -134,16 +175,25 @@ final class WatchlistViewModel {
         }
     }
 
-    private nonisolated func isCancellation(_ res: Result<[ScreenerRow], Error>) -> Bool {
+    private nonisolated func isCancellation(_ res: Result<KindFetch, Error>) -> Bool {
         if case .failure(let err) = res, err is CancellationError { return true }
         return false
+    }
+
+    /// Bundled per-kind fetch result — both the screener's config (sequence,
+    /// columns, etc.) and all collected rows. The config is required so the
+    /// per-tab ScreenerViewModel can render correct columns when bootstrapping
+    /// from a watchlist-seeded snapshot.
+    private struct KindFetch {
+        let config: ScreenerConfig
+        let rows: [ScreenerRow]
     }
 
     /// Pulls every page for `kind`: page 1 via template-load (GET), pages 2+ via run (POST).
     /// Every outgoing request is preceded by `throttle()` so requests are spaced
     /// 1000–1500ms apart (the first request in a bootstrap pays no gap).
     /// Stops when a page is partial, total is reached, or the safety cap fires.
-    private func fetchAll(_ kind: BandarScreenerKind) async -> Result<[ScreenerRow], Error> {
+    private func fetchAll(_ kind: BandarScreenerKind) async -> Result<KindFetch, Error> {
         watchlistLog.info("\(kind.displayName, privacy: .public): GET templates/\(kind.templateID, privacy: .public)")
         do {
             try await throttle()
@@ -153,8 +203,8 @@ final class WatchlistViewModel {
             let total = initial.page.total
             watchlistLog.info("\(kind.displayName, privacy: .public): page 1 → \(all.count) rows (limit=\(limit), total=\(total ?? -1))")
 
-            if all.count < limit { return .success(all) }
-            if let total, all.count >= total { return .success(all) }
+            if all.count < limit { return .success(KindFetch(config: initial.config, rows: all)) }
+            if let total, all.count >= total { return .success(KindFetch(config: initial.config, rows: all)) }
 
             var page = 2
             while page <= safetyCap {
@@ -166,7 +216,7 @@ final class WatchlistViewModel {
                 if let total, all.count >= total { break }
                 page += 1
             }
-            return .success(all)
+            return .success(KindFetch(config: initial.config, rows: all))
         } catch {
             watchlistLog.error("\(kind.displayName, privacy: .public): threw \(String(reflecting: error), privacy: .public)")
             return .failure(error)

@@ -28,14 +28,38 @@ struct ScreenerView: View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.headline)
-                Text(vm.config.universe.scope).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(vm.config.universe.scope)
+                    if let asOf = vm.lastFetchedAt {
+                        Text("·")
+                        Text("as of \(asOfText(asOf))")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             if vm.isLoading {
                 ProgressView().controlSize(.small)
             }
+            Button {
+                Task { await vm.refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .help("Refetch this screener")
+            .disabled(vm.isLoading)
         }
         .padding()
+    }
+
+    private func asOfText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        let isToday = Calendar.current.isDateInToday(date)
+        if isToday { return f.string(from: date) }
+        f.dateStyle = .short
+        return f.string(from: date)
     }
 
     @ViewBuilder

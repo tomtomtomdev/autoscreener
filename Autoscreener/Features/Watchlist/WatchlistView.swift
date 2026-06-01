@@ -28,15 +28,37 @@ struct WatchlistView: View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.headline)
-                Text("Composite Bandar score · max \(formatScore(BandarScreenerKind.maxCompositeScore))")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("Composite Bandar score · max \(formatScore(BandarScreenerKind.maxCompositeScore))")
+                    if let asOf = vm.lastFetchedAt {
+                        Text("·")
+                        Text("as of \(asOfText(asOf))")
+                    }
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             if vm.isLoading {
                 ProgressView().controlSize(.small)
             }
+            Button {
+                Task { await vm.refresh() }
+            } label: {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .help("Refetch all seven screeners (throttled)")
+            .disabled(vm.isLoading)
         }
         .padding()
+    }
+
+    private func asOfText(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        if Calendar.current.isDateInToday(date) { return f.string(from: date) }
+        f.dateStyle = .short
+        return f.string(from: date)
     }
 
     @ViewBuilder

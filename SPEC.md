@@ -13,6 +13,7 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **New-device MFA**: detect `multi_factor` envelope, walk `/mfa/verification/v1/challenge/{start,otp/send,otp/verify}` then `/login/v6/new-device/verify` — sequential email → phone OTPs, auto-sent on the server's `default_channel`.
 - [x] **Screener run**: seven canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
 - [x] **Watchlist (composite)**: union of all seven screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc.
+- [x] **Configurable refresh schedule** (§16): on-demand / 15-min / hourly / daily 08:45 (IDX open) / daily 16:15 (IDX close). Auto-refresh modes persist per-screener + watchlist snapshots to Application Support and seed instant boot.
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
@@ -345,7 +346,7 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 
 ## 10. Testing
 
-91 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
+112 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
 
 - `JWTTests` — payload base64url decode, `isExpiring` window
 - `LoginServiceTests` — request body + headers, three response envelopes (trusted-device, new-device, flat), `expired_at` parsing, MFA outcome detection, 401 → `invalidCredentials`, refresh bearer attach
@@ -356,6 +357,10 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 - `ScreenerServiceParseTests` — three response envelope shapes + values-array / id-keyed metric layouts + missing-values tolerance
 - `ScreenerViewModelTests` — run, loadMore, clear-on-rerun, error mapping
 - `NetworkLogRedactionTests` — every sensitive key gets `***`, case-insensitive
+- `ScreenerScheduleTests` — next-fire-date math for each cadence (15-min/hourly/daily 08:45 + 16:15 WIB), stale-window durations
+- `ScreenerSnapshotStoreTests` — round-trip per-screener + watchlist JSON in a temp dir, missing-file returns nil, disabled flag suppresses writes
+- `ScreenerViewModelSnapshotTests` — seeded snapshot renders without hitting the network; first-run with no snapshot falls through to GET; refresh writes back; disabled persistence is no-op
+- `ScreenerSchedulerTests` — `.onDemand` leaves `nextFireDate` nil, `stop()` cancels the loop, instant sleep fires refresh, switching to `.onDemand` halts the cycle
 
 UI tests in `AutoscreenerUITests` cover launch only; full sign-in is a real-network smoke (run manually).
 
@@ -400,11 +405,76 @@ v1 + seven screeners (four bandar + three foreign-flow horizons) + composite Wat
 - Watchlist fans out to all seven templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **10.5**), sorts descending. One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-91 unit tests passing. Next milestone in §15.
+112 unit tests passing. Next milestone in §16.
 
 ---
 
-## 15. Possible next milestones
+## 15. Refresh schedule and persistence
+
+User-selectable cadence applied uniformly across all seven screener tabs + the composite Watchlist. Picker lives in Settings (⌘,).
+
+### 15.1 Modes
+
+| Mode | Trigger | Stale window |
+|---|---|---|
+| **On demand** | Tab reveal (first run) + Refresh button. No persistence. | — |
+| **Every 15 minutes** | Next :00 / :15 / :30 / :45 wall-clock. | 15 min |
+| **Every hour** | Next :00. | 60 min |
+| **Daily 08:45 (IDX open)** | 08:45 **Asia/Jakarta** (WIB / UTC+7). | 24 h |
+| **Daily 16:15 (IDX close)** | 16:15 **Asia/Jakarta**. | 24 h |
+
+### 15.2 Lifecycle
+
+```
+ScreenerScheduler.start(refresh:)
+  while !cancelled:
+    next = preferences.schedule.nextFireDate(after: now)
+    sleep(until: next)
+    await refresh()              // → WatchlistViewModel.refresh()
+    persist watchlist.json + 7× per-screener snapshots
+```
+
+The `refresh` closure handed in by `MainSidebarView` calls `watchlistVM.refresh()`. The watchlist already paces its seven calls at 1000–1500 ms (see §4.0), so the scheduler doesn't need its own throttle. As each per-kind fetch completes, the watchlist VM writes that kind's full config + rows to `~/Library/Application Support/Autoscreener/snapshots/<templateID>.json` so the per-tab `ScreenerViewModel` boots from disk on next launch.
+
+Cadence changes restart the loop immediately (`MainSidebarView.onChange` observer). `.onDemand` cancels and parks the scheduler.
+
+### 15.3 Bootstrap with snapshots
+
+- `ScreenerViewModel.autoRunIfNeeded`: if a snapshot exists, render rows + config + `lastFetchedAt` immediately and skip the GET. Otherwise fall through to the existing `GET /screener/templates/{id}` bootstrap.
+- `WatchlistViewModel.autoRunIfNeeded`: if `watchlist.json` exists, render it and skip the seven-way fan-out.
+- `refresh()` (button in every toolbar) always re-fetches.
+
+This makes the first scheduled fetch the only one that pays the full seven-call latency cost — subsequent launches and tab switches are instant.
+
+### 15.4 Persistence file layout
+
+```
+~/Library/Application Support/Autoscreener/snapshots/
+├── 6676213.json   Bandar Accumulating          { templateID, config, rows[], total?, fetchedAt }
+├── 6676217.json   Bandar Above MA20
+├── 6676221.json   Bandar Shift Today
+├── 6676223.json   Accum/Dist Positive
+├── 6676225.json   1M Net Foreign Flow
+├── 6676228.json   6M Net Foreign Flow
+├── 6676231.json   3M Net Foreign Flow
+└── watchlist.json                             { rows[], fetchedAt }
+```
+
+Each file is ≤ ~10 KB. Writes are atomic (`.atomic` option). Reads are tolerant of missing/corrupt files (return nil, callers fall back to bootstrap).
+
+### 15.5 Scope caveat
+
+**macOS apps don't run when quit.** The scheduler is in-process, so scheduled refreshes only fire while Autoscreener is the front/background app. On launch we boot from the most recent snapshot; any catch-up fetch happens on the next user interaction (Refresh button) or the next scheduled fire while running. Out-of-process scheduling via a `launchd` agent is deferred to a future milestone.
+
+### 15.6 Settings UI
+
+The picker, "Last refresh" / "Next refresh" labels (driven by `ScreenerScheduler.lastFireDate` / `nextFireDate`), and a "Refresh now" button live in `AppSettingsView`. "Refresh now" posts `Notification.Name.autoscreenerRefreshNow`, which the sidebar observes to forward the call to the live `WatchlistViewModel`.
+
+Every screener tab and the Watchlist tab also expose their own Refresh button in their toolbar, plus an "as of HH:mm" badge showing when the displayed rows landed.
+
+---
+
+## 16. Possible next milestones
 
 Pick from the ranked list — none are in-flight.
 

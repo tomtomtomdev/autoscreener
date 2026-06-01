@@ -69,52 +69,61 @@ struct MainSidebarView: View {
 
     init() {
         let deps = AppDependencies.shared
+        let snaps = deps.snapshotStore
         _bandarAccumulatingVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676213"
         ))
         _bandarAboveMA20VM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676217"
         ))
         _bandarShiftTodayVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676221"
         ))
         _accumDistPositiveVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676223"
         ))
         _foreignFlow1MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676225"
         ))
         _foreignFlow6MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676228"
         ))
         _foreignFlow3MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
+            snapshots: snaps,
             templateID: "6676231"
         ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            screener: deps.screenerService
+            screener: deps.screenerService,
+            snapshots: snaps
         ))
     }
 
@@ -137,6 +146,24 @@ struct MainSidebarView: View {
         } detail: {
             detail
         }
+        .task { startScheduler() }
+        // Restart the scheduler whenever the user changes the cadence.
+        .onChange(of: AppDependencies.shared.schedulePreferences.schedule) { _, _ in
+            startScheduler()
+        }
+        // Settings' "Refresh now" button posts this; the sidebar owns the watchlist VM.
+        .onReceive(NotificationCenter.default.publisher(for: .autoscreenerRefreshNow)) { _ in
+            Task { await watchlistVM.refresh() }
+        }
+    }
+
+    /// Wires the global scheduler to the watchlist VM. A scheduled fire calls
+    /// `watchlistVM.refresh()`, which seeds per-screener snapshots as it goes
+    /// (see WatchlistViewModel for the persistence path).
+    private func startScheduler() {
+        let scheduler = AppDependencies.shared.scheduler
+        let vm = watchlistVM
+        scheduler.start(refresh: { await vm.refresh() })
     }
 
     @ViewBuilder

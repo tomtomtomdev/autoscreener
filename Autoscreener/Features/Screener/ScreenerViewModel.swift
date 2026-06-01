@@ -13,21 +13,28 @@ final class ScreenerViewModel {
     var paywallMessage: String?
     var sort: [KeyPathComparator<ScreenerRow>] = []
 
+    /// Wall-clock when the currently-displayed rows landed (from a fresh fetch or a
+    /// persisted snapshot). Surfaced to the toolbar as an "as of HH:mm" badge.
+    var lastFetchedAt: Date?
+
     private(set) var currentPage: Int = 0
     private var didAutoRun: Bool = false
     private var serverSaysDone: Bool = false  // set when last fetch returned 0 rows or < limit rows
     private let service: any ScreenerServicing
     private let paywall: (any PaywallServicing)?
     private let templates: (any ScreenerTemplateServicing)?
+    private let snapshots: (any ScreenerSnapshotStoring)?
     let templateID: String
 
     init(service: any ScreenerServicing,
          paywall: (any PaywallServicing)? = nil,
          templates: (any ScreenerTemplateServicing)? = nil,
+         snapshots: (any ScreenerSnapshotStoring)? = nil,
          templateID: String = "6676213") {
         self.service = service
         self.paywall = paywall
         self.templates = templates
+        self.snapshots = snapshots
         self.templateID = templateID
     }
 
@@ -44,14 +51,53 @@ final class ScreenerViewModel {
 
     /// One-shot bootstrap — runs once per ViewModel lifetime (per screener tab).
     /// No-ops on subsequent calls so re-appearing views don't re-trigger paywall counters.
+    ///
+    /// Snapshot path (when a persisted snapshot is available):
+    ///   1. Render snapshot rows immediately so the tab is never blank on first reveal.
+    ///   2. Only re-fetch when there's no snapshot at all (a true first run for this
+    ///      template). Periodic catch-up fetches are the `ScreenerScheduler`'s job —
+    ///      not the per-tab `.task` modifier — to avoid every tab independently
+    ///      racing to refresh.
     func autoRunIfNeeded() async {
         guard !didAutoRun else { return }
         didAutoRun = true
+        let snapshotLoaded = await loadSnapshotIntoView()
+        if snapshotLoaded { return }
         await bootstrap(templateID: templateID)
     }
 
+    /// User-initiated refresh — re-runs the full bootstrap path and writes a fresh
+    /// snapshot to disk (when persistence is enabled).
     func refresh() async {
         await bootstrap(templateID: templateID)
+    }
+
+    @discardableResult
+    private func loadSnapshotIntoView() async -> Bool {
+        guard let snapshots, let snapshot = await snapshots.loadScreener(templateID: templateID) else {
+            return false
+        }
+        self.config = snapshot.config
+        self.rows = snapshot.rows
+        self.total = snapshot.total
+        self.lastFetchedAt = snapshot.fetchedAt
+        // Treat a restored snapshot as a single completed page — `loadMore` is
+        // disabled until the user fires a fresh refresh.
+        self.currentPage = 1
+        self.serverSaysDone = true
+        applyTemplateSort()
+        return true
+    }
+
+    private func persistSnapshotIfPossible() async {
+        guard let snapshots else { return }
+        let snap = ScreenerSnapshot(
+            templateID: templateID,
+            config: config,
+            rows: rows,
+            total: total,
+            fetchedAt: lastFetchedAt ?? Date())
+        await snapshots.saveScreener(snap)
     }
 
     private func bootstrap(templateID: String) async {
@@ -80,9 +126,11 @@ final class ScreenerViewModel {
                 self.rows = initial.page.rows
                 self.total = initial.page.total
                 self.currentPage = 1
+                self.lastFetchedAt = Date()
                 updateServerSaysDone(returnedRowCount: initial.page.rows.count)
                 applyTemplateSort()
                 isLoading = false
+                await persistSnapshotIfPossible()
                 return
             } catch ScreenerError.unauthorized {
                 isLoading = false
@@ -134,7 +182,9 @@ final class ScreenerViewModel {
             rows.append(contentsOf: result.rows)
             total = result.total
             currentPage = page
+            lastFetchedAt = Date()
             updateServerSaysDone(returnedRowCount: result.rows.count)
+            await persistSnapshotIfPossible()
         } catch ScreenerError.unauthorized {
             error = "Session expired. Please sign in again."
         } catch ScreenerError.paywall {
