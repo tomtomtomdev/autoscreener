@@ -12,8 +12,8 @@ Native macOS client for running [Stockbit](https://stockbit.com) screeners again
 2. If the device is new, the app walks the Stockbit MFA flow inline — auto-sends the email OTP, you type the 6 digits, server demands a second OTP on WhatsApp/SMS, repeat until tokens are issued.
 3. Tokens (access + refresh) live in the macOS Keychain; the password is never persisted.
 4. The auth layer **pre-emptively refreshes** the access token 60 seconds before it expires (using the server's `expired_at`), and falls back to a single 401-then-refresh-retry as a backstop.
-5. The sidebar lists four canned screener tabs — **Bandar Accumulating**, **Bandar Above MA20**, **Bandar Shift Today**, **Accum/Dist Positive** — plus a composite **Watchlist** that unions all four and scores each symbol by per-rule weight (mirrors `bandar-master.json`).
-6. Results render in a sortable `Table` (`No · Symbol · Name · <metric 1> · <metric 2>`; the second metric column is omitted for single-column screeners like Accum/Dist Positive). Scrolling to the last row auto-loads the next page; pagination stops when Stockbit returns an empty page, a partial page below `limit`, or `total` is reached.
+5. The sidebar lists seven canned screener tabs — **Bandar Accumulating**, **Bandar Above MA20**, **Bandar Shift Today**, **Accum/Dist Positive**, **1M / 6M / 3M Net Foreign Flow** — plus a composite **Watchlist** that unions all seven and scores each symbol by per-rule weight (mirrors `bandar-master.json`; max composite **10.5**).
+6. Results render in a sortable `Table` (`No · Symbol · Name · <metric 1> · <metric 2>`; the second metric column is omitted for single-column screeners like Accum/Dist Positive and the three foreign-flow tabs). Scrolling to the last row auto-loads the next page; pagination stops when Stockbit returns an empty page, a partial page below `limit`, or `total` is reached.
 7. A live **network log panel** under Settings (⌘,) shows every request and response, with sensitive values (`password`, `otp`, `*_token`, `authorization`) redacted to `***` in the display while the wire keeps the real values.
 
 Full technical breakdown: [SPEC.md](SPEC.md).
@@ -51,7 +51,7 @@ xcodebuild -project Autoscreener.xcodeproj -scheme Autoscreener \
   -destination 'platform=macOS,arch=arm64' -only-testing:AutoscreenerTests test
 ```
 
-83 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the four-screener wire format and response parsers, the Watchlist composite (dedupe, scoring, partial-failure handling), the view models, and network-log redaction.
+91 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the seven-screener wire format and response parsers, the Watchlist composite (dedupe, scoring, throttled sequential fan-out, partial-failure & cancellation handling), the view models, and network-log redaction.
 
 ### Package as DMG
 
@@ -88,8 +88,9 @@ Autoscreener/
 
 Captured wire formats live alongside the source for reproducibility (gitignored — they contain real credentials and JWTs):
 
-- `proxseer_collection.json` — initial sign-in + auth + websocket-key requests
-- `proxseer_collection (1).json` — screener / paywall / chart requests, full new-device MFA flow
+- `proxseer_collection.json` — initial sign-in + auth + websocket-key requests; first foreign-flow screener (`foreign-flow-1m`, template 6676225)
+- `proxseer_collection (1).json` — screener / paywall / chart requests, full new-device MFA flow; `foreign-flow-6m` template 6676228
+- `proxseer_collection (2).json` — `foreign-flow-3m` template 6676231
 
 Hosts touched: `exodus.stockbit.com` (REST), `assets.stockbit.com` (logos). Out of scope for v1: `ws3.stockbit.com` / `wss-jkt.trading.stockbit.com` (real-time WebSockets).
 
@@ -107,6 +108,6 @@ Hosts touched: `exodus.stockbit.com` (REST), `assets.stockbit.com` (logos). Out 
 
 ## Status
 
-v1 + four bandar screener tabs (Accumulating, Above MA20, Shift Today, Accum/Dist Positive) + composite Watchlist are all shipped and working end-to-end against the real `exodus.stockbit.com` backend. Sign-in (trusted + new-device MFA), pre-flight token refresh, four-call screener bootstrap (paywall check + increment + template-with-page-1 + POST pages 2+), and infinite-scroll pagination are all in place.
+v1 + seven screener tabs (Accumulating, Above MA20, Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow) + composite Watchlist are all shipped and working end-to-end against the real `exodus.stockbit.com` backend. Sign-in (trusted + new-device MFA), pre-flight token refresh, four-call screener bootstrap (paywall check + increment + template-with-page-1 + POST pages 2+), and infinite-scroll pagination are all in place. The Watchlist fan-out is throttled (sequential, randomised 1000–1500 ms gap) and cancellation-tolerant so a tab switch mid-bootstrap doesn't surface as a user-visible error.
 
 **Next milestones** — see [SPEC §15](SPEC.md#15-possible-next-milestones) for the ranked menu (filter editor, saved-screeners list, last-screener persistence, company detail, real-time WebSocket, Codable migration of the remaining JSONSerialization spots).

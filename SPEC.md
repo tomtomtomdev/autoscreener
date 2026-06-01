@@ -11,8 +11,8 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Settings → Account**: username + password `TextField`s, "Sign in" button. Credentials never persisted in plaintext; tokens stored in Keychain.
 - [x] **Auth pipeline**: `POST /login/v6/username` → store access + refresh JWTs → pre-flight refresh on `expired_at` proximity → 401 backstop via `POST /login/refresh` → silent retry.
 - [x] **New-device MFA**: detect `multi_factor` envelope, walk `/mfa/verification/v1/challenge/{start,otp/send,otp/verify}` then `/login/v6/new-device/verify` — sequential email → phone OTPs, auto-sent on the server's `default_channel`.
-- [x] **Screener run**: four canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
-- [x] **Watchlist (composite)**: union of all four screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc.
+- [x] **Screener run**: seven canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
+- [x] **Watchlist (composite)**: union of all seven screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc.
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
@@ -172,7 +172,10 @@ POST /screener/templates                                                   ← p
 | Bandar Above MA20 | `6676217` | `Bandar Value > Bandar Value MA 20` | `[14399, 14426]` | 1.5 |
 | Bandar Shift Today | `6676221` | `Bandar Value > Previous Bandar Value` | `[14399, 14425]` | 2.0 |
 | Accum/Dist Positive | `6676223` | `Bandar Accum/Dist > 0` *(basic threshold)* | `[14400]` | 1.5 |
-| Watchlist | — | composite of all four above, deduped by symbol | — | sum |
+| 1M Net Foreign Flow | `6676225` | `1 Month Net Foreign Flow > 0` *(basic threshold)* | `[13580]` | 1.0 |
+| 6M Net Foreign Flow | `6676228` | `6 Month Net Foreign Flow > 0` *(basic threshold)* | `[13582]` | 1.5 |
+| 3M Net Foreign Flow | `6676231` | `3 Month Net Foreign Flow > 0` *(basic threshold)* | `[13581]` | 1.0 |
+| Watchlist | — | composite of all seven above, deduped by symbol | — | sum (max 10.5) |
 
 *Weights mirror `bandar-master.json` in the Ulysees repo. A symbol's Watchlist score is the sum of the weights of every screener it appears in. The two filter `type`s — `compare` (column vs column, item2 is a metric ID) and `basic` (column vs literal, item2 is a numeric string) — share the same wire shape; the Codable model `ScreenerFilter` round-trips both.
 
@@ -342,7 +345,7 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 
 ## 10. Testing
 
-83 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
+91 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
 
 - `JWTTests` — payload base64url decode, `isExpiring` window
 - `LoginServiceTests` — request body + headers, three response envelopes (trusted-device, new-device, flat), `expired_at` parsing, MFA outcome detection, 401 → `invalidCredentials`, refresh bearer attach
@@ -387,17 +390,17 @@ If you ever need to talk to a non-HTTPS host, add a per-host `NSAppTransportSecu
 
 ## 14. Status
 
-v1 + four bandar screeners + composite Watchlist all shipped and exercised end-to-end against the real backend:
+v1 + seven screeners (four bandar + three foreign-flow horizons) + composite Watchlist all shipped and exercised end-to-end against the real backend:
 - Sign-in works for trusted devices (token grant) and new devices (MFA flow with sequential email→phone OTPs auto-fired on `default_channel`).
 - Tokens persist with their `expired_at`; `APIClient` auto-refreshes inside the 60-second window and surrenders cleanly when the refresh JWT is dead.
 - `AuthState` (`@Observable`) drives ContentView's main → signin transition without a synchronous Keychain probe, eliminating the unit-test Keychain trust prompt.
 - Settings has the redacted network log (⌘,); the main screener window keeps a minimal toolbar — just title + spinner.
-- Sidebar lists four screener tabs (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive) plus the composite Watchlist. Each tab holds its own `ScreenerViewModel`, so switching back-and-forth doesn't re-fire the paywall counter.
-- Each tab runs on first reveal: paywall check + increment → `GET /screener/templates/{id}` (page 1) → infinite-scroll POSTs for pages 2+, terminating on empty / partial-page / total-reached. The 2nd metric column is conditional on `sequence.count > 1` (Accum/Dist Positive is single-column).
-- Watchlist fans out to all four templates concurrently, unions rows by symbol, scores by per-rule weight (`bandar-master.json`), sorts descending. One paywall counter increment for the whole composite.
+- Sidebar lists seven screener tabs (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M Net Foreign Flow, 6M Net Foreign Flow, 3M Net Foreign Flow) plus the composite Watchlist. Each tab holds its own `ScreenerViewModel`, so switching back-and-forth doesn't re-fire the paywall counter.
+- Each tab runs on first reveal: paywall check + increment → `GET /screener/templates/{id}` (page 1) → infinite-scroll POSTs for pages 2+, terminating on empty / partial-page / total-reached. The 2nd metric column is conditional on `sequence.count > 1` (Accum/Dist Positive and the three foreign-flow screeners are single-column).
+- Watchlist fans out to all seven templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **10.5**), sorts descending. One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-83 unit tests passing. Next milestone in §15.
+91 unit tests passing. Next milestone in §15.
 
 ---
 
