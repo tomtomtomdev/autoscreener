@@ -114,12 +114,14 @@ import Testing
         let session = StubSession([
             .init(status: 200, body: body),
             .init(status: 200, body: body),
+            .init(status: 200, body: body),
         ])
         let client = APIClient(session: session, tokens: store)
         let svc = ScreenerTemplateService(apiClient: client)
 
         let accumulating = try await svc.load(templateID: "6676213")
         let aboveMA20    = try await svc.load(templateID: "6676217")
+        let shiftToday   = try await svc.load(templateID: "6676221")
 
         // bandar-accumulating: compare (value > MA20) + basic (value > 0) = 2 filters
         #expect(accumulating.config.filters.count == 2)
@@ -127,6 +129,13 @@ import Testing
         // sidebar advertises). With the wrong fallback, this would be 2.
         #expect(aboveMA20.config.filters.count == 1)
         #expect(aboveMA20.config.filters.first?.type == .compare)
+        // bandar-shift-today: Bandar Value (14399) > Previous Bandar Value (14425).
+        // Sequence and item2 differ from above-ma20; if we reused above-ma20's filter
+        // set the POST would compare against 14426 (Bandar Value MA 20) instead.
+        #expect(shiftToday.config.filters.count == 1)
+        #expect(shiftToday.config.filters.first?.item1 == 14399)
+        #expect(shiftToday.config.filters.first?.item2 == "14425")
+        #expect(shiftToday.config.sequence == [14399, 14425])
     }
 }
 

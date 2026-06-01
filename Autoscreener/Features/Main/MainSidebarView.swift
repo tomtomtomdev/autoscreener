@@ -3,6 +3,7 @@ import SwiftUI
 nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case bandarAccumulating
     case bandarAboveMA20
+    case bandarShiftToday
     case appSettings
 
     var id: Self { self }
@@ -10,6 +11,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         switch self {
         case .bandarAccumulating: return "Bandar Accumulating"
         case .bandarAboveMA20:    return "Bandar Above MA20"
+        case .bandarShiftToday:   return "Bandar Shift Today"
         case .appSettings:        return "Settings"
         }
     }
@@ -17,6 +19,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         switch self {
         case .bandarAccumulating: return "chart.bar.doc.horizontal"
         case .bandarAboveMA20:    return "chart.line.uptrend.xyaxis"
+        case .bandarShiftToday:   return "arrow.left.arrow.right.circle"
         case .appSettings:        return "gearshape"
         }
     }
@@ -24,6 +27,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         switch self {
         case .bandarAccumulating: return "6676213"
         case .bandarAboveMA20:    return "6676217"
+        case .bandarShiftToday:   return "6676221"
         case .appSettings:        return nil
         }
     }
@@ -36,6 +40,7 @@ struct MainSidebarView: View {
     // and doesn't fire a fresh paywall counter on every back-and-forth.
     @State private var bandarAccumulatingVM: ScreenerViewModel
     @State private var bandarAboveMA20VM: ScreenerViewModel
+    @State private var bandarShiftTodayVM: ScreenerViewModel
 
     init() {
         let deps = AppDependencies.shared
@@ -51,13 +56,19 @@ struct MainSidebarView: View {
             templates: deps.screenerTemplateService,
             templateID: "6676217"
         ))
+        _bandarShiftTodayVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            templateID: "6676221"
+        ))
     }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -83,6 +94,9 @@ struct MainSidebarView: View {
         case .bandarAboveMA20:
             ScreenerView(vm: bandarAboveMA20VM, title: SidebarItem.bandarAboveMA20.title)
                 .id(SidebarItem.bandarAboveMA20)
+        case .bandarShiftToday:
+            ScreenerView(vm: bandarShiftTodayVM, title: SidebarItem.bandarShiftToday.title)
+                .id(SidebarItem.bandarShiftToday)
         case .appSettings:
             AppSettingsView()
                 .id(SidebarItem.appSettings)

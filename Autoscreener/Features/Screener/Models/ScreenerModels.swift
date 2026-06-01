@@ -52,6 +52,17 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "14426", item2_name: "Bandar Value MA 20",
               multiplier: "1"),
     ]
+
+    /// Bandar Shift Today (templateID 6676221): Bandar Value > Previous Bandar Value.
+    /// Compares today's accumulation against yesterday's snapshot (metric 14425),
+    /// not the 20-day MA — sequence is `[14399, 14425]`.
+    static let bandarShiftToday: [ScreenerFilter] = [
+        .init(type: .compare,
+              operator_: ">",
+              item1: 14399, item1_name: "Bandar Value",
+              item2: "14425", item2_name: "Previous Bandar Value",
+              multiplier: "1"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Sendable {
@@ -66,7 +77,18 @@ nonisolated struct ScreenerConfig: Sendable {
     var description: String = ""
 
     var columns: [ScreenerMetric] {
-        zip(sequence, ["Bandar Value", "Bandar Value MA 20"]).map(ScreenerMetric.init)
+        sequence.map { ScreenerMetric(id: $0, name: Self.metricName(for: $0)) }
+    }
+
+    /// Maps a Stockbit metric ID to its display name. Extend as new screeners
+    /// introduce new metric IDs — bandar-shift-today added 14425.
+    static func metricName(for id: Int) -> String {
+        switch id {
+        case 14399: return "Bandar Value"
+        case 14425: return "Previous Bandar Value"
+        case 14426: return "Bandar Value MA 20"
+        default:    return "Metric \(id)"
+        }
     }
 }
 

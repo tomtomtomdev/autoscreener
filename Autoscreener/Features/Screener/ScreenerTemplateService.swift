@@ -73,7 +73,7 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         config.description = description
         config.filters = filters.isEmpty ? defaultFilters(forTemplateID: templateID) : filters
         config.universe = universe
-        config.sequence = sequence.isEmpty ? [14399, 14426] : sequence
+        config.sequence = sequence.isEmpty ? defaultSequence(forTemplateID: templateID) : sequence
         config.orderColumn = orderColumn
         config.orderType = orderType
         config.limit = limit
@@ -89,7 +89,18 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     private static func defaultFilters(forTemplateID id: String) -> [ScreenerFilter] {
         switch id {
         case "6676217": return ScreenerFilter.bandarAboveMA20
+        case "6676221": return ScreenerFilter.bandarShiftToday
         default:        return ScreenerFilter.bandarAccumulating
+        }
+    }
+
+    /// Per-screener metric sequence (the IDs to pull from each row's `results`).
+    /// bandar-shift-today swaps the second column from 14426 (MA 20) to 14425
+    /// (Previous Bandar Value).
+    private static func defaultSequence(forTemplateID id: String) -> [Int] {
+        switch id {
+        case "6676221": return [14399, 14425]
+        default:        return [14399, 14426]
         }
     }
 
