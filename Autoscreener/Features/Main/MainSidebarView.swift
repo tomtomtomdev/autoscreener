@@ -4,6 +4,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case bandarAccumulating
     case bandarAboveMA20
     case bandarShiftToday
+    case accumDistPositive
     case watchlist
     case appSettings
 
@@ -13,6 +14,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAccumulating: return "Bandar Accumulating"
         case .bandarAboveMA20:    return "Bandar Above MA20"
         case .bandarShiftToday:   return "Bandar Shift Today"
+        case .accumDistPositive:  return "Accum/Dist Positive"
         case .watchlist:          return "Watchlist"
         case .appSettings:        return "Settings"
         }
@@ -22,6 +24,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAccumulating: return "chart.bar.doc.horizontal"
         case .bandarAboveMA20:    return "chart.line.uptrend.xyaxis"
         case .bandarShiftToday:   return "arrow.left.arrow.right.circle"
+        case .accumDistPositive:  return "arrow.up.circle"
         case .watchlist:          return "star.circle.fill"
         case .appSettings:        return "gearshape"
         }
@@ -31,6 +34,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAccumulating: return "6676213"
         case .bandarAboveMA20:    return "6676217"
         case .bandarShiftToday:   return "6676221"
+        case .accumDistPositive:  return "6676223"
         case .watchlist:          return nil
         case .appSettings:        return nil
         }
@@ -45,6 +49,7 @@ struct MainSidebarView: View {
     @State private var bandarAccumulatingVM: ScreenerViewModel
     @State private var bandarAboveMA20VM: ScreenerViewModel
     @State private var bandarShiftTodayVM: ScreenerViewModel
+    @State private var accumDistPositiveVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
 
     init() {
@@ -67,6 +72,12 @@ struct MainSidebarView: View {
             templates: deps.screenerTemplateService,
             templateID: "6676221"
         ))
+        _accumDistPositiveVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            templateID: "6676223"
+        ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
@@ -78,7 +89,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .watchlist]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -107,6 +118,9 @@ struct MainSidebarView: View {
         case .bandarShiftToday:
             ScreenerView(vm: bandarShiftTodayVM, title: SidebarItem.bandarShiftToday.title)
                 .id(SidebarItem.bandarShiftToday)
+        case .accumDistPositive:
+            ScreenerView(vm: accumDistPositiveVM, title: SidebarItem.accumDistPositive.title)
+                .id(SidebarItem.accumDistPositive)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)

@@ -7,28 +7,32 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
     case accumulating
     case aboveMA20
     case shiftToday
+    case accumDistPositive
 
     var weight: Double {
         switch self {
-        case .accumulating: return 2.0
-        case .aboveMA20:    return 1.5
-        case .shiftToday:   return 2.0
+        case .accumulating:      return 2.0
+        case .aboveMA20:         return 1.5
+        case .shiftToday:        return 2.0
+        case .accumDistPositive: return 1.5
         }
     }
 
     var templateID: String {
         switch self {
-        case .accumulating: return "6676213"
-        case .aboveMA20:    return "6676217"
-        case .shiftToday:   return "6676221"
+        case .accumulating:      return "6676213"
+        case .aboveMA20:         return "6676217"
+        case .shiftToday:        return "6676221"
+        case .accumDistPositive: return "6676223"
         }
     }
 
     var displayName: String {
         switch self {
-        case .accumulating: return "Bandar Accumulating"
-        case .aboveMA20:    return "Bandar Above MA20"
-        case .shiftToday:   return "Bandar Shift Today"
+        case .accumulating:      return "Bandar Accumulating"
+        case .aboveMA20:         return "Bandar Above MA20"
+        case .shiftToday:        return "Bandar Shift Today"
+        case .accumDistPositive: return "Accum/Dist Positive"
         }
     }
 }

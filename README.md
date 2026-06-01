@@ -12,8 +12,8 @@ Native macOS client for running [Stockbit](https://stockbit.com) screeners again
 2. If the device is new, the app walks the Stockbit MFA flow inline — auto-sends the email OTP, you type the 6 digits, server demands a second OTP on WhatsApp/SMS, repeat until tokens are issued.
 3. Tokens (access + refresh) live in the macOS Keychain; the password is never persisted.
 4. The auth layer **pre-emptively refreshes** the access token 60 seconds before it expires (using the server's `expired_at`), and falls back to a single 401-then-refresh-retry as a backstop.
-5. The canned *Bandar Value > Bandar Value MA 20* screener auto-runs on launch.
-6. Results render in a sortable `Table` (`No · Symbol · Name · Bandar Value · Bandar Value MA 20`). Scrolling to the last row auto-loads the next page; pagination stops when Stockbit returns an empty page, a partial page below `limit`, or `total` is reached.
+5. The sidebar lists four canned screener tabs — **Bandar Accumulating**, **Bandar Above MA20**, **Bandar Shift Today**, **Accum/Dist Positive** — plus a composite **Watchlist** that unions all four and scores each symbol by per-rule weight (mirrors `bandar-master.json`).
+6. Results render in a sortable `Table` (`No · Symbol · Name · <metric 1> · <metric 2>`; the second metric column is omitted for single-column screeners like Accum/Dist Positive). Scrolling to the last row auto-loads the next page; pagination stops when Stockbit returns an empty page, a partial page below `limit`, or `total` is reached.
 7. A live **network log panel** under Settings (⌘,) shows every request and response, with sensitive values (`password`, `otp`, `*_token`, `authorization`) redacted to `***` in the display while the wire keeps the real values.
 
 Full technical breakdown: [SPEC.md](SPEC.md).
@@ -51,7 +51,7 @@ xcodebuild -project Autoscreener.xcodeproj -scheme Autoscreener \
   -destination 'platform=macOS,arch=arm64' -only-testing:AutoscreenerTests test
 ```
 
-47 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the screener wire format and response parsers, the view models, and network-log redaction.
+83 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the four-screener wire format and response parsers, the Watchlist composite (dedupe, scoring, partial-failure handling), the view models, and network-log redaction.
 
 ### Package as DMG
 
@@ -107,6 +107,6 @@ Hosts touched: `exodus.stockbit.com` (REST), `assets.stockbit.com` (logos). Out 
 
 ## Status
 
-v1 + bandar-accumulating screener are shipped and working end-to-end against the real `exodus.stockbit.com` backend. Sign-in (trusted + new-device MFA), pre-flight token refresh, four-call screener bootstrap (paywall check + increment + template-with-page-1 + POST pages 2+), and infinite-scroll pagination are all in place.
+v1 + four bandar screener tabs (Accumulating, Above MA20, Shift Today, Accum/Dist Positive) + composite Watchlist are all shipped and working end-to-end against the real `exodus.stockbit.com` backend. Sign-in (trusted + new-device MFA), pre-flight token refresh, four-call screener bootstrap (paywall check + increment + template-with-page-1 + POST pages 2+), and infinite-scroll pagination are all in place.
 
 **Next milestones** — see [SPEC §15](SPEC.md#15-possible-next-milestones) for the ranked menu (filter editor, saved-screeners list, last-screener persistence, company detail, real-time WebSocket, Codable migration of the remaining JSONSerialization spots).

@@ -56,19 +56,22 @@ final class WatchlistViewModel {
         // One increment for the entire watchlist — not 3.
         await paywall.increment(.screener)
 
-        async let accFetch   = fetchAll(.accumulating)
-        async let aboveFetch = fetchAll(.aboveMA20)
-        async let shiftFetch = fetchAll(.shiftToday)
-        let accRes   = await accFetch
-        let aboveRes = await aboveFetch
-        let shiftRes = await shiftFetch
+        async let accFetch       = fetchAll(.accumulating)
+        async let aboveFetch     = fetchAll(.aboveMA20)
+        async let shiftFetch     = fetchAll(.shiftToday)
+        async let accumDistFetch = fetchAll(.accumDistPositive)
+        let accRes       = await accFetch
+        let aboveRes     = await aboveFetch
+        let shiftRes     = await shiftFetch
+        let accumDistRes = await accumDistFetch
 
         var byID: [String: WatchlistRow] = [:]
         var failed: [(BandarScreenerKind, Error)] = []
 
         for (kind, result) in [(BandarScreenerKind.accumulating, accRes),
                                (.aboveMA20, aboveRes),
-                               (.shiftToday, shiftRes)] {
+                               (.shiftToday, shiftRes),
+                               (.accumDistPositive, accumDistRes)] {
             switch result {
             case .success(let fetched):
                 watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.count) rows")

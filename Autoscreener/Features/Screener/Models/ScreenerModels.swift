@@ -63,6 +63,16 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "14425", item2_name: "Previous Bandar Value",
               multiplier: "1"),
     ]
+
+    /// Accum/Dist Positive (templateID 6676223): Bandar Accum/Dist > 0. Single-column
+    /// `basic` filter — `item2` is the literal threshold "0", not a metric ID.
+    static let accumDistPositive: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 14400, item1_name: "Bandar Accum/Dist",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Sendable {
@@ -85,6 +95,7 @@ nonisolated struct ScreenerConfig: Sendable {
     static func metricName(for id: Int) -> String {
         switch id {
         case 14399: return "Bandar Value"
+        case 14400: return "Bandar Accum/Dist"
         case 14425: return "Previous Bandar Value"
         case 14426: return "Bandar Value MA 20"
         default:    return "Metric \(id)"

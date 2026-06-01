@@ -9,22 +9,29 @@ import Testing
     /// If any future edit silently changes these, the watchlist's score loses its
     /// link to the published spec.
     @Test func weightsMatchMasterJSONSpec() {
-        #expect(BandarScreenerKind.accumulating.weight == 2.0)
-        #expect(BandarScreenerKind.aboveMA20.weight == 1.5)
-        #expect(BandarScreenerKind.shiftToday.weight == 2.0)
+        #expect(BandarScreenerKind.accumulating.weight       == 2.0)
+        #expect(BandarScreenerKind.aboveMA20.weight          == 1.5)
+        #expect(BandarScreenerKind.shiftToday.weight         == 2.0)
+        #expect(BandarScreenerKind.accumDistPositive.weight  == 1.5)
     }
 
     @Test func templateIDsMatchSidebarMapping() {
         // Must match SidebarItem.templateID and ScreenerTemplateService.defaultFilters
         // — otherwise the watchlist fetches a different filter set than the sidebar tabs.
-        #expect(BandarScreenerKind.accumulating.templateID == "6676213")
-        #expect(BandarScreenerKind.aboveMA20.templateID    == "6676217")
-        #expect(BandarScreenerKind.shiftToday.templateID   == "6676221")
+        #expect(BandarScreenerKind.accumulating.templateID      == "6676213")
+        #expect(BandarScreenerKind.aboveMA20.templateID         == "6676217")
+        #expect(BandarScreenerKind.shiftToday.templateID        == "6676221")
+        #expect(BandarScreenerKind.accumDistPositive.templateID == "6676223")
     }
 }
 
 @Suite struct WatchlistRowTests {
     @Test func scoreSumsWeightsOfMatchedScreeners() {
+        let allFour = WatchlistRow(symbol: "Q", name: "Q",
+                                   matchedScreeners: [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive])
+        // 2.0 + 1.5 + 2.0 + 1.5 = 7.0
+        #expect(allFour.score == 7.0)
+
         let allThree = WatchlistRow(symbol: "X", name: "X",
                                     matchedScreeners: [.accumulating, .aboveMA20, .shiftToday])
         #expect(allThree.score == 5.5)
@@ -117,7 +124,11 @@ enum WatchlistTestHelpers {
     static func config(for templateID: String) -> ScreenerConfig {
         var c = ScreenerConfig()
         c.screenerID = templateID
-        c.sequence = templateID == "6676221" ? [14399, 14425] : [14399, 14426]
+        switch templateID {
+        case "6676221": c.sequence = [14399, 14425]
+        case "6676223": c.sequence = [14400]
+        default:        c.sequence = [14399, 14426]
+        }
         c.orderColumn = 2
         c.orderType = "desc"
         c.limit = 25
@@ -147,13 +158,14 @@ enum WatchlistTestHelpers {
                            screener: screener, safetyCap: safetyCap)
     }
 
-    @Test func bootstrapFiresPaywallIncrementExactlyOnceAcrossThreeFetches() async {
+    @Test func bootstrapFiresPaywallIncrementExactlyOnceAcrossAllFetches() async {
         let paywall = WatchlistFakePaywall()
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
         ]
         let vm = makeVM(paywall: paywall, templates: templates)
 
@@ -161,12 +173,15 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls == [.screener])
         #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221"])
-        #expect(templates.loadCalls.count == 3)
+        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223"])
+        #expect(templates.loadCalls.count == 4)
     }
 
-    @Test func dedupesBySymbolAcrossThreeScreenersUnioningWeights() async {
-        // BBCA returned by all 3 → score 5.5; BBRI returned by 2 → 3.5; CARE by 1 → 1.5.
+    @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
+        // BBCA returned by all 4 → score 7.0 (2.0+1.5+2.0+1.5).
+        // BBRI returned by accumulating + shiftToday → 4.0.
+        // CARE returned by aboveMA20 only → 1.5.
+        // DSSA returned by accumDistPositive only → 1.5.
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
@@ -175,23 +190,27 @@ enum WatchlistTestHelpers {
                 rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("CARE")])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
                 rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("BBRI")])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
+                rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("DSSA")])),
         ]
         let vm = makeVM(templates: templates)
 
         await vm.autoRunIfNeeded()
 
         let byID = Dictionary(uniqueKeysWithValues: vm.rows.map { ($0.symbol, $0) })
-        #expect(vm.rows.count == 3)
-        #expect(byID["BBCA"]?.matchedScreeners == [.accumulating, .aboveMA20, .shiftToday])
-        #expect(byID["BBCA"]?.score == 5.5)
+        #expect(vm.rows.count == 4)
+        #expect(byID["BBCA"]?.matchedScreeners == [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive])
+        #expect(byID["BBCA"]?.score == 7.0)
         #expect(byID["BBRI"]?.matchedScreeners == [.accumulating, .shiftToday])
         #expect(byID["BBRI"]?.score == 4.0)
         #expect(byID["CARE"]?.matchedScreeners == [.aboveMA20])
         #expect(byID["CARE"]?.score == 1.5)
+        #expect(byID["DSSA"]?.matchedScreeners == [.accumDistPositive])
+        #expect(byID["DSSA"]?.score == 1.5)
     }
 
     @Test func sortsDescendingByScoreThenAscendingBySymbol() async {
-        // AAA and ZZZ both in all 3 (tie 5.5 → AAA first by symbol). MMM in only accumulating (2.0).
+        // AAA and ZZZ both in all 4 (tie 7.0 → AAA first by symbol). MMM in only accumulating (2.0).
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
@@ -199,6 +218,8 @@ enum WatchlistTestHelpers {
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
                 rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
+                rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
                 rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
         ]
         let vm = makeVM(templates: templates)
@@ -210,13 +231,14 @@ enum WatchlistTestHelpers {
 
     @Test func autoPaginatesEachScreenerUntilPartialPage() async {
         // accumulating: page1=25 (full), page2=25 (full), page3=12 (partial → done).
-        // Other two screeners: empty page 1 → no POST.
+        // Other three screeners: empty page 1 → no POST.
         let templates = WatchlistFakeTemplates()
         let page1Acc = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
         templates.resultsByTemplateID = [
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1Acc)),
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
         ]
         let screener = WatchlistFakeScreener()
         screener.pages["6676213"] = [
@@ -232,9 +254,10 @@ enum WatchlistTestHelpers {
         #expect(screener.callCount(for: "6676213") == 2)  // pages 2 and 3
         #expect(screener.callCount(for: "6676217") == 0)
         #expect(screener.callCount(for: "6676221") == 0)
+        #expect(screener.callCount(for: "6676223") == 0)
     }
 
-    @Test func partialScreenerFailureKeepsOtherTwoAndSurfacesError() async {
+    @Test func partialScreenerFailureKeepsRemainingAndSurfacesError() async {
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
@@ -242,14 +265,17 @@ enum WatchlistTestHelpers {
             "6676217": .failure(ScreenerError.malformedResponse),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
                 rows: [WatchlistTestHelpers.row("BBCA")])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
+                rows: [WatchlistTestHelpers.row("BBCA")])),
         ]
         let vm = makeVM(templates: templates)
 
         await vm.autoRunIfNeeded()
 
         #expect(vm.rows.count == 1)
-        #expect(vm.rows.first?.matchedScreeners == [.accumulating, .shiftToday])
-        #expect(vm.rows.first?.score == 4.0)
+        #expect(vm.rows.first?.matchedScreeners == [.accumulating, .shiftToday, .accumDistPositive])
+        // 2.0 + 2.0 + 1.5 = 5.5 (aboveMA20's 1.5 missing due to failure)
+        #expect(vm.rows.first?.score == 5.5)
         #expect(vm.error != nil)
         // Error message names the failed screener so the user knows what's missing.
         #expect(vm.error?.contains("Bandar Above MA20") == true)
@@ -262,6 +288,7 @@ enum WatchlistTestHelpers {
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
         ]
         let vm = makeVM(paywall: paywall, templates: templates)
 
@@ -271,7 +298,7 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls.count == 1)
         #expect(paywall.incrementCalls.count == 1)
-        #expect(templates.loadCalls.count == 3)
+        #expect(templates.loadCalls.count == 4)
     }
 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
@@ -283,6 +310,7 @@ enum WatchlistTestHelpers {
                 rows: [WatchlistTestHelpers.row("BBCA")])),
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
         ]
         let vm = makeVM(paywall: paywall, templates: templates)
 
@@ -301,6 +329,7 @@ enum WatchlistTestHelpers {
             "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1)),
             "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
             "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
         ]
         let screener = WatchlistFakeScreener()
         screener.alwaysFullPage = ("6676213", 25)

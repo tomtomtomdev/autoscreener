@@ -67,7 +67,6 @@ struct ScreenerView: View {
     private var resultsTable: some View {
         let cols = vm.config.columns
         let firstName = cols.first?.name ?? "Metric 1"
-        let secondName = cols.count > 1 ? cols[1].name : "Metric 2"
         let lastSymbol = vm.rows.last?.symbol
         return Table(vm.rows, sortOrder: $vm.sort) {
             TableColumn("No") { row in
@@ -96,7 +95,12 @@ struct ScreenerView: View {
                 .width(min: 160, ideal: 220)
 
             TableColumn(firstName) { row in metricCell(row.value(at: 0)) }
-            TableColumn(secondName) { row in metricCell(row.value(at: 1)) }
+            // Render the second metric column only when the screener actually has one.
+            // accum-dist-positive's sequence is [14400] (single column) — without this
+            // guard the view shows an empty "Metric 2" placeholder.
+            if cols.count > 1 {
+                TableColumn(cols[1].name) { row in metricCell(row.value(at: 1)) }
+            }
         }
         .onChange(of: vm.sort) { _, _ in
             if !vm.sort.isEmpty { vm.rows.sort(using: vm.sort) }

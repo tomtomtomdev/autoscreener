@@ -115,6 +115,7 @@ import Testing
             .init(status: 200, body: body),
             .init(status: 200, body: body),
             .init(status: 200, body: body),
+            .init(status: 200, body: body),
         ])
         let client = APIClient(session: session, tokens: store)
         let svc = ScreenerTemplateService(apiClient: client)
@@ -122,6 +123,7 @@ import Testing
         let accumulating = try await svc.load(templateID: "6676213")
         let aboveMA20    = try await svc.load(templateID: "6676217")
         let shiftToday   = try await svc.load(templateID: "6676221")
+        let accumDist    = try await svc.load(templateID: "6676223")
 
         // bandar-accumulating: compare (value > MA20) + basic (value > 0) = 2 filters
         #expect(accumulating.config.filters.count == 2)
@@ -136,6 +138,14 @@ import Testing
         #expect(shiftToday.config.filters.first?.item1 == 14399)
         #expect(shiftToday.config.filters.first?.item2 == "14425")
         #expect(shiftToday.config.sequence == [14399, 14425])
+        // accum-dist-positive: Bandar Accum/Dist (14400) > 0 — basic, single-column.
+        // Only screener with a `.basic` fallback; item2 is the literal threshold "0",
+        // not another metric ID.
+        #expect(accumDist.config.filters.count == 1)
+        #expect(accumDist.config.filters.first?.type == .basic)
+        #expect(accumDist.config.filters.first?.item1 == 14400)
+        #expect(accumDist.config.filters.first?.item2 == "0")
+        #expect(accumDist.config.sequence == [14400])
     }
 }
 
