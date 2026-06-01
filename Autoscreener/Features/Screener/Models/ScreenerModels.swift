@@ -106,6 +106,18 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "0", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Foreign Buy Streak ≥ 5 (templateID 6676235): Net Foreign Buy Streak >= 5.
+    /// Single-column `basic` filter — metric 13561 counts consecutive trading days
+    /// of positive net foreign buy; threshold 5 mirrors `bandar-master.json`'s
+    /// `foreign-buy-streak` rule.
+    static let foreignBuyStreak: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 13561, item1_name: "Net Foreign Buy Streak",
+              item2: "5", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Codable, Sendable {
@@ -131,6 +143,7 @@ nonisolated struct ScreenerConfig: Codable, Sendable {
     /// introduce new metric IDs — bandar-shift-today added 14425.
     static func metricName(for id: Int) -> String {
         switch id {
+        case 13561: return "Net Foreign Buy Streak"
         case 13580: return "1M Net Foreign Flow"
         case 13581: return "3M Net Foreign Flow"
         case 13582: return "6M Net Foreign Flow"

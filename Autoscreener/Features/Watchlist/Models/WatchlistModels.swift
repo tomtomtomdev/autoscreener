@@ -11,6 +11,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
     case foreignFlow1M
     case foreignFlow6M
     case foreignFlow3M
+    case foreignBuyStreak
 
     var weight: Double {
         switch self {
@@ -21,6 +22,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow1M:     return 1.0
         case .foreignFlow6M:     return 1.5
         case .foreignFlow3M:     return 1.0
+        case .foreignBuyStreak:  return 1.0
         }
     }
 
@@ -33,6 +35,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow1M:     return "6676225"
         case .foreignFlow6M:     return "6676228"
         case .foreignFlow3M:     return "6676231"
+        case .foreignBuyStreak:  return "6676235"
         }
     }
 
@@ -45,6 +48,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow1M:     return "1M Net Foreign Flow"
         case .foreignFlow6M:     return "6M Net Foreign Flow"
         case .foreignFlow3M:     return "3M Net Foreign Flow"
+        case .foreignBuyStreak:  return "Foreign Buy Streak ≥5"
         }
     }
 

@@ -8,6 +8,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case foreignFlow1M
     case foreignFlow6M
     case foreignFlow3M
+    case foreignBuyStreak
     case watchlist
     case appSettings
 
@@ -21,6 +22,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow1M:      return "1M Net Foreign Flow"
         case .foreignFlow6M:      return "6M Net Foreign Flow"
         case .foreignFlow3M:      return "3M Net Foreign Flow"
+        case .foreignBuyStreak:   return "Foreign Buy Streak ≥5"
         case .watchlist:          return "Watchlist"
         case .appSettings:        return "Settings"
         }
@@ -34,6 +36,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow1M:      return "globe.asia.australia"
         case .foreignFlow6M:      return "globe.europe.africa"
         case .foreignFlow3M:      return "globe.americas"
+        case .foreignBuyStreak:   return "flame.fill"
         case .watchlist:          return "star.circle.fill"
         case .appSettings:        return "gearshape"
         }
@@ -47,6 +50,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow1M:      return "6676225"
         case .foreignFlow6M:      return "6676228"
         case .foreignFlow3M:      return "6676231"
+        case .foreignBuyStreak:   return "6676235"
         case .watchlist:          return nil
         case .appSettings:        return nil
         }
@@ -65,6 +69,7 @@ struct MainSidebarView: View {
     @State private var foreignFlow1MVM: ScreenerViewModel
     @State private var foreignFlow6MVM: ScreenerViewModel
     @State private var foreignFlow3MVM: ScreenerViewModel
+    @State private var foreignBuyStreakVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
 
     init() {
@@ -119,6 +124,13 @@ struct MainSidebarView: View {
             snapshots: snaps,
             templateID: "6676231"
         ))
+        _foreignBuyStreakVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676235"
+        ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
@@ -131,7 +143,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .watchlist]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -190,6 +202,9 @@ struct MainSidebarView: View {
         case .foreignFlow3M:
             ScreenerView(vm: foreignFlow3MVM, title: SidebarItem.foreignFlow3M.title)
                 .id(SidebarItem.foreignFlow3M)
+        case .foreignBuyStreak:
+            ScreenerView(vm: foreignBuyStreakVM, title: SidebarItem.foreignBuyStreak.title)
+                .id(SidebarItem.foreignBuyStreak)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)
