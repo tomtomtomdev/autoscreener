@@ -5,6 +5,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case bandarAboveMA20
     case bandarShiftToday
     case accumDistPositive
+    case foreignFlow1M
     case watchlist
     case appSettings
 
@@ -15,6 +16,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAboveMA20:    return "Bandar Above MA20"
         case .bandarShiftToday:   return "Bandar Shift Today"
         case .accumDistPositive:  return "Accum/Dist Positive"
+        case .foreignFlow1M:      return "1M Net Foreign Flow"
         case .watchlist:          return "Watchlist"
         case .appSettings:        return "Settings"
         }
@@ -25,6 +27,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAboveMA20:    return "chart.line.uptrend.xyaxis"
         case .bandarShiftToday:   return "arrow.left.arrow.right.circle"
         case .accumDistPositive:  return "arrow.up.circle"
+        case .foreignFlow1M:      return "globe.asia.australia"
         case .watchlist:          return "star.circle.fill"
         case .appSettings:        return "gearshape"
         }
@@ -35,6 +38,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .bandarAboveMA20:    return "6676217"
         case .bandarShiftToday:   return "6676221"
         case .accumDistPositive:  return "6676223"
+        case .foreignFlow1M:      return "6676225"
         case .watchlist:          return nil
         case .appSettings:        return nil
         }
@@ -50,6 +54,7 @@ struct MainSidebarView: View {
     @State private var bandarAboveMA20VM: ScreenerViewModel
     @State private var bandarShiftTodayVM: ScreenerViewModel
     @State private var accumDistPositiveVM: ScreenerViewModel
+    @State private var foreignFlow1MVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
 
     init() {
@@ -78,6 +83,12 @@ struct MainSidebarView: View {
             templates: deps.screenerTemplateService,
             templateID: "6676223"
         ))
+        _foreignFlow1MVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            templateID: "6676225"
+        ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
@@ -89,7 +100,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .watchlist]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -121,6 +132,9 @@ struct MainSidebarView: View {
         case .accumDistPositive:
             ScreenerView(vm: accumDistPositiveVM, title: SidebarItem.accumDistPositive.title)
                 .id(SidebarItem.accumDistPositive)
+        case .foreignFlow1M:
+            ScreenerView(vm: foreignFlow1MVM, title: SidebarItem.foreignFlow1M.title)
+                .id(SidebarItem.foreignFlow1M)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)

@@ -73,6 +73,17 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "0", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Foreign Flow 1M (templateID 6676225): 1 Month Net Foreign Flow > 0.
+    /// Single-column `basic` filter mirroring `accumDistPositive`'s shape — metric
+    /// 13580 is the trailing-30-day net foreign accumulation.
+    static let foreignFlow1M: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 13580, item1_name: "1 Month Net Foreign Flow",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Sendable {
@@ -94,6 +105,7 @@ nonisolated struct ScreenerConfig: Sendable {
     /// introduce new metric IDs — bandar-shift-today added 14425.
     static func metricName(for id: Int) -> String {
         switch id {
+        case 13580: return "1M Net Foreign Flow"
         case 14399: return "Bandar Value"
         case 14400: return "Bandar Accum/Dist"
         case 14425: return "Previous Bandar Value"

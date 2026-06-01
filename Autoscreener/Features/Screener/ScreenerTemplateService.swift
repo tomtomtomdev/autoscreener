@@ -91,17 +91,20 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676217": return ScreenerFilter.bandarAboveMA20
         case "6676221": return ScreenerFilter.bandarShiftToday
         case "6676223": return ScreenerFilter.accumDistPositive
+        case "6676225": return ScreenerFilter.foreignFlow1M
         default:        return ScreenerFilter.bandarAccumulating
         }
     }
 
     /// Per-screener metric sequence (the IDs to pull from each row's `results`).
     /// bandar-shift-today swaps the second column from 14426 (MA 20) to 14425
-    /// (Previous Bandar Value). accum-dist-positive is single-column (14400).
+    /// (Previous Bandar Value). accum-dist-positive is single-column (14400);
+    /// foreign-flow-1m is single-column (13580).
     private static func defaultSequence(forTemplateID id: String) -> [Int] {
         switch id {
         case "6676221": return [14399, 14425]
         case "6676223": return [14400]
+        case "6676225": return [13580]
         default:        return [14399, 14426]
         }
     }

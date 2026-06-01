@@ -8,6 +8,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
     case aboveMA20
     case shiftToday
     case accumDistPositive
+    case foreignFlow1M
 
     var weight: Double {
         switch self {
@@ -15,6 +16,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
         case .aboveMA20:         return 1.5
         case .shiftToday:        return 2.0
         case .accumDistPositive: return 1.5
+        case .foreignFlow1M:     return 1.0
         }
     }
 
@@ -24,6 +26,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
         case .aboveMA20:         return "6676217"
         case .shiftToday:        return "6676221"
         case .accumDistPositive: return "6676223"
+        case .foreignFlow1M:     return "6676225"
         }
     }
 
@@ -33,6 +36,7 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
         case .aboveMA20:         return "Bandar Above MA20"
         case .shiftToday:        return "Bandar Shift Today"
         case .accumDistPositive: return "Accum/Dist Positive"
+        case .foreignFlow1M:     return "1M Net Foreign Flow"
         }
     }
 
