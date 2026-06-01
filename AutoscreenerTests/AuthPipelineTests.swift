@@ -286,4 +286,81 @@ final class StubSession: HTTPSession, @unchecked Sendable {
         _ = try await client.sendRaw(Endpoint(method: .get, path: "public/thing", requiresAuth: false))
         #expect(session.received[0].value(forHTTPHeaderField: "authorization") == nil)
     }
+
+    /// Regression: three sendRaw calls in parallel with a near-expiry access token
+    /// must share ONE refresh — not spawn three. Pre-fix, `refreshTokens()` suspended
+    /// on `await tokens.load()` before assigning `refreshTask`, so concurrent callers
+    /// each saw `refreshTask == nil` and started their own refresh `Task`. The server
+    /// then sees 3 refreshes with the same refresh token; rotation makes 2 of 3 fail;
+    /// each failing Task's catch calls `tokens.clear()` and torches the store, leaving
+    /// the other two pending requests to throw `notSignedIn` *before reaching the
+    /// network* (matching the Watchlist symptom where the failing GET never logged).
+    ///
+    /// Uses `SlowTokenStore` (real `await` inside `load`) because `InMemoryTokenStore`
+    /// returns synchronously enough that the Swift runtime never yields the APIClient
+    /// actor — masking the race. Production uses `KeychainTokenStore`, which does I/O,
+    /// so the race window is wide in the field.
+    @Test func parallelRequestsThatTriggerPreflightRefreshShareOneRefreshCall() async throws {
+        let store = SlowTokenStore(initial: TokenPair(
+            accessToken: "OLD", refreshToken: "REF",
+            accessExpiresAt: Date().addingTimeInterval(10),      // expiring → preflight
+            refreshExpiresAt: Date().addingTimeInterval(86400)
+        ), loadDelayMS: 30)
+        let session = StubSession([
+            .init(status: 200, body: Data("{}".utf8)),
+            .init(status: 200, body: Data("{}".utf8)),
+            .init(status: 200, body: Data("{}".utf8)),
+        ])
+        let client = APIClient(session: session, tokens: store)
+
+        let counter = RefreshCallCounter()
+        await client.setRefresher { _ in
+            counter.increment()
+            // Widen the race window so the bug manifests deterministically.
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            return TokenPair(accessToken: "NEW", refreshToken: "REF2",
+                             accessExpiresAt: Date().addingTimeInterval(86400),
+                             refreshExpiresAt: Date().addingTimeInterval(86400 * 7))
+        }
+
+        async let r1 = client.sendRaw(Endpoint(method: .get, path: "a"))
+        async let r2 = client.sendRaw(Endpoint(method: .get, path: "b"))
+        async let r3 = client.sendRaw(Endpoint(method: .get, path: "c"))
+        _ = try await (r1, r2, r3)
+
+        #expect(counter.value == 1)
+        #expect(session.received.count == 3)
+        let auths = Set(session.received.compactMap { $0.value(forHTTPHeaderField: "authorization") })
+        #expect(auths == ["Bearer NEW"])
+        #expect(await store.load()?.accessToken == "NEW")
+    }
+}
+
+/// Thread-safe counter for the refresher closure — the closure is `@Sendable` and
+/// is invoked from inside the `APIClient` actor's refresh `Task`, so concurrent
+/// invocations would race a plain Int.
+final class RefreshCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = 0
+    var value: Int { lock.lock(); defer { lock.unlock() }; return _value }
+    func increment() { lock.lock(); _value += 1; lock.unlock() }
+}
+
+/// Token store whose `load` genuinely suspends, modelling Keychain I/O latency.
+/// `InMemoryTokenStore`'s body is synchronous, so the Swift runtime often resumes
+/// the caller without ever yielding the APIClient actor — which masks real-world
+/// actor reentrancy races. Using a deliberately-slow load forces the suspension.
+actor SlowTokenStore: TokenStoring {
+    private var pair: TokenPair?
+    private let loadDelay: UInt64
+    init(initial: TokenPair? = nil, loadDelayMS: Int) {
+        self.pair = initial
+        self.loadDelay = UInt64(loadDelayMS) * 1_000_000
+    }
+    func load() async -> TokenPair? {
+        try? await Task.sleep(nanoseconds: loadDelay)
+        return pair
+    }
+    func save(_ pair: TokenPair) { self.pair = pair }
+    func clear() { pair = nil }
 }

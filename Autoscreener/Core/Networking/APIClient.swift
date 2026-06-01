@@ -76,15 +76,25 @@ actor APIClient {
     }
 
     private func refreshTokens() async throws {
+        // 1) Join an already-in-flight refresh, if any.
         if let inFlight = refreshTask {
             _ = try await inFlight.value
             return
         }
-        guard let refresher, let current = await tokens.load() else {
+        // 2) Claim the slot synchronously. No `await` between the nil-check above
+        //    and `refreshTask = task` below — otherwise concurrent callers could
+        //    each see `refreshTask == nil`, each spawn their own Task, and we'd
+        //    fire N refreshes with the same refresh token (most servers rotate on
+        //    use → N-1 fail → each failing Task's catch calls `tokens.clear()`).
+        guard let refresher else {
             await tokens.clear()
             throw APIError.unauthorized
         }
         let task = Task<TokenPair, Error> { [refresher, tokens] in
+            guard let current = await tokens.load() else {
+                await tokens.clear()
+                throw APIError.unauthorized
+            }
             do {
                 let new = try await refresher(current.refreshToken)
                 await tokens.save(new)
