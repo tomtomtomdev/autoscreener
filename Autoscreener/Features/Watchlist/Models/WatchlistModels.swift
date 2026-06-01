@@ -35,6 +35,13 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Sendable {
         case .accumDistPositive: return "Accum/Dist Positive"
         }
     }
+
+    /// Sum of every kind's weight — the highest score a single symbol can earn
+    /// (matched by every screener). Derived so the toolbar's "max N" label stays
+    /// in sync when kinds are added.
+    static var maxCompositeScore: Double {
+        allCases.map(\.weight).reduce(0, +)
+    }
 }
 
 nonisolated struct WatchlistRow: Identifiable, Hashable, Sendable {

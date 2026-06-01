@@ -28,7 +28,8 @@ struct WatchlistView: View {
         HStack {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.headline)
-                Text("Composite Bandar score · max 5.5").font(.caption).foregroundStyle(.secondary)
+                Text("Composite Bandar score · max \(formatScore(BandarScreenerKind.maxCompositeScore))")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
             if vm.isLoading {

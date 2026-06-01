@@ -23,6 +23,14 @@ import Testing
         #expect(BandarScreenerKind.shiftToday.templateID        == "6676221")
         #expect(BandarScreenerKind.accumDistPositive.templateID == "6676223")
     }
+
+    /// Regression: when the kind list grows, the WatchlistView toolbar shows the
+    /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
+    /// the moment a new kind is added — derive from `allCases` instead.
+    @Test func maxCompositeScoreSumsAllKindWeights() {
+        // 2.0 + 1.5 + 2.0 + 1.5 = 7.0
+        #expect(BandarScreenerKind.maxCompositeScore == 7.0)
+    }
 }
 
 @Suite struct WatchlistRowTests {
@@ -120,6 +128,26 @@ final class WatchlistFakeScreener: ScreenerServicing, @unchecked Sendable {
     }
 }
 
+/// Captures every throttle-delay value the VM emits. Concurrency-safe via actor isolation.
+actor SleepRecorder {
+    private(set) var delays: [UInt64] = []
+    func record(_ ns: UInt64) { delays.append(ns) }
+}
+
+/// Sleeper that throws `CancellationError` on its `failAfter`-th call onwards.
+/// Simulates the SwiftUI `.task` being torn down mid-bootstrap when the user
+/// switches tabs while the throttled four-screener fetch is still running.
+final class CancellingSleeper: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    private let failAfter: Int
+    init(failAfter: Int) { self.failAfter = failAfter }
+    func tick() throws {
+        lock.lock(); count += 1; let n = count; lock.unlock()
+        if n >= failAfter { throw CancellationError() }
+    }
+}
+
 enum WatchlistTestHelpers {
     static func config(for templateID: String) -> ScreenerConfig {
         var c = ScreenerConfig()
@@ -153,9 +181,11 @@ enum WatchlistTestHelpers {
     private func makeVM(paywall: WatchlistFakePaywall = WatchlistFakePaywall(),
                         templates: WatchlistFakeTemplates = WatchlistFakeTemplates(),
                         screener: WatchlistFakeScreener = WatchlistFakeScreener(),
-                        safetyCap: Int = 20) -> WatchlistViewModel {
+                        safetyCap: Int = 20,
+                        sleeper: @escaping WatchlistViewModel.Sleeper = { _ in }) -> WatchlistViewModel {
         WatchlistViewModel(paywall: paywall, templates: templates,
-                           screener: screener, safetyCap: safetyCap)
+                           screener: screener, safetyCap: safetyCap,
+                           sleeper: sleeper)
     }
 
     @Test func bootstrapFiresPaywallIncrementExactlyOnceAcrossAllFetches() async {
@@ -340,5 +370,95 @@ enum WatchlistTestHelpers {
 
         #expect(screener.callCount(for: "6676213") == 4)  // pages 2..5
         #expect(vm.rows.count == 25 + 4 * 25)  // 125
+    }
+
+    /// Throttle: every outgoing screener request except the very first one in a
+    /// bootstrap is preceded by a randomized 1000–1500ms sleep. This holds *across*
+    /// kinds (gap between kind A's last page and kind B's page 1) AND *within* a
+    /// kind (gap between page N and page N+1). Stockbit has rate-limited bursts
+    /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
+    @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
+        // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
+        // 3 other kinds: empty page 1 → 1 request each
+        // Total = 5 requests → 4 throttled sleeps.
+        let templates = WatchlistFakeTemplates()
+        let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1)),
+            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
+            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
+        ]
+        let screener = WatchlistFakeScreener()
+        screener.pages["6676213"] = [
+            2: (0..<5).map { WatchlistTestHelpers.row("ACC2_\($0)") },  // partial → done
+        ]
+        let recorder = SleepRecorder()
+        let vm = makeVM(templates: templates, screener: screener,
+                        sleeper: { ns in await recorder.record(ns) })
+
+        await vm.autoRunIfNeeded()
+
+        let delays = await recorder.delays
+        #expect(delays.count == 4)
+        #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
+    }
+
+    /// Regression: SwiftUI's `.task` modifier cancels its task when the view
+    /// disappears, which throws `CancellationError` from `Task.sleep` inside the
+    /// throttle. Before the fix, that error became "Couldn't load: Bandar Shift
+    /// Today (CancellationError()) · Accum/Dist Positive (CancellationError())"
+    /// in the user-facing banner. The fix: treat cancellation as internal noise
+    /// — keep partial rows visible, suppress the banner, and reset `didAutoRun`
+    /// so the next view appearance retries from scratch.
+    @Test func cancellationMidBootstrapDoesNotSurfaceAsUserFacingError() async {
+        let templates = WatchlistFakeTemplates()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
+                rows: [WatchlistTestHelpers.row("BBCA")])),
+            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
+                rows: [WatchlistTestHelpers.row("BBCA")])),
+            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
+                rows: [WatchlistTestHelpers.row("BBCA")])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
+                rows: [WatchlistTestHelpers.row("BBCA")])),
+        ]
+        // First two GETs use throttle calls #1 (skipped, first request) and #2
+        // (success), then throttle #3 (the gap before shiftToday's GET) throws —
+        // mirrors the user's screenshot where the first two kinds completed.
+        let canceller = CancellingSleeper(failAfter: 2)
+        let sleeper: WatchlistViewModel.Sleeper = { _ in try canceller.tick() }
+        let vm = makeVM(templates: templates, sleeper: sleeper)
+
+        await vm.autoRunIfNeeded()
+
+        // No user-facing banner mentioning the cancellation.
+        #expect(vm.error == nil)
+        // BBCA matched accumulating (2.0) + aboveMA20 (1.5) before cancellation.
+        #expect(vm.rows.first?.symbol == "BBCA")
+        #expect(vm.rows.first?.score == 3.5)
+        // didAutoRun reset so the next view-appearance retries from scratch.
+        // Verified indirectly: a fresh autoRunIfNeeded re-loads all four templates.
+        await vm.autoRunIfNeeded()
+        #expect(templates.loadCalls.filter { $0 == "6676213" }.count == 2)
+    }
+
+    /// Serialisation regression: replacing the `async let` fan-out with a sequential
+    /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
+    /// shiftToday → accumDistPositive). If a future refactor accidentally reverses
+    /// or interleaves, this asserts the contract.
+    @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
+        let templates = WatchlistFakeTemplates()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
+            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
+            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
+            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
+        ]
+        let vm = makeVM(templates: templates)
+
+        await vm.autoRunIfNeeded()
+
+        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223"])
     }
 }
