@@ -95,6 +95,17 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "0", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Foreign Flow 3M (templateID 6676231): 3 Month Net Foreign Flow > 0.
+    /// Mid-horizon counterpart to `foreignFlow1M` / `foreignFlow6M` — metric 13581
+    /// is the trailing-three-month net foreign accumulation.
+    static let foreignFlow3M: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 13581, item1_name: "3 Month Net Foreign Flow",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Sendable {
@@ -117,6 +128,7 @@ nonisolated struct ScreenerConfig: Sendable {
     static func metricName(for id: Int) -> String {
         switch id {
         case 13580: return "1M Net Foreign Flow"
+        case 13581: return "3M Net Foreign Flow"
         case 13582: return "6M Net Foreign Flow"
         case 14399: return "Bandar Value"
         case 14400: return "Bandar Accum/Dist"
