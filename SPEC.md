@@ -417,7 +417,7 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 - Watchlist fans out to all fifteen templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **17.5**), sorts descending. Veto-gate rules (Liquidity Floor, Intraday Liquidity) flip a per-row `isVetoed` flag when the stock is missing from either gate — the table renders Symbol/Name in red and shows an "ILLIQUID" Flag column (tooltip lists which gate(s) failed). One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-115 unit tests passing. Next milestone in §16.
+121 unit tests passing. Next milestone in §16.
 
 ---
 
@@ -442,21 +442,30 @@ ScreenerScheduler.start(refresh:)
   while !cancelled:
     next = preferences.schedule.nextFireDate(after: now)
     sleep(until: next)
-    await refresh()              // → WatchlistViewModel.refresh()
-    persist watchlist.json + 15× per-screener snapshots
+    await refresh()                          // → WatchlistViewModel.scheduledRefresh()
+      ├─ refreshScreenerCaches()  fan-out, persist 15× per-screener snapshots
+      └─ aggregateFromCache()     union caches → watchlist.json (no network)
 ```
 
-The `refresh` closure handed in by `MainSidebarView` calls `watchlistVM.refresh()`. The watchlist already paces its fifteen calls at 1000–1500 ms (see §4.0), so the scheduler doesn't need its own throttle. As each per-kind fetch completes, the watchlist VM writes that kind's full config + rows to `~/Library/Application Support/Autoscreener/snapshots/<templateID>.json` so the per-tab `ScreenerViewModel` boots from disk on next launch.
+**Fetch/aggregate split (non-onDemand only).** The `refresh` closure handed in by `MainSidebarView` calls `watchlistVM.scheduledRefresh()`, which is two phases:
+
+1. `refreshScreenerCaches()` — the throttled 15-way fan-out (1000–1500 ms between requests, one paywall increment). Writes each screener's full config + rows to `~/Library/Application Support/Autoscreener/snapshots/<templateID>.json`. **This is the only place the network is touched under a schedule.**
+2. `aggregateFromCache()` — composes the Watchlist by unioning those per-screener caches locally (no network, no throttle, no paywall) and writes `watchlist.json`.
+
+Because the scheduler keeps the per-screener caches fresh, the Watchlist's own reveal/refresh never pays the sequential fetch — it just re-unions cache. This is the "screeners cache; watchlist aggregates" model: it decouples the slow fan-out (background, scheduled) from the composite build (instant, on-screen).
 
 Cadence changes restart the loop immediately (`MainSidebarView.onChange` observer). `.onDemand` cancels and parks the scheduler.
 
 ### 15.3 Bootstrap with snapshots
 
 - `ScreenerViewModel.autoRunIfNeeded`: if a snapshot exists, render rows + config + `lastFetchedAt` immediately and skip the GET. Otherwise fall through to the existing `GET /screener/templates/{id}` bootstrap.
-- `WatchlistViewModel.autoRunIfNeeded`: if `watchlist.json` exists, render it and skip the fifteen-way fan-out.
-- `refresh()` (button in every toolbar) always re-fetches.
+- `WatchlistViewModel.autoRunIfNeeded`: if `watchlist.json` exists, render it and skip everything else. Otherwise `refresh()`.
+- `WatchlistViewModel.refresh()` routes on the active schedule:
+  - **Non-onDemand** → `aggregateFromCache()` (instant local union). Cold start (no per-screener caches yet) transparently falls back to one `scheduledRefresh()` populate.
+  - **On-demand** → `liveFanOut()` (the legacy throttled fetch + compose-in-memory), since no scheduler is filling caches.
+- Settings' **Refresh now** forces a full `scheduledRefresh()` (refetch every cache, then aggregate). The Watchlist toolbar button uses `refresh()` (cache union under a schedule).
 
-This makes the first scheduled fetch the only one that pays the full fifteen-call latency cost — subsequent launches and tab switches are instant.
+This makes the first scheduled fetch the only one that pays the full fifteen-call latency cost — subsequent launches, tab switches, and watchlist refreshes are instant cache reads.
 
 ### 15.4 Persistence file layout
 

@@ -248,18 +248,21 @@ struct MainSidebarView: View {
             startScheduler()
         }
         // Settings' "Refresh now" button posts this; the sidebar owns the watchlist VM.
+        // Explicit "refresh now" forces a fresh fetch of every screener cache (then
+        // re-aggregates), unlike the watchlist toolbar button which just re-unions cache.
         .onReceive(NotificationCenter.default.publisher(for: .autoscreenerRefreshNow)) { _ in
-            Task { await watchlistVM.refresh() }
+            Task { await watchlistVM.scheduledRefresh() }
         }
     }
 
-    /// Wires the global scheduler to the watchlist VM. A scheduled fire calls
-    /// `watchlistVM.refresh()`, which seeds per-screener snapshots as it goes
-    /// (see WatchlistViewModel for the persistence path).
+    /// Wires the global scheduler to the watchlist VM. A scheduled fire refreshes
+    /// every per-screener cache with the throttled fan-out, then rebuilds the
+    /// composite from those caches — so the watchlist's own reveal/refresh never
+    /// pays the sequential fetch (see `WatchlistViewModel.scheduledRefresh`).
     private func startScheduler() {
         let scheduler = AppDependencies.shared.scheduler
         let vm = watchlistVM
-        scheduler.start(refresh: { await vm.refresh() })
+        scheduler.start(refresh: { await vm.scheduledRefresh() })
     }
 
     @ViewBuilder

@@ -46,7 +46,7 @@ struct WatchlistView: View {
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .help("Refetch all bandar screeners (throttled)")
+            .help("Rebuild from the latest per-screener caches (or refetch all if on-demand)")
             .disabled(vm.isLoading)
         }
         .padding()

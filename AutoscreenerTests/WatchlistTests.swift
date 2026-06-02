@@ -534,3 +534,141 @@ enum WatchlistTestHelpers {
         #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676314", "6676320"])
     }
 }
+
+// MARK: - Cache-aggregation (scheduled modes)
+
+/// Under any non-onDemand schedule the per-screener caches are kept fresh by the
+/// ScreenerScheduler, so the watchlist composes from those caches instead of
+/// re-running its own throttled network fan-out. These tests pin that routing.
+@MainActor
+@Suite struct WatchlistCacheAggregationTests {
+    private func seed(_ store: FakeSnapshotStore, _ kind: BandarScreenerKind,
+                      rows: [String], fetchedAt: Date = Date(timeIntervalSince1970: 1_000)) {
+        store.seedScreener(ScreenerSnapshot(
+            templateID: kind.templateID,
+            config: WatchlistTestHelpers.config(for: kind.templateID),
+            rows: rows.map { WatchlistTestHelpers.row($0) },
+            total: nil,
+            fetchedAt: fetchedAt))
+    }
+
+    private func makeVM(store: FakeSnapshotStore,
+                        templates: WatchlistFakeTemplates,
+                        screener: WatchlistFakeScreener = WatchlistFakeScreener(),
+                        paywall: WatchlistFakePaywall = WatchlistFakePaywall()) -> WatchlistViewModel {
+        WatchlistViewModel(paywall: paywall, templates: templates, screener: screener,
+                           snapshots: store, sleeper: { _ in })
+    }
+
+    /// `aggregateFromCache` unions the per-screener caches by symbol and scores by
+    /// weight — with **zero** template/network calls. AAA is in both caches
+    /// (accumulating 2.0 + freqSpike 1.0 = 3.0); BBB only in freqSpike (1.0).
+    @Test func aggregateFromCacheUnionsCachesWithoutNetwork() async {
+        let store = FakeSnapshotStore()
+        let templates = WatchlistFakeTemplates()
+        seed(store, .accumulating, rows: ["AAA"])
+        seed(store, .freqSpike, rows: ["AAA", "BBB"])
+        let vm = makeVM(store: store, templates: templates)
+
+        let found = await vm.aggregateFromCache()
+
+        #expect(found == true)
+        #expect(templates.loadCalls.isEmpty)             // no network
+        #expect(vm.rows.map(\.symbol) == ["AAA", "BBB"]) // 3.0 then 1.0
+        #expect(vm.rows.first?.score == 3.0)
+        #expect(vm.rows.first?.matchedScreeners == [.accumulating, .freqSpike])
+        // Composite persisted for instant boot next launch.
+        let saved = await store.loadWatchlist()
+        #expect(saved?.rows.count == 2)
+    }
+
+    /// Cold start — no caches yet — returns false so callers can populate first.
+    @Test func aggregateFromCacheReturnsFalseWhenNoCaches() async {
+        let store = FakeSnapshotStore()
+        let vm = makeVM(store: store, templates: WatchlistFakeTemplates())
+
+        let found = await vm.aggregateFromCache()
+
+        #expect(found == false)
+        #expect(vm.rows.isEmpty)
+    }
+
+    /// Under a schedule (persistence enabled) with warm caches, `refresh()` must NOT
+    /// touch the network — it just re-unions the per-screener caches. This is the
+    /// core "watchlist doesn't fetch in sequence, it aggregates local cache" contract.
+    @Test func refreshUnderScheduleAggregatesFromCacheWithoutFetching() async {
+        let store = FakeSnapshotStore()  // enabled == true by default
+        let templates = WatchlistFakeTemplates()
+        let paywall = WatchlistFakePaywall()
+        seed(store, .accumulating, rows: ["AAA", "CCC"])
+        seed(store, .volumeSpike, rows: ["AAA"])
+        let vm = makeVM(store: store, templates: templates, paywall: paywall)
+
+        await vm.refresh()
+
+        #expect(templates.loadCalls.isEmpty)                  // no sequential fetch
+        #expect(paywall.incrementCalls.isEmpty)               // no paywall hit either
+        #expect(Set(vm.rows.map(\.symbol)) == ["AAA", "CCC"])
+    }
+
+    /// Cold start under a schedule: `refresh()` has no caches to union, so it falls
+    /// back to one populate (throttled fan-out → writes caches) and then aggregates.
+    @Test func refreshUnderScheduleColdStartPopulatesThenAggregates() async {
+        let store = FakeSnapshotStore()
+        let templates = WatchlistFakeTemplates()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
+                                                             rows: [WatchlistTestHelpers.row("AAA")])),
+        ]
+        let vm = makeVM(store: store, templates: templates)
+
+        await vm.refresh()
+
+        // Populated every screener cache (15 template loads) on the cold path...
+        #expect(templates.loadCalls.count == 15)
+        // ...and the freshly-written cache is now readable + composed.
+        #expect(await store.loadScreener(templateID: "6676213")?.rows.count == 1)
+        #expect(vm.rows.map(\.symbol) == ["AAA"])
+    }
+
+    /// The scheduler entry point fetches every per-screener cache (throttled), then
+    /// rebuilds the composite from those caches and persists `watchlist.json`.
+    @Test func scheduledRefreshFetchesEachCacheThenAggregates() async {
+        let store = FakeSnapshotStore()
+        let templates = WatchlistFakeTemplates()
+        let paywall = WatchlistFakePaywall()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
+                                                             rows: [WatchlistTestHelpers.row("AAA")])),
+            "6676263": .success(WatchlistTestHelpers.initial(for: .volumeSpike,
+                                                             rows: [WatchlistTestHelpers.row("AAA")])),
+        ]
+        let vm = makeVM(store: store, templates: templates, paywall: paywall)
+
+        await vm.scheduledRefresh()
+
+        #expect(templates.loadCalls.count == 15)        // fetched every screener
+        #expect(paywall.incrementCalls.count == 1)      // one increment for the sweep
+        #expect(await store.loadScreener(templateID: "6676213")?.rows.count == 1)  // cached
+        // AAA matched by accumulating (2.0) + volumeSpike (1.0) = 3.0.
+        #expect(vm.rows.map(\.symbol) == ["AAA"])
+        #expect(vm.rows.first?.score == 3.0)
+        #expect(await store.loadWatchlist()?.rows.count == 1)
+    }
+
+    /// On-demand (persistence disabled) keeps the legacy live fan-out: a manual
+    /// refresh fetches every screener over the network, never the cache shortcut.
+    @Test func onDemandRefreshStillLiveFansOut() async {
+        let store = FakeSnapshotStore()
+        store.enabled = false  // onDemand: no persistence
+        let templates = WatchlistFakeTemplates()
+        // Seed a cache that MUST be ignored on the on-demand path.
+        seed(store, .accumulating, rows: ["STALE"])
+        let vm = makeVM(store: store, templates: templates)
+
+        await vm.refresh()
+
+        #expect(templates.loadCalls.count == 15)             // live fan-out
+        #expect(!vm.rows.contains { $0.symbol == "STALE" })  // cache not used
+    }
+}

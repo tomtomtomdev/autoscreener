@@ -47,23 +47,48 @@ final class WatchlistViewModel {
     }
 
     /// One-shot bootstrap. No-ops on repeat so re-appearing views don't re-fire
-    /// the paywall counter or the 3 template loads.
+    /// the paywall counter or the template loads.
     ///
     /// Snapshot path: if a watchlist snapshot exists, render it first so the tab
-    /// is never blank; only fire a fresh bootstrap when no snapshot is on disk
-    /// (true first run). The `ScreenerScheduler` owns periodic refreshes.
+    /// is never blank; only do real work when no snapshot is on disk (true first
+    /// run). The `ScreenerScheduler` owns periodic refreshes.
     func autoRunIfNeeded() async {
         guard !didAutoRun else { return }
         didAutoRun = true
         let snapshotLoaded = await loadSnapshotIntoView()
         if snapshotLoaded { return }
-        await bootstrap()
+        await refresh()
     }
 
-    /// User-initiated / scheduler-driven refresh. Always re-fetches; ignores any
-    /// in-memory snapshot.
+    /// User-initiated refresh. Under a non-onDemand schedule this is a pure local
+    /// **cache aggregation** — the per-screener caches are kept fresh by the
+    /// scheduler, so the watchlist just unions them (no network, no throttle, no
+    /// sequential delay). Cold start (no caches yet) falls back to one populate.
+    /// On-demand keeps the live throttled fan-out, since nothing else fills caches.
     func refresh() async {
-        await bootstrap()
+        if await persistenceEnabled() {
+            if !(await aggregateFromCache()) {
+                await scheduledRefresh()  // cold start: populate caches, then union
+            }
+        } else {
+            await liveFanOut()
+        }
+    }
+
+    /// Scheduler entry point (non-onDemand cadences only). Refreshes every
+    /// per-screener cache with the throttled fan-out, then rebuilds the composite
+    /// from those caches. Keeps the network fetch off the watchlist's reveal path.
+    func scheduledRefresh() async {
+        await refreshScreenerCaches()
+        await aggregateFromCache()
+    }
+
+    /// True when the active schedule persists snapshots (any non-onDemand mode).
+    /// We route on this so the watchlist composes from caches under a schedule and
+    /// only hits the network on-demand. Nil store ⇒ on-demand (tests, previews).
+    private func persistenceEnabled() async -> Bool {
+        guard let snapshots else { return false }
+        return await snapshots.persistenceEnabled
     }
 
     @discardableResult
@@ -76,28 +101,37 @@ final class WatchlistViewModel {
         return true
     }
 
-    private func bootstrap() async {
-        rows = []
-        error = nil
-        paywallMessage = nil
-        hasIssuedFirstRequest = false  // fresh throttle window per bootstrap
-        isLoading = true
-        defer { isLoading = false }
+    /// Canonical order the screeners are fetched in. Every request (and every page
+    /// within a screener) is separated by a randomized 1000–1500ms `throttle()` gap
+    /// so Stockbit never sees a 15-way parallel burst at t=0.
+    private static let fanOutOrder: [BandarScreenerKind] = [
+        .accumulating, .aboveMA20, .shiftToday, .accumDistPositive,
+        .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak,
+        .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA,
+        .liquidityFloor, .intradayLiquidity,
+    ]
+
+    private struct FanOutResult {
+        let perKind: [(BandarScreenerKind, Result<KindFetch, Error>)]
+        let cancelled: Bool
+    }
+
+    /// Throttled fan-out across every screener. One paywall increment for the whole
+    /// sweep. Does not compose or persist — callers decide what to do with the
+    /// per-kind results.
+    private func fanOut() async -> FanOutResult {
+        hasIssuedFirstRequest = false  // fresh throttle window per sweep
 
         let eligibility = await paywall.check(.screener)
         if !eligibility.eligible {
             paywallMessage = eligibility.message ?? "Screener access is limited on your plan."
         }
-        // One increment for the entire watchlist — not 4.
+        // One increment for the entire sweep — not one per screener.
         await paywall.increment(.screener)
 
-        // Serial fan-out: every screener (and every page within each screener) is
-        // separated by a randomized 1000–1500ms gap via `throttle()`. Stops Stockbit
-        // from seeing a 15-way parallel burst at t=0.
-        let order: [BandarScreenerKind] = [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .liquidityFloor, .intradayLiquidity]
         var results: [(BandarScreenerKind, Result<KindFetch, Error>)] = []
         var cancelled = false
-        for kind in order {
+        for kind in Self.fanOutOrder {
             let res = await fetchAll(kind)
             results.append((kind, res))
             // If the surrounding Task was cancelled (SwiftUI `.task` tear-down on
@@ -106,70 +140,145 @@ final class WatchlistViewModel {
             // remaining guaranteed-failure rounds.
             if Task.isCancelled || isCancellation(res) { cancelled = true; break }
         }
+        return FanOutResult(perKind: results, cancelled: cancelled)
+    }
 
-        var byID: [String: WatchlistRow] = [:]
-        var failed: [(BandarScreenerKind, Error)] = []
+    /// On-demand path: live throttled fan-out, composed in memory and persisted.
+    /// Used when no schedule is active (no caches to trust).
+    private func liveFanOut() async {
+        rows = []
+        error = nil
+        paywallMessage = nil
+        isLoading = true
+        defer { isLoading = false }
 
-        for (kind, result) in results {
-            switch result {
-            case .success(let fetched):
-                watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
-                for row in fetched.rows {
-                    if var existing = byID[row.symbol] {
-                        existing.matchedScreeners.insert(kind)
-                        byID[row.symbol] = existing
-                    } else {
-                        byID[row.symbol] = WatchlistRow(
-                            symbol: row.symbol,
-                            name: row.name,
-                            matchedScreeners: [kind]
-                        )
-                    }
-                }
-            case .failure(let err):
-                // CancellationError = user navigated away mid-bootstrap. Don't
-                // turn that into a red banner — it's internal lifecycle noise.
-                if err is CancellationError {
-                    watchlistLog.info("\(kind.displayName, privacy: .public): cancelled mid-bootstrap")
-                    continue
-                }
-                watchlistLog.error("\(kind.displayName, privacy: .public) FAILED: \(String(reflecting: err), privacy: .public)")
-                failed.append((kind, err))
-            }
-        }
-
-        rows = byID.values.sorted { a, b in
-            if a.score != b.score { return a.score > b.score }
-            return a.symbol < b.symbol
-        }
+        let out = await fanOut()
+        composeAndRender(out.perKind)
         lastFetchedAt = Date()
+        await persist(out.perKind)
+        if out.cancelled { didAutoRun = false }
+        surfaceFailures(out.perKind)
+    }
 
-        // Persist the composite plus per-kind snapshots so the next launch — and
-        // sibling ScreenerViewModels — boot from disk instead of replaying every
-        // network call. No-op when persistence is disabled (onDemand schedule).
+    /// Scheduled path, phase 1: refresh every per-screener cache via the throttled
+    /// fan-out. Writes each screener's full snapshot to disk so the per-tab
+    /// `ScreenerViewModel`s — and `aggregateFromCache()` — read fresh rows. No
+    /// composite is built here (that's `aggregateFromCache`'s job).
+    func refreshScreenerCaches() async {
+        error = nil
+        paywallMessage = nil
+        isLoading = true
+        defer { isLoading = false }
+
+        let out = await fanOut()
         if let snapshots {
-            await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: lastFetchedAt ?? Date()))
-            for (kind, result) in results {
+            let now = Date()
+            for (kind, result) in out.perKind {
                 guard case .success(let fetched) = result else { continue }
-                let snap = ScreenerSnapshot(
+                watchlistLog.info("\(kind.displayName, privacy: .public): cached \(fetched.rows.count) rows")
+                await snapshots.saveScreener(ScreenerSnapshot(
                     templateID: kind.templateID,
                     config: fetched.config,
                     rows: fetched.rows,
                     total: nil,
-                    fetchedAt: lastFetchedAt ?? Date())
-                await snapshots.saveScreener(snap)
+                    fetchedAt: now))
             }
         }
+        if out.cancelled { didAutoRun = false }
+        surfaceFailures(out.perKind)
+    }
 
-        if cancelled {
-            // Allow the next view-appearance to re-bootstrap from scratch so the
-            // missing kinds get a fresh attempt. Partial rows remain visible until
-            // the next run replaces them.
-            didAutoRun = false
+    /// Scheduled path, phase 2: compose the watchlist purely from the per-screener
+    /// caches on disk — no network, no throttle. Writes `watchlist.json`. Returns
+    /// `false` when no per-screener cache exists yet (cold start) so callers can
+    /// fall back to a live populate.
+    @discardableResult
+    func aggregateFromCache() async -> Bool {
+        guard let snapshots else { return false }
+
+        var byID: [String: WatchlistRow] = [:]
+        var latest: Date?
+        var found = false
+        for kind in BandarScreenerKind.allCases {
+            guard let snap = await snapshots.loadScreener(templateID: kind.templateID) else { continue }
+            found = true
+            if latest == nil || snap.fetchedAt > latest! { latest = snap.fetchedAt }
+            for row in snap.rows {
+                if var existing = byID[row.symbol] {
+                    existing.matchedScreeners.insert(kind)
+                    byID[row.symbol] = existing
+                } else {
+                    byID[row.symbol] = WatchlistRow(symbol: row.symbol, name: row.name, matchedScreeners: [kind])
+                }
+            }
         }
+        guard found else { return false }
 
+        error = nil
+        rows = byID.values.sorted { a, b in
+            if a.score != b.score { return a.score > b.score }
+            return a.symbol < b.symbol
+        }
+        lastFetchedAt = latest ?? Date()
+        await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: lastFetchedAt ?? Date()))
+        watchlistLog.info("aggregated \(self.rows.count) symbols from per-screener caches")
+        return true
+    }
+
+    /// Unions every successful kind's rows into `rows`, scored + sorted. Shared by
+    /// the on-demand live path (compose-from-network).
+    private func composeAndRender(_ results: [(BandarScreenerKind, Result<KindFetch, Error>)]) {
+        var byID: [String: WatchlistRow] = [:]
+        for (kind, result) in results {
+            guard case .success(let fetched) = result else { continue }
+            watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
+            for row in fetched.rows {
+                if var existing = byID[row.symbol] {
+                    existing.matchedScreeners.insert(kind)
+                    byID[row.symbol] = existing
+                } else {
+                    byID[row.symbol] = WatchlistRow(symbol: row.symbol, name: row.name, matchedScreeners: [kind])
+                }
+            }
+        }
+        rows = byID.values.sorted { a, b in
+            if a.score != b.score { return a.score > b.score }
+            return a.symbol < b.symbol
+        }
+    }
+
+    /// Persists the composite plus per-kind snapshots so the next launch — and
+    /// sibling ScreenerViewModels — boot from disk. No-op when persistence is
+    /// disabled (onDemand schedule).
+    private func persist(_ results: [(BandarScreenerKind, Result<KindFetch, Error>)]) async {
+        guard let snapshots else { return }
+        let stamp = lastFetchedAt ?? Date()
+        await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: stamp))
+        for (kind, result) in results {
+            guard case .success(let fetched) = result else { continue }
+            await snapshots.saveScreener(ScreenerSnapshot(
+                templateID: kind.templateID,
+                config: fetched.config,
+                rows: fetched.rows,
+                total: nil,
+                fetchedAt: stamp))
+        }
+    }
+
+    /// Surfaces a per-kind error banner (cancellation is treated as internal
+    /// lifecycle noise and skipped).
+    private func surfaceFailures(_ results: [(BandarScreenerKind, Result<KindFetch, Error>)]) {
+        var failed: [(BandarScreenerKind, Error)] = []
+        for (kind, result) in results {
+            guard case .failure(let err) = result else { continue }
+            if err is CancellationError {
+                watchlistLog.info("\(kind.displayName, privacy: .public): cancelled mid-sweep")
+                continue
+            }
+            watchlistLog.error("\(kind.displayName, privacy: .public) FAILED: \(String(reflecting: err), privacy: .public)")
+            failed.append((kind, err))
+        }
         if !failed.isEmpty {
-            // Surface the underlying error per kind so the banner is actionable.
             let parts = failed.map { "\($0.0.displayName) (\(String(describing: $0.1)))" }
             error = "Couldn't load: \(parts.joined(separator: " · "))"
         }
