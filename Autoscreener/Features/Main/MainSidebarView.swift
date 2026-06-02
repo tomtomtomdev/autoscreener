@@ -10,6 +10,10 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case foreignFlow3M
     case foreignBuyStreak
     case freshForeignBuy
+    case freqSpike
+    case volumeSpike
+    case above50MA
+    case above200MA
     case liquidityFloor
     case intradayLiquidity
     case watchlist
@@ -27,6 +31,10 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow3M:      return "3M Net Foreign Flow"
         case .foreignBuyStreak:   return "Foreign Buy Streak ≥5"
         case .freshForeignBuy:    return "Fresh Foreign Buy"
+        case .freqSpike:          return "Frequency Spike"
+        case .volumeSpike:        return "Volume Spike"
+        case .above50MA:          return "Above 50MA"
+        case .above200MA:         return "Above 200MA"
         case .liquidityFloor:     return "Liquidity Floor"
         case .intradayLiquidity:  return "Intraday Liquidity"
         case .watchlist:          return "Watchlist"
@@ -44,6 +52,10 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow3M:      return "globe.americas"
         case .foreignBuyStreak:   return "flame.fill"
         case .freshForeignBuy:    return "sparkles"
+        case .freqSpike:          return "waveform.path.ecg"
+        case .volumeSpike:        return "chart.bar.fill"
+        case .above50MA:          return "chart.xyaxis.line"
+        case .above200MA:         return "chart.line.uptrend.xyaxis.circle"
         case .liquidityFloor:     return "drop.fill"
         case .intradayLiquidity:  return "bolt.fill"
         case .watchlist:          return "star.circle.fill"
@@ -61,6 +73,10 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .foreignFlow3M:      return "6676231"
         case .foreignBuyStreak:   return "6676235"
         case .freshForeignBuy:    return "6676238"
+        case .freqSpike:          return "6676260"
+        case .volumeSpike:        return "6676263"
+        case .above50MA:          return "6676264"
+        case .above200MA:         return "6676268"
         case .liquidityFloor:     return "6676314"
         case .intradayLiquidity:  return "6676320"
         case .watchlist:          return nil
@@ -83,6 +99,10 @@ struct MainSidebarView: View {
     @State private var foreignFlow3MVM: ScreenerViewModel
     @State private var foreignBuyStreakVM: ScreenerViewModel
     @State private var freshForeignBuyVM: ScreenerViewModel
+    @State private var freqSpikeVM: ScreenerViewModel
+    @State private var volumeSpikeVM: ScreenerViewModel
+    @State private var above50MAVM: ScreenerViewModel
+    @State private var above200MAVM: ScreenerViewModel
     @State private var liquidityFloorVM: ScreenerViewModel
     @State private var intradayLiquidityVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
@@ -153,6 +173,34 @@ struct MainSidebarView: View {
             snapshots: snaps,
             templateID: "6676238"
         ))
+        _freqSpikeVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676260"
+        ))
+        _volumeSpikeVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676263"
+        ))
+        _above50MAVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676264"
+        ))
+        _above200MAVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676268"
+        ))
         _liquidityFloorVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
@@ -179,7 +227,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .liquidityFloor, .intradayLiquidity, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .liquidityFloor, .intradayLiquidity, .watchlist]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
@@ -244,6 +292,18 @@ struct MainSidebarView: View {
         case .freshForeignBuy:
             ScreenerView(vm: freshForeignBuyVM, title: SidebarItem.freshForeignBuy.title)
                 .id(SidebarItem.freshForeignBuy)
+        case .freqSpike:
+            ScreenerView(vm: freqSpikeVM, title: SidebarItem.freqSpike.title)
+                .id(SidebarItem.freqSpike)
+        case .volumeSpike:
+            ScreenerView(vm: volumeSpikeVM, title: SidebarItem.volumeSpike.title)
+                .id(SidebarItem.volumeSpike)
+        case .above50MA:
+            ScreenerView(vm: above50MAVM, title: SidebarItem.above50MA.title)
+                .id(SidebarItem.above50MA)
+        case .above200MA:
+            ScreenerView(vm: above200MAVM, title: SidebarItem.above200MA.title)
+                .id(SidebarItem.above200MA)
         case .liquidityFloor:
             ScreenerView(vm: liquidityFloorVM, title: SidebarItem.liquidityFloor.title)
                 .id(SidebarItem.liquidityFloor)

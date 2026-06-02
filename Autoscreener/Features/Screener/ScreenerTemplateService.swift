@@ -96,6 +96,10 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676231": return ScreenerFilter.foreignFlow3M
         case "6676235": return ScreenerFilter.foreignBuyStreak
         case "6676238": return ScreenerFilter.freshForeignBuy
+        case "6676260": return ScreenerFilter.freqSpike
+        case "6676263": return ScreenerFilter.volumeSpike
+        case "6676264": return ScreenerFilter.above50MA
+        case "6676268": return ScreenerFilter.above200MA
         case "6676314": return ScreenerFilter.liquidityFloor
         case "6676320": return ScreenerFilter.intradayLiquidity
         default:        return ScreenerFilter.bandarAccumulating
@@ -110,7 +114,10 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     /// single-column (13561); fresh-foreign-buy is single-column (13561, same metric
     /// as foreign-buy-streak but `> 0` instead of `>= 5`); liquidity-floor is
     /// single-column (16454, Value MA 20); intraday-liquidity is single-column
-    /// (13620, Value).
+    /// (13620, Value). freq-spike pairs Frequency Spike + Analyzer (15396, 15394);
+    /// volume-spike pairs Volume + Volume MA 20 (12469, 12464); above-50ma pairs
+    /// Price + Price MA 50 (2661, 12460); above-200ma pairs Price + Price MA 200
+    /// (2661, 12462).
     private static func defaultSequence(forTemplateID id: String) -> [Int] {
         switch id {
         case "6676221": return [14399, 14425]
@@ -120,6 +127,10 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676231": return [13581]
         case "6676235": return [13561]
         case "6676238": return [13561]
+        case "6676260": return [15396, 15394]
+        case "6676263": return [12469, 12464]
+        case "6676264": return [2661, 12460]
+        case "6676268": return [2661, 12462]
         case "6676314": return [16454]
         case "6676320": return [13620]
         default:        return [14399, 14426]

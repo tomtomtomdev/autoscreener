@@ -156,6 +156,59 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "10000000000", item2_name: "",
               multiplier: "0"),
     ]
+
+    /// Frequency Spike (templateID 6676260): Frequency Spike (15396) > 0 **and**
+    /// Frequency Analyzer (15394) >= 1.5. Two `basic` filters — per the proxseer
+    /// capture Stockbit AND-combines them on the wire, which is *stricter* than
+    /// `bandar-master.json`'s `freq-spike` rule (an OR). We mirror the captured
+    /// template exactly so page-2+ POSTs reproduce the GET's results. Weight 1.0
+    /// (tape-activity group).
+    static let freqSpike: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 15396, item1_name: "Frequency Spike",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 15394, item1_name: "Frequency Analyzer",
+              item2: "1.5", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// Volume Spike (templateID 6676263): Volume (12469) >= 1.5 × Volume MA 20
+    /// (12464). A `compare` filter (column vs column) where `multiplier` scales
+    /// `item2` — mirrors `bandar-master.json`'s `volume >= 1.5 * volume_ma_20`
+    /// rule. Weight 1.0 (tape-activity group).
+    static let volumeSpike: [ScreenerFilter] = [
+        .init(type: .compare,
+              operator_: ">=",
+              item1: 12469, item1_name: "Volume",
+              item2: "12464", item2_name: "Volume MA 20",
+              multiplier: "1.5"),
+    ]
+
+    /// Above 50MA (templateID 6676264): Price (2661) >= 1 × Price MA 50 (12460).
+    /// A `compare` filter — `bandar-master.json`'s `above-50ma` rule (`price >=
+    /// price_ma_50`), weight 0.5 (trend group).
+    static let above50MA: [ScreenerFilter] = [
+        .init(type: .compare,
+              operator_: ">=",
+              item1: 2661, item1_name: "Price",
+              item2: "12460", item2_name: "Price MA 50",
+              multiplier: "1"),
+    ]
+
+    /// Above 200MA (templateID 6676268): Price (2661) >= 1 × Price MA 200 (12462).
+    /// Long-term-trend counterpart to `above50MA` — `bandar-master.json`'s
+    /// `above-200ma` rule (`price >= price_ma_200`), weight 1.0 (trend group).
+    static let above200MA: [ScreenerFilter] = [
+        .init(type: .compare,
+              operator_: ">=",
+              item1: 2661, item1_name: "Price",
+              item2: "12462", item2_name: "Price MA 200",
+              multiplier: "1"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Codable, Sendable {
@@ -181,6 +234,11 @@ nonisolated struct ScreenerConfig: Codable, Sendable {
     /// introduce new metric IDs — bandar-shift-today added 14425.
     static func metricName(for id: Int) -> String {
         switch id {
+        case 2661:  return "Price"
+        case 12460: return "Price MA 50"
+        case 12462: return "Price MA 200"
+        case 12464: return "Volume MA 20"
+        case 12469: return "Volume"
         case 13561: return "Net Foreign Buy Streak"
         case 13580: return "1M Net Foreign Flow"
         case 13581: return "3M Net Foreign Flow"
@@ -190,6 +248,8 @@ nonisolated struct ScreenerConfig: Codable, Sendable {
         case 14400: return "Bandar Accum/Dist"
         case 14425: return "Previous Bandar Value"
         case 14426: return "Bandar Value MA 20"
+        case 15394: return "Frequency Analyzer"
+        case 15396: return "Frequency Spike"
         case 16454: return "Value MA 20"
         default:    return "Metric \(id)"
         }

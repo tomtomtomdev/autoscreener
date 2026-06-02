@@ -18,6 +18,10 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
     case foreignFlow3M
     case foreignBuyStreak
     case freshForeignBuy
+    case freqSpike
+    case volumeSpike
+    case above50MA
+    case above200MA
     case liquidityFloor
     case intradayLiquidity
 
@@ -32,6 +36,10 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow3M:     return 1.0
         case .foreignBuyStreak:  return 1.0
         case .freshForeignBuy:   return 1.5
+        case .freqSpike:         return 1.0
+        case .volumeSpike:       return 1.0
+        case .above50MA:         return 0.5
+        case .above200MA:        return 1.0
         case .liquidityFloor:    return 0.5
         case .intradayLiquidity: return 0.5
         }
@@ -48,6 +56,10 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow3M:     return "6676231"
         case .foreignBuyStreak:  return "6676235"
         case .freshForeignBuy:   return "6676238"
+        case .freqSpike:         return "6676260"
+        case .volumeSpike:       return "6676263"
+        case .above50MA:         return "6676264"
+        case .above200MA:        return "6676268"
         case .liquidityFloor:    return "6676314"
         case .intradayLiquidity: return "6676320"
         }
@@ -64,6 +76,10 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .foreignFlow3M:     return "3M Net Foreign Flow"
         case .foreignBuyStreak:  return "Foreign Buy Streak ≥5"
         case .freshForeignBuy:   return "Fresh Foreign Buy"
+        case .freqSpike:         return "Frequency Spike"
+        case .volumeSpike:       return "Volume Spike"
+        case .above50MA:         return "Above 50MA"
+        case .above200MA:        return "Above 200MA"
         case .liquidityFloor:    return "Liquidity Floor"
         case .intradayLiquidity: return "Intraday Liquidity"
         }

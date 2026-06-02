@@ -169,6 +169,80 @@ import Testing
         #expect(fresh.config.filters.first?.item2 == "0")
         #expect(fresh.config.sequence == [13561])
     }
+
+    /// freq-spike (6676260): two `basic` filters — Frequency Spike (15396) > 0 AND
+    /// Frequency Analyzer (15394) >= 1.5. Per the proxseer capture Stockbit AND-combines
+    /// both, so the fallback must carry *both*; dropping one would loosen the screen.
+    /// Sequence is [15396, 15394] (two columns).
+    @Test func parseChoosesFreqSpikeFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let freq = try await svc.load(templateID: "6676260")
+
+        #expect(freq.config.filters.count == 2)
+        #expect(freq.config.filters.allSatisfy { $0.type == .basic })
+        #expect(freq.config.filters[0].item1 == 15396)
+        #expect(freq.config.filters[0].operator_ == ">")
+        #expect(freq.config.filters[0].item2 == "0")
+        #expect(freq.config.filters[1].item1 == 15394)
+        #expect(freq.config.filters[1].operator_ == ">=")
+        #expect(freq.config.filters[1].item2 == "1.5")
+        #expect(freq.config.sequence == [15396, 15394])
+    }
+
+    /// volume-spike (6676263): a `compare` filter — Volume (12469) >= 1.5 × Volume MA 20
+    /// (12464). The 1.5 lives in `multiplier`, not in item2; a `basic` fallback would lose
+    /// the column-vs-column comparison entirely. Sequence [12469, 12464].
+    @Test func parseChoosesVolumeSpikeFilterWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let vol = try await svc.load(templateID: "6676263")
+
+        #expect(vol.config.filters.count == 1)
+        #expect(vol.config.filters.first?.type == .compare)
+        #expect(vol.config.filters.first?.item1 == 12469)
+        #expect(vol.config.filters.first?.operator_ == ">=")
+        #expect(vol.config.filters.first?.item2 == "12464")
+        #expect(vol.config.filters.first?.multiplier == "1.5")
+        #expect(vol.config.sequence == [12469, 12464])
+    }
+
+    /// above-50ma (6676264) and above-200ma (6676268): both `compare` filters comparing
+    /// Price (2661) against its 50- / 200-day MA (12460 / 12462) at multiplier 1. They
+    /// share item1 but differ in item2 + sequence; reusing one fallback for the other
+    /// would screen on the wrong MA horizon.
+    @Test func parseChoosesPriceMAFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let above50  = try await svc.load(templateID: "6676264")
+        let above200 = try await svc.load(templateID: "6676268")
+
+        #expect(above50.config.filters.count == 1)
+        #expect(above50.config.filters.first?.type == .compare)
+        #expect(above50.config.filters.first?.item1 == 2661)
+        #expect(above50.config.filters.first?.item2 == "12460")
+        #expect(above50.config.filters.first?.multiplier == "1")
+        #expect(above50.config.sequence == [2661, 12460])
+
+        #expect(above200.config.filters.first?.item1 == 2661)
+        #expect(above200.config.filters.first?.item2 == "12462")
+        #expect(above200.config.sequence == [2661, 12462])
+    }
 }
 
 // MARK: - ScreenerService row enrichment

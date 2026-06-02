@@ -18,6 +18,10 @@ import Testing
         #expect(BandarScreenerKind.foreignFlow3M.weight      == 1.0)
         #expect(BandarScreenerKind.foreignBuyStreak.weight   == 1.0)
         #expect(BandarScreenerKind.freshForeignBuy.weight    == 1.5)
+        #expect(BandarScreenerKind.freqSpike.weight          == 1.0)
+        #expect(BandarScreenerKind.volumeSpike.weight        == 1.0)
+        #expect(BandarScreenerKind.above50MA.weight          == 0.5)
+        #expect(BandarScreenerKind.above200MA.weight         == 1.0)
         #expect(BandarScreenerKind.liquidityFloor.weight     == 0.5)
         #expect(BandarScreenerKind.intradayLiquidity.weight  == 0.5)
     }
@@ -34,6 +38,10 @@ import Testing
         #expect(BandarScreenerKind.foreignFlow3M.templateID     == "6676231")
         #expect(BandarScreenerKind.foreignBuyStreak.templateID  == "6676235")
         #expect(BandarScreenerKind.freshForeignBuy.templateID   == "6676238")
+        #expect(BandarScreenerKind.freqSpike.templateID         == "6676260")
+        #expect(BandarScreenerKind.volumeSpike.templateID       == "6676263")
+        #expect(BandarScreenerKind.above50MA.templateID         == "6676264")
+        #expect(BandarScreenerKind.above200MA.templateID        == "6676268")
         #expect(BandarScreenerKind.liquidityFloor.templateID    == "6676314")
         #expect(BandarScreenerKind.intradayLiquidity.templateID == "6676320")
     }
@@ -47,12 +55,27 @@ import Testing
         #expect(Set(BandarScreenerKind.allCases.filter(\.isVeto)) == [.liquidityFloor, .intradayLiquidity])
     }
 
+    /// The tape-activity (freq/volume spike) and trend (above 50/200 MA) rules are
+    /// scored contributors, never veto gates — adding them must not expand the veto
+    /// set beyond the two liquidity floors.
+    @Test func tapeAndTrendRulesAreNonVeto() {
+        #expect(BandarScreenerKind.freqSpike.isVeto == false)
+        #expect(BandarScreenerKind.volumeSpike.isVeto == false)
+        #expect(BandarScreenerKind.above50MA.isVeto == false)
+        #expect(BandarScreenerKind.above200MA.isVeto == false)
+        #expect(BandarScreenerKind.freqSpike.displayName == "Frequency Spike")
+        #expect(BandarScreenerKind.volumeSpike.displayName == "Volume Spike")
+        #expect(BandarScreenerKind.above50MA.displayName == "Above 50MA")
+        #expect(BandarScreenerKind.above200MA.displayName == "Above 200MA")
+        #expect(Set(BandarScreenerKind.allCases.filter(\.isVeto)) == [.liquidityFloor, .intradayLiquidity])
+    }
+
     /// Regression: when the kind list grows, the WatchlistView toolbar shows the
     /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
     /// the moment a new kind is added — derive from `allCases` instead.
     @Test func maxCompositeScoreSumsAllKindWeights() {
-        // 2.0 + 1.5 + 2.0 + 1.5 + 1.0 + 1.5 + 1.0 + 1.0 + 1.5 + 0.5 + 0.5 = 14.0
-        #expect(BandarScreenerKind.maxCompositeScore == 14.0)
+        // 2.0+1.5+2.0+1.5+1.0+1.5+1.0+1.0+1.5 + 1.0+1.0+0.5+1.0 + 0.5+0.5 = 17.5
+        #expect(BandarScreenerKind.maxCompositeScore == 17.5)
     }
 }
 
@@ -183,6 +206,10 @@ enum WatchlistTestHelpers {
         case "6676231": c.sequence = [13581]
         case "6676235": c.sequence = [13561]
         case "6676238": c.sequence = [13561]
+        case "6676260": c.sequence = [15396, 15394]
+        case "6676263": c.sequence = [12469, 12464]
+        case "6676264": c.sequence = [2661, 12460]
+        case "6676268": c.sequence = [2661, 12462]
         case "6676314": c.sequence = [16454]
         case "6676320": c.sequence = [13620]
         default:        c.sequence = [14399, 14426]
@@ -236,8 +263,8 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls == [.screener])
         #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676314", "6676320"])
-        #expect(templates.loadCalls.count == 11)
+        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676314", "6676320"])
+        #expect(templates.loadCalls.count == 15)
     }
 
     @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
@@ -364,7 +391,7 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls.count == 1)
         #expect(paywall.incrementCalls.count == 1)
-        #expect(templates.loadCalls.count == 11)
+        #expect(templates.loadCalls.count == 15)
     }
 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
@@ -415,8 +442,8 @@ enum WatchlistTestHelpers {
     /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
     @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
         // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
-        // 10 other kinds: empty page 1 → 1 request each
-        // Total = 12 requests → 11 throttled sleeps.
+        // 14 other kinds: empty page 1 → 1 request each
+        // Total = 16 requests → 15 throttled sleeps.
         let templates = WatchlistFakeTemplates()
         let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
         templates.resultsByTemplateID = [
@@ -439,7 +466,7 @@ enum WatchlistTestHelpers {
         await vm.autoRunIfNeeded()
 
         let delays = await recorder.delays
-        #expect(delays.count == 11)
+        #expect(delays.count == 15)
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
     }
 
@@ -485,9 +512,10 @@ enum WatchlistTestHelpers {
     /// Serialisation regression: replacing the `async let` fan-out with a sequential
     /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
     /// shiftToday → accumDistPositive → foreignFlow1M → foreignFlow6M →
-    /// foreignFlow3M → foreignBuyStreak → freshForeignBuy → liquidityFloor →
-    /// intradayLiquidity). If a future refactor accidentally reverses or interleaves,
-    /// this asserts the contract.
+    /// foreignFlow3M → foreignBuyStreak → freshForeignBuy → freqSpike →
+    /// volumeSpike → above50MA → above200MA → liquidityFloor → intradayLiquidity).
+    /// If a future refactor accidentally reverses or interleaves, this asserts the
+    /// contract.
     @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
         let templates = WatchlistFakeTemplates()
         templates.resultsByTemplateID = [
@@ -503,6 +531,6 @@ enum WatchlistTestHelpers {
 
         await vm.autoRunIfNeeded()
 
-        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676314", "6676320"])
+        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676314", "6676320"])
     }
 }
