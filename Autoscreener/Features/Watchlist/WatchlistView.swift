@@ -128,18 +128,22 @@ struct WatchlistView: View {
 
     /// Lists which veto gates the row fails (e.g. "Fails: Liquidity Floor, Intraday Liquidity").
     /// Shown as a tooltip on the ILLIQUID badge so the user can see *why* without
-    /// adding more columns.
+    /// adding more columns. Reads the materialized `failedVetoGates` so it reflects
+    /// only the gates that were actually evaluated.
     private func vetoReason(_ row: WatchlistRow) -> String {
-        let missing = BandarScreenerKind.allCases
-            .filter { $0.isVeto && !row.matchedScreeners.contains($0) }
-            .map(\.displayName)
+        let missing = row.failedVetoGates.map(\.displayName).sorted()
         return missing.isEmpty ? "" : "Fails: \(missing.joined(separator: ", "))"
     }
 
     private var statusBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             if let error = vm.error, !vm.rows.isEmpty {
                 Text(error).foregroundStyle(.red).font(.callout)
+            }
+            if let notice = vm.vetoNotice, !vm.rows.isEmpty {
+                Label(notice, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.secondary).font(.callout)
+                    .help("These liquidity gates weren't refreshed this cycle, so no ILLIQUID flag is applied for them.")
             }
             Spacer()
             if !vm.rows.isEmpty {

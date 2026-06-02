@@ -656,6 +656,47 @@ enum WatchlistTestHelpers {
         #expect(await store.loadWatchlist()?.rows.count == 1)
     }
 
+    /// Regression: a veto gate whose cache is **stale** (an older generation than the
+    /// rest — e.g. the scheduler refreshed 14/15 screeners but failed/cancelled before
+    /// the last gate) must NOT be enforced. Otherwise every liquid name is missing that
+    /// gate and gets falsely flagged ILLIQUID — the "watchlist shows all illiquid" bug.
+    @Test func staleVetoGateMustNotFlagLiquidNamesIlliquid() async {
+        let store = FakeSnapshotStore()
+        let fresh = Date(timeIntervalSince1970: 2_000)
+        let stale = Date(timeIntervalSince1970: 1_000)
+        seed(store, .accumulating, rows: ["AAA", "BBB"], fetchedAt: fresh)
+        seed(store, .liquidityFloor, rows: ["AAA", "BBB"], fetchedAt: fresh)
+        seed(store, .intradayLiquidity, rows: ["OLD"], fetchedAt: stale)  // not refreshed this gen
+        let vm = makeVM(store: store, templates: WatchlistFakeTemplates())
+
+        await vm.aggregateFromCache()
+
+        // AAA/BBB pass the fresh floor gate; the intraday gate is stale → not enforced.
+        #expect(vm.rows.first { $0.symbol == "AAA" }?.isVetoed == false)
+        #expect(vm.rows.first { $0.symbol == "BBB" }?.isVetoed == false)
+        // The skipped gate is surfaced so the user knows liquidity isn't fully enforced.
+        #expect(vm.vetoNotice != nil)
+    }
+
+    /// A veto gate that IS in the current generation still flags names missing from it.
+    /// AAA passes both fresh gates; BBB is absent from the fresh floor gate → ILLIQUID.
+    @Test func freshVetoGateStillFlagsNamesMissingFromIt() async {
+        let store = FakeSnapshotStore()
+        let t = Date(timeIntervalSince1970: 2_000)
+        seed(store, .accumulating, rows: ["AAA", "BBB"], fetchedAt: t)
+        seed(store, .liquidityFloor, rows: ["AAA"], fetchedAt: t)        // BBB misses the floor
+        seed(store, .intradayLiquidity, rows: ["AAA", "BBB"], fetchedAt: t)  // both pass intraday
+        let vm = makeVM(store: store, templates: WatchlistFakeTemplates())
+
+        await vm.aggregateFromCache()
+
+        #expect(vm.rows.first { $0.symbol == "AAA" }?.isVetoed == false)
+        #expect(vm.rows.first { $0.symbol == "BBB" }?.isVetoed == true)
+        // BBB fails ONLY the floor gate (it's in intraday) — both gates were evaluated.
+        #expect(vm.rows.first { $0.symbol == "BBB" }?.failedVetoGates == [.liquidityFloor])
+        #expect(vm.vetoNotice == nil)  // both gates fresh → fully enforced
+    }
+
     /// On-demand (persistence disabled) keeps the legacy live fan-out: a manual
     /// refresh fetches every screener over the network, never the cache shortcut.
     @Test func onDemandRefreshStillLiveFansOut() async {

@@ -52,7 +52,7 @@ xcodebuild -project Autoscreener.xcodeproj -scheme Autoscreener \
   -destination 'platform=macOS,arch=arm64' -only-testing:AutoscreenerTests test
 ```
 
-121 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the fifteen-screener wire format and response parsers, the Watchlist composite (dedupe, scoring, throttled sequential fan-out, partial-failure & cancellation handling), the schedule + snapshot persistence layer (next-fire math for all five cadences, on-disk round-trip, snapshot-aware bootstrap, scheduler lifecycle), the view models, and network-log redaction.
+123 unit tests covering the auth pipeline (login, MFA, refresh, expiry), the fifteen-screener wire format and response parsers, the Watchlist composite (dedupe, scoring, throttled sequential fan-out, partial-failure & cancellation handling), the schedule + snapshot persistence layer (next-fire math for all five cadences, on-disk round-trip, snapshot-aware bootstrap, scheduler lifecycle), the view models, and network-log redaction.
 
 ### Package as DMG
 

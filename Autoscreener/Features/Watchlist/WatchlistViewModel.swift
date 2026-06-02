@@ -14,6 +14,10 @@ final class WatchlistViewModel {
     var isLoading: Bool = false
     var error: String?
     var paywallMessage: String?
+    /// Set when a liquidity veto gate could NOT be enforced this run (its cache was
+    /// stale/missing, or its fetch failed) — so the "ILLIQUID" flags reflect only the
+    /// gates we could actually evaluate. Surfaced as a soft warning in the status bar.
+    var vetoNotice: String?
     /// Wall-clock when the currently-displayed composite landed (fresh fetch or
     /// persisted snapshot). Drives the toolbar's "as of HH:mm" badge.
     var lastFetchedAt: Date?
@@ -153,7 +157,20 @@ final class WatchlistViewModel {
         defer { isLoading = false }
 
         let out = await fanOut()
-        composeAndRender(out.perKind)
+        // A veto gate is only enforceable if it was freshly fetched (succeeded) this
+        // run; a failed gate must not flag every row ILLIQUID.
+        let evaluableVeto = Set(out.perKind.compactMap { (kind, result) -> BandarScreenerKind? in
+            guard kind.isVeto, case .success = result else { return nil }
+            return kind
+        })
+        var byID: [String: WatchlistRow] = [:]
+        for (kind, result) in out.perKind {
+            guard case .success(let fetched) = result else { continue }
+            watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
+            for row in fetched.rows { Self.union(&byID, row: row, kind: kind) }
+        }
+        rows = Self.ranked(byID.values, evaluableVeto: evaluableVeto)
+        vetoNotice = Self.vetoNotice(skipped: BandarScreenerKind.vetoKinds.subtracting(evaluableVeto))
         lastFetchedAt = Date()
         await persist(out.perKind)
         if out.cancelled { didAutoRun = false }
@@ -196,55 +213,74 @@ final class WatchlistViewModel {
     func aggregateFromCache() async -> Bool {
         guard let snapshots else { return false }
 
-        var byID: [String: WatchlistRow] = [:]
-        var latest: Date?
-        var found = false
+        var loaded: [(kind: BandarScreenerKind, snapshot: ScreenerSnapshot)] = []
         for kind in BandarScreenerKind.allCases {
-            guard let snap = await snapshots.loadScreener(templateID: kind.templateID) else { continue }
-            found = true
-            if latest == nil || snap.fetchedAt > latest! { latest = snap.fetchedAt }
-            for row in snap.rows {
-                if var existing = byID[row.symbol] {
-                    existing.matchedScreeners.insert(kind)
-                    byID[row.symbol] = existing
-                } else {
-                    byID[row.symbol] = WatchlistRow(symbol: row.symbol, name: row.name, matchedScreeners: [kind])
-                }
+            if let snap = await snapshots.loadScreener(templateID: kind.templateID) {
+                loaded.append((kind, snap))
             }
         }
-        guard found else { return false }
+        guard !loaded.isEmpty else { return false }
 
-        error = nil
-        rows = byID.values.sorted { a, b in
-            if a.score != b.score { return a.score > b.score }
-            return a.symbol < b.symbol
+        // Only union caches from the **dominant generation** — the `fetchedAt` shared
+        // by the most caches (the scheduler stamps every screener in one sweep
+        // identically). A lone stale or page-limited tab-written cache carries a
+        // different stamp and is excluded, so it can neither pollute the composite nor
+        // fire a blanket veto. This is the fix for "every row shows ILLIQUID": a veto
+        // gate the sweep didn't refresh is simply not part of this generation.
+        let generationStamp = Self.dominantStamp(loaded.map(\.snapshot.fetchedAt))
+        let generation = loaded.filter { $0.snapshot.fetchedAt == generationStamp }
+
+        var byID: [String: WatchlistRow] = [:]
+        for (kind, snap) in generation {
+            for row in snap.rows { Self.union(&byID, row: row, kind: kind) }
         }
-        lastFetchedAt = latest ?? Date()
-        await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: lastFetchedAt ?? Date()))
-        watchlistLog.info("aggregated \(self.rows.count) symbols from per-screener caches")
+
+        let evaluableVeto = Set(generation.map(\.kind).filter(\.isVeto))
+        error = nil
+        vetoNotice = Self.vetoNotice(skipped: BandarScreenerKind.vetoKinds.subtracting(evaluableVeto))
+        rows = Self.ranked(byID.values, evaluableVeto: evaluableVeto)
+        lastFetchedAt = generationStamp
+        await snapshots.saveWatchlist(WatchlistSnapshot(rows: rows, fetchedAt: generationStamp))
+        watchlistLog.info("aggregated \(self.rows.count) symbols from \(generation.count) cached screeners")
         return true
     }
 
-    /// Unions every successful kind's rows into `rows`, scored + sorted. Shared by
-    /// the on-demand live path (compose-from-network).
-    private func composeAndRender(_ results: [(BandarScreenerKind, Result<KindFetch, Error>)]) {
-        var byID: [String: WatchlistRow] = [:]
-        for (kind, result) in results {
-            guard case .success(let fetched) = result else { continue }
-            watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
-            for row in fetched.rows {
-                if var existing = byID[row.symbol] {
-                    existing.matchedScreeners.insert(kind)
-                    byID[row.symbol] = existing
-                } else {
-                    byID[row.symbol] = WatchlistRow(symbol: row.symbol, name: row.name, matchedScreeners: [kind])
-                }
-            }
+    /// Most-common timestamp; ties broken toward the newest. Empty input is guarded
+    /// by the caller.
+    private static func dominantStamp(_ stamps: [Date]) -> Date {
+        var counts: [Date: Int] = [:]
+        for s in stamps { counts[s, default: 0] += 1 }
+        return counts.sorted { ($0.value, $0.key) > ($1.value, $1.key) }.first?.key ?? (stamps.first ?? Date())
+    }
+
+    private static func union(_ byID: inout [String: WatchlistRow], row: ScreenerRow, kind: BandarScreenerKind) {
+        if var existing = byID[row.symbol] {
+            existing.matchedScreeners.insert(kind)
+            byID[row.symbol] = existing
+        } else {
+            byID[row.symbol] = WatchlistRow(symbol: row.symbol, name: row.name, matchedScreeners: [kind])
         }
-        rows = byID.values.sorted { a, b in
+    }
+
+    /// Materializes each row's `failedVetoGates` (against the gates we could actually
+    /// evaluate) and sorts by score desc, then symbol asc.
+    private static func ranked(_ rows: Dictionary<String, WatchlistRow>.Values,
+                               evaluableVeto: Set<BandarScreenerKind>) -> [WatchlistRow] {
+        rows.map { row -> WatchlistRow in
+            var r = row
+            r.failedVetoGates = evaluableVeto.filter { !row.matchedScreeners.contains($0) }
+            return r
+        }
+        .sorted { a, b in
             if a.score != b.score { return a.score > b.score }
             return a.symbol < b.symbol
         }
+    }
+
+    private static func vetoNotice(skipped: Set<BandarScreenerKind>) -> String? {
+        guard !skipped.isEmpty else { return nil }
+        let names = skipped.map(\.displayName).sorted()
+        return "Liquidity veto not enforced (stale/missing cache): \(names.joined(separator: ", "))"
     }
 
     /// Persists the composite plus per-kind snapshots so the next launch — and

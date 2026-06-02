@@ -188,6 +188,8 @@ POST /screener/templates                                                   ← p
 
 † *Veto gate* — `bandar-master.json` declares these `veto: true`. Matching contributes `weight` to the composite score normally (weighted-OR), but **missing from either** trips a hard-AND "ILLIQUID" flag (red) on the row in the Watchlist tab, regardless of bandar score. The flag's tooltip lists which gate(s) the row failed.
 
+> **A gate only vetoes when it was actually evaluated.** The flag is materialized onto each row (`WatchlistRow.failedVetoGates`) at composition time, restricted to veto gates that were *freshly read* this generation — i.e. fetched successfully in the live fan-out, or present in the dominant cache generation when aggregating. A veto gate whose cache went stale or whose fetch failed is **not** enforced (and the status bar shows a "Liquidity veto not enforced" notice), rather than blanket-flagging every row ILLIQUID. This is what makes the union-from-cache aggregation safe: if the scheduler refreshes 14/15 screeners but the 15th gate cache is stale, that gate simply isn't applied — the watchlist isn't poisoned. Without this, a single missing/stale liquidity cache flags the entire watchlist illiquid.
+
 ‡ *Frequency Spike divergence* — `bandar-master.json`'s `freq-spike` rule is an **OR** (`bool(freq_spike) or freq_analyzer >= 1.5`), but the captured Stockbit template (6676260) ships two `basic` filters which the API **AND**-combines. We mirror the captured wire exactly so the per-tab page-2+ POSTs reproduce the GET's row set; the watchlist weight (1.0) is unchanged. The practical effect is a stricter Frequency Spike tab than the master spec's OR.
 
 *Weights mirror `bandar-master.json` in the Ulysees repo. A symbol's Watchlist score is the sum of the weights of every screener it appears in. The two filter `type`s — `compare` (column vs column, item2 is a metric ID) and `basic` (column vs literal, item2 is a numeric string) — share the same wire shape; the Codable model `ScreenerFilter` round-trips both.
@@ -417,7 +419,7 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 - Watchlist fans out to all fifteen templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **17.5**), sorts descending. Veto-gate rules (Liquidity Floor, Intraday Liquidity) flip a per-row `isVetoed` flag when the stock is missing from either gate — the table renders Symbol/Name in red and shows an "ILLIQUID" Flag column (tooltip lists which gate(s) failed). One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-121 unit tests passing. Next milestone in §16.
+123 unit tests passing. Next milestone in §16.
 
 ---
 
