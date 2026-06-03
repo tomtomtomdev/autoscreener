@@ -112,6 +112,7 @@ final class WatchlistViewModel {
         .accumulating, .aboveMA20, .shiftToday, .accumDistPositive,
         .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak,
         .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA,
+        .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt,
         .liquidityFloor, .intradayLiquidity,
     ]
 

@@ -243,6 +243,73 @@ import Testing
         #expect(above200.config.filters.first?.item2 == "12462")
         #expect(above200.config.sequence == [2661, 12462])
     }
+
+    /// Fundamentals (proxseer "(1)" capture): each is a single-column `basic` filter
+    /// transcribed from the POST /screener/templates run body — earnings-yield
+    /// (2898 >= 8), roe-quality (1461 >= 12), fcf-positive (2538 > 0), manageable-debt
+    /// (1508 < 1.5). Sequences are single-column. When the server omits template
+    /// metadata the parser must pick each screener's own filter, not a shared default.
+    @Test func parseChoosesFundamentalBasicFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let ey  = try await svc.load(templateID: "6676273")
+        let roe = try await svc.load(templateID: "6676288")
+        let fcf = try await svc.load(templateID: "6676291")
+        let der = try await svc.load(templateID: "6676292")
+
+        #expect(ey.config.filters.count == 1)
+        #expect(ey.config.filters.first?.type == .basic)
+        #expect(ey.config.filters.first?.item1 == 2898)
+        #expect(ey.config.filters.first?.operator_ == ">=")
+        #expect(ey.config.filters.first?.item2 == "8")
+        #expect(ey.config.sequence == [2898])
+
+        #expect(roe.config.filters.first?.item1 == 1461)
+        #expect(roe.config.filters.first?.operator_ == ">=")
+        #expect(roe.config.filters.first?.item2 == "12")
+        #expect(roe.config.sequence == [1461])
+
+        #expect(fcf.config.filters.first?.item1 == 2538)
+        #expect(fcf.config.filters.first?.operator_ == ">")
+        #expect(fcf.config.filters.first?.item2 == "0")
+        #expect(fcf.config.sequence == [2538])
+
+        #expect(der.config.filters.first?.item1 == 1508)
+        #expect(der.config.filters.first?.operator_ == "<")
+        #expect(der.config.filters.first?.item2 == "1.5")
+        #expect(der.config.sequence == [1508])
+    }
+
+    /// pbv-below-2 (6676280) is a *range* gate: two `basic` filters on metric 2896 —
+    /// Current Price to Book Value > 0 AND <= 2. Both must survive the metadata-omitted
+    /// fallback; dropping the upper bound would surface every positive-book-value name.
+    @Test func parseChoosesPBVRangeFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let pbv = try await svc.load(templateID: "6676280")
+
+        #expect(pbv.config.filters.count == 2)
+        #expect(pbv.config.filters.allSatisfy { $0.type == .basic })
+        #expect(pbv.config.filters.allSatisfy { $0.item1 == 2896 })
+        #expect(pbv.config.filters[0].operator_ == ">")
+        #expect(pbv.config.filters[0].item2 == "0")
+        #expect(pbv.config.filters[1].operator_ == "<=")
+        #expect(pbv.config.filters[1].item2 == "2")
+        #expect(pbv.config.sequence == [2896])
+    }
 }
 
 // MARK: - ScreenerService row enrichment

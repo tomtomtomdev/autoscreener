@@ -22,6 +22,11 @@ import Testing
         #expect(BandarScreenerKind.volumeSpike.weight        == 1.0)
         #expect(BandarScreenerKind.above50MA.weight          == 0.5)
         #expect(BandarScreenerKind.above200MA.weight         == 1.0)
+        #expect(BandarScreenerKind.earningsYield.weight      == 1.0)
+        #expect(BandarScreenerKind.pbvBelow2.weight          == 1.0)
+        #expect(BandarScreenerKind.roeQuality.weight         == 1.0)
+        #expect(BandarScreenerKind.fcfPositive.weight        == 1.0)
+        #expect(BandarScreenerKind.manageableDebt.weight     == 1.0)
         #expect(BandarScreenerKind.liquidityFloor.weight     == 0.5)
         #expect(BandarScreenerKind.intradayLiquidity.weight  == 0.5)
     }
@@ -42,6 +47,11 @@ import Testing
         #expect(BandarScreenerKind.volumeSpike.templateID       == "6676263")
         #expect(BandarScreenerKind.above50MA.templateID         == "6676264")
         #expect(BandarScreenerKind.above200MA.templateID        == "6676268")
+        #expect(BandarScreenerKind.earningsYield.templateID     == "6676273")
+        #expect(BandarScreenerKind.pbvBelow2.templateID         == "6676280")
+        #expect(BandarScreenerKind.roeQuality.templateID        == "6676288")
+        #expect(BandarScreenerKind.fcfPositive.templateID       == "6676291")
+        #expect(BandarScreenerKind.manageableDebt.templateID    == "6676292")
         #expect(BandarScreenerKind.liquidityFloor.templateID    == "6676314")
         #expect(BandarScreenerKind.intradayLiquidity.templateID == "6676320")
     }
@@ -70,12 +80,29 @@ import Testing
         #expect(Set(BandarScreenerKind.allCases.filter(\.isVeto)) == [.liquidityFloor, .intradayLiquidity])
     }
 
+    /// The five fundamentals (proxseer "(1)" capture) are scored contributors at
+    /// weight 1.0 each, group "fundamentals" in `bandar-master.json` — never veto
+    /// gates. Adding them must not expand the veto set beyond the two liquidity floors.
+    @Test func fundamentalRulesAreNonVetoWeightedOne() {
+        for kind in [BandarScreenerKind.earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt] {
+            #expect(kind.weight == 1.0)
+            #expect(kind.isVeto == false)
+        }
+        #expect(BandarScreenerKind.earningsYield.displayName == "Earnings Yield ≥8%")
+        #expect(BandarScreenerKind.pbvBelow2.displayName == "PBV ≤2")
+        #expect(BandarScreenerKind.roeQuality.displayName == "ROE ≥12%")
+        #expect(BandarScreenerKind.fcfPositive.displayName == "Positive FCF")
+        #expect(BandarScreenerKind.manageableDebt.displayName == "DER <1.5")
+        #expect(Set(BandarScreenerKind.allCases.filter(\.isVeto)) == [.liquidityFloor, .intradayLiquidity])
+    }
+
     /// Regression: when the kind list grows, the WatchlistView toolbar shows the
     /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
     /// the moment a new kind is added — derive from `allCases` instead.
     @Test func maxCompositeScoreSumsAllKindWeights() {
         // 2.0+1.5+2.0+1.5+1.0+1.5+1.0+1.0+1.5 + 1.0+1.0+0.5+1.0 + 0.5+0.5 = 17.5
-        #expect(BandarScreenerKind.maxCompositeScore == 17.5)
+        // + fundamentals (5 × 1.0 = 5.0) = 22.5
+        #expect(BandarScreenerKind.maxCompositeScore == 22.5)
     }
 }
 
@@ -210,6 +237,11 @@ enum WatchlistTestHelpers {
         case "6676263": c.sequence = [12469, 12464]
         case "6676264": c.sequence = [2661, 12460]
         case "6676268": c.sequence = [2661, 12462]
+        case "6676273": c.sequence = [2898]
+        case "6676280": c.sequence = [2896]
+        case "6676288": c.sequence = [1461]
+        case "6676291": c.sequence = [2538]
+        case "6676292": c.sequence = [1508]
         case "6676314": c.sequence = [16454]
         case "6676320": c.sequence = [13620]
         default:        c.sequence = [14399, 14426]
@@ -263,8 +295,8 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls == [.screener])
         #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676314", "6676320"])
-        #expect(templates.loadCalls.count == 15)
+        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676273", "6676280", "6676288", "6676291", "6676292", "6676314", "6676320"])
+        #expect(templates.loadCalls.count == 20)
     }
 
     @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
@@ -391,7 +423,7 @@ enum WatchlistTestHelpers {
 
         #expect(paywall.checkCalls.count == 1)
         #expect(paywall.incrementCalls.count == 1)
-        #expect(templates.loadCalls.count == 15)
+        #expect(templates.loadCalls.count == 20)
     }
 
     @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
@@ -442,8 +474,8 @@ enum WatchlistTestHelpers {
     /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
     @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
         // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
-        // 14 other kinds: empty page 1 → 1 request each
-        // Total = 16 requests → 15 throttled sleeps.
+        // 19 other kinds: empty page 1 → 1 request each
+        // Total = 21 requests → 20 throttled sleeps.
         let templates = WatchlistFakeTemplates()
         let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
         templates.resultsByTemplateID = [
@@ -466,7 +498,7 @@ enum WatchlistTestHelpers {
         await vm.autoRunIfNeeded()
 
         let delays = await recorder.delays
-        #expect(delays.count == 15)
+        #expect(delays.count == 20)
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
     }
 
@@ -513,7 +545,9 @@ enum WatchlistTestHelpers {
     /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
     /// shiftToday → accumDistPositive → foreignFlow1M → foreignFlow6M →
     /// foreignFlow3M → foreignBuyStreak → freshForeignBuy → freqSpike →
-    /// volumeSpike → above50MA → above200MA → liquidityFloor → intradayLiquidity).
+    /// volumeSpike → above50MA → above200MA → earningsYield → pbvBelow2 →
+    /// roeQuality → fcfPositive → manageableDebt → liquidityFloor →
+    /// intradayLiquidity).
     /// If a future refactor accidentally reverses or interleaves, this asserts the
     /// contract.
     @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
@@ -531,7 +565,7 @@ enum WatchlistTestHelpers {
 
         await vm.autoRunIfNeeded()
 
-        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676314", "6676320"])
+        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676273", "6676280", "6676288", "6676291", "6676292", "6676314", "6676320"])
     }
 }
 
@@ -624,8 +658,8 @@ enum WatchlistTestHelpers {
 
         await vm.refresh()
 
-        // Populated every screener cache (15 template loads) on the cold path...
-        #expect(templates.loadCalls.count == 15)
+        // Populated every screener cache (20 template loads) on the cold path...
+        #expect(templates.loadCalls.count == 20)
         // ...and the freshly-written cache is now readable + composed.
         #expect(await store.loadScreener(templateID: "6676213")?.rows.count == 1)
         #expect(vm.rows.map(\.symbol) == ["AAA"])
@@ -647,7 +681,7 @@ enum WatchlistTestHelpers {
 
         await vm.scheduledRefresh()
 
-        #expect(templates.loadCalls.count == 15)        // fetched every screener
+        #expect(templates.loadCalls.count == 20)        // fetched every screener
         #expect(paywall.incrementCalls.count == 1)      // one increment for the sweep
         #expect(await store.loadScreener(templateID: "6676213")?.rows.count == 1)  // cached
         // AAA matched by accumulating (2.0) + volumeSpike (1.0) = 3.0.
@@ -657,7 +691,7 @@ enum WatchlistTestHelpers {
     }
 
     /// Regression: a veto gate whose cache is **stale** (an older generation than the
-    /// rest — e.g. the scheduler refreshed 14/15 screeners but failed/cancelled before
+    /// rest — e.g. the scheduler refreshed 19/20 screeners but failed/cancelled before
     /// the last gate) must NOT be enforced. Otherwise every liquid name is missing that
     /// gate and gets falsely flagged ILLIQUID — the "watchlist shows all illiquid" bug.
     @Test func staleVetoGateMustNotFlagLiquidNamesIlliquid() async {
@@ -709,7 +743,7 @@ enum WatchlistTestHelpers {
 
         await vm.refresh()
 
-        #expect(templates.loadCalls.count == 15)             // live fan-out
+        #expect(templates.loadCalls.count == 20)             // live fan-out
         #expect(!vm.rows.contains { $0.symbol == "STALE" })  // cache not used
     }
 }

@@ -100,6 +100,11 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676263": return ScreenerFilter.volumeSpike
         case "6676264": return ScreenerFilter.above50MA
         case "6676268": return ScreenerFilter.above200MA
+        case "6676273": return ScreenerFilter.earningsYield
+        case "6676280": return ScreenerFilter.pbvBelow2
+        case "6676288": return ScreenerFilter.roeQuality
+        case "6676291": return ScreenerFilter.fcfPositive
+        case "6676292": return ScreenerFilter.manageableDebt
         case "6676314": return ScreenerFilter.liquidityFloor
         case "6676320": return ScreenerFilter.intradayLiquidity
         default:        return ScreenerFilter.bandarAccumulating
@@ -117,7 +122,9 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
     /// (13620, Value). freq-spike pairs Frequency Spike + Analyzer (15396, 15394);
     /// volume-spike pairs Volume + Volume MA 20 (12469, 12464); above-50ma pairs
     /// Price + Price MA 50 (2661, 12460); above-200ma pairs Price + Price MA 200
-    /// (2661, 12462).
+    /// (2661, 12462). The five fundamentals are each single-column: earnings-yield
+    /// (2898), pbv-below-2 (2896), roe-quality (1461), fcf-positive (2538),
+    /// manageable-debt (1508).
     private static func defaultSequence(forTemplateID id: String) -> [Int] {
         switch id {
         case "6676221": return [14399, 14425]
@@ -131,6 +138,11 @@ nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
         case "6676263": return [12469, 12464]
         case "6676264": return [2661, 12460]
         case "6676268": return [2661, 12462]
+        case "6676273": return [2898]
+        case "6676280": return [2896]
+        case "6676288": return [1461]
+        case "6676291": return [2538]
+        case "6676292": return [1508]
         case "6676314": return [16454]
         case "6676320": return [13620]
         default:        return [14399, 14426]

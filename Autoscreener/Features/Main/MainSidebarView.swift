@@ -14,6 +14,11 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case volumeSpike
     case above50MA
     case above200MA
+    case earningsYield
+    case pbvBelow2
+    case roeQuality
+    case fcfPositive
+    case manageableDebt
     case liquidityFloor
     case intradayLiquidity
     case watchlist
@@ -35,6 +40,11 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .volumeSpike:        return "Volume Spike"
         case .above50MA:          return "Above 50MA"
         case .above200MA:         return "Above 200MA"
+        case .earningsYield:      return "Earnings Yield ≥8%"
+        case .pbvBelow2:          return "PBV ≤2"
+        case .roeQuality:         return "ROE ≥12%"
+        case .fcfPositive:        return "Positive FCF"
+        case .manageableDebt:     return "DER <1.5"
         case .liquidityFloor:     return "Liquidity Floor"
         case .intradayLiquidity:  return "Intraday Liquidity"
         case .watchlist:          return "Watchlist"
@@ -56,6 +66,11 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .volumeSpike:        return "chart.bar.fill"
         case .above50MA:          return "chart.xyaxis.line"
         case .above200MA:         return "chart.line.uptrend.xyaxis.circle"
+        case .earningsYield:      return "percent"
+        case .pbvBelow2:          return "tag"
+        case .roeQuality:         return "checkmark.seal"
+        case .fcfPositive:        return "dollarsign.circle"
+        case .manageableDebt:     return "scalemass"
         case .liquidityFloor:     return "drop.fill"
         case .intradayLiquidity:  return "bolt.fill"
         case .watchlist:          return "star.circle.fill"
@@ -77,6 +92,11 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .volumeSpike:        return "6676263"
         case .above50MA:          return "6676264"
         case .above200MA:         return "6676268"
+        case .earningsYield:      return "6676273"
+        case .pbvBelow2:          return "6676280"
+        case .roeQuality:         return "6676288"
+        case .fcfPositive:        return "6676291"
+        case .manageableDebt:     return "6676292"
         case .liquidityFloor:     return "6676314"
         case .intradayLiquidity:  return "6676320"
         case .watchlist:          return nil
@@ -103,6 +123,11 @@ struct MainSidebarView: View {
     @State private var volumeSpikeVM: ScreenerViewModel
     @State private var above50MAVM: ScreenerViewModel
     @State private var above200MAVM: ScreenerViewModel
+    @State private var earningsYieldVM: ScreenerViewModel
+    @State private var pbvBelow2VM: ScreenerViewModel
+    @State private var roeQualityVM: ScreenerViewModel
+    @State private var fcfPositiveVM: ScreenerViewModel
+    @State private var manageableDebtVM: ScreenerViewModel
     @State private var liquidityFloorVM: ScreenerViewModel
     @State private var intradayLiquidityVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
@@ -201,6 +226,41 @@ struct MainSidebarView: View {
             snapshots: snaps,
             templateID: "6676268"
         ))
+        _earningsYieldVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676273"
+        ))
+        _pbvBelow2VM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676280"
+        ))
+        _roeQualityVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676288"
+        ))
+        _fcfPositiveVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676291"
+        ))
+        _manageableDebtVM = State(initialValue: ScreenerViewModel(
+            service: deps.screenerService,
+            paywall: deps.paywallService,
+            templates: deps.screenerTemplateService,
+            snapshots: snaps,
+            templateID: "6676292"
+        ))
         _liquidityFloorVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
@@ -227,9 +287,19 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .liquidityFloor, .intradayLiquidity, .watchlist]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .liquidityFloor, .intradayLiquidity]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
+                }
+                Section("Fundamental") {
+                    ForEach([SidebarItem.earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt]) { item in
+                        Label(item.title, systemImage: item.systemImage).tag(item)
+                    }
+                }
+                Section {
+                    Label(SidebarItem.watchlist.title,
+                          systemImage: SidebarItem.watchlist.systemImage)
+                        .tag(SidebarItem.watchlist)
                 }
                 Section {
                     Label(SidebarItem.appSettings.title,
@@ -307,6 +377,21 @@ struct MainSidebarView: View {
         case .above200MA:
             ScreenerView(vm: above200MAVM, title: SidebarItem.above200MA.title)
                 .id(SidebarItem.above200MA)
+        case .earningsYield:
+            ScreenerView(vm: earningsYieldVM, title: SidebarItem.earningsYield.title)
+                .id(SidebarItem.earningsYield)
+        case .pbvBelow2:
+            ScreenerView(vm: pbvBelow2VM, title: SidebarItem.pbvBelow2.title)
+                .id(SidebarItem.pbvBelow2)
+        case .roeQuality:
+            ScreenerView(vm: roeQualityVM, title: SidebarItem.roeQuality.title)
+                .id(SidebarItem.roeQuality)
+        case .fcfPositive:
+            ScreenerView(vm: fcfPositiveVM, title: SidebarItem.fcfPositive.title)
+                .id(SidebarItem.fcfPositive)
+        case .manageableDebt:
+            ScreenerView(vm: manageableDebtVM, title: SidebarItem.manageableDebt.title)
+                .id(SidebarItem.manageableDebt)
         case .liquidityFloor:
             ScreenerView(vm: liquidityFloorVM, title: SidebarItem.liquidityFloor.title)
                 .id(SidebarItem.liquidityFloor)

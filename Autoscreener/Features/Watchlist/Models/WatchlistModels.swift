@@ -22,6 +22,11 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
     case volumeSpike
     case above50MA
     case above200MA
+    case earningsYield
+    case pbvBelow2
+    case roeQuality
+    case fcfPositive
+    case manageableDebt
     case liquidityFloor
     case intradayLiquidity
 
@@ -40,6 +45,11 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .volumeSpike:       return 1.0
         case .above50MA:         return 0.5
         case .above200MA:        return 1.0
+        case .earningsYield:     return 1.0
+        case .pbvBelow2:         return 1.0
+        case .roeQuality:        return 1.0
+        case .fcfPositive:       return 1.0
+        case .manageableDebt:    return 1.0
         case .liquidityFloor:    return 0.5
         case .intradayLiquidity: return 0.5
         }
@@ -60,6 +70,11 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .volumeSpike:       return "6676263"
         case .above50MA:         return "6676264"
         case .above200MA:        return "6676268"
+        case .earningsYield:     return "6676273"
+        case .pbvBelow2:         return "6676280"
+        case .roeQuality:        return "6676288"
+        case .fcfPositive:       return "6676291"
+        case .manageableDebt:    return "6676292"
         case .liquidityFloor:    return "6676314"
         case .intradayLiquidity: return "6676320"
         }
@@ -80,6 +95,11 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
         case .volumeSpike:       return "Volume Spike"
         case .above50MA:         return "Above 50MA"
         case .above200MA:        return "Above 200MA"
+        case .earningsYield:     return "Earnings Yield ≥8%"
+        case .pbvBelow2:         return "PBV ≤2"
+        case .roeQuality:        return "ROE ≥12%"
+        case .fcfPositive:       return "Positive FCF"
+        case .manageableDebt:    return "DER <1.5"
         case .liquidityFloor:    return "Liquidity Floor"
         case .intradayLiquidity: return "Intraday Liquidity"
         }

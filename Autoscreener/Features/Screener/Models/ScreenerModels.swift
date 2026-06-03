@@ -209,6 +209,68 @@ nonisolated struct ScreenerFilter: Codable, Hashable, Sendable {
               item2: "12462", item2_name: "Price MA 200",
               multiplier: "1"),
     ]
+
+    /// Earnings Yield (templateID 6676273): Earnings Yield (TTM) (2898) >= 8.
+    /// Single-column `basic` filter — mirrors `bandar-master.json`'s `earnings-yield`
+    /// rule (`earnings_yield_ttm >= 8`), weight 1.0 (fundamentals group). 8 is a
+    /// percentage (≈ P/E ≤ 12.5). Transcribed from the proxseer POST run body.
+    static let earningsYield: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 2898, item1_name: "Earnings Yield (TTM)",
+              item2: "8", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// PBV Below 2 (templateID 6676280): Current Price to Book Value (2896) > 0 **and**
+    /// <= 2. Two `basic` filters on the same metric form a range gate — mirrors
+    /// `bandar-master.json`'s `pbv-below-2` rule (`pbv > 0 and pbv <= 2`), weight 1.0
+    /// (fundamentals group). The `> 0` arm excludes negative-equity names.
+    static let pbvBelow2: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 2896, item1_name: "Current Price to Book Value",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+        .init(type: .basic,
+              operator_: "<=",
+              item1: 2896, item1_name: "Current Price to Book Value",
+              item2: "2", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// ROE Quality (templateID 6676288): Return on Equity (TTM) (1461) >= 12.
+    /// Single-column `basic` filter — mirrors `bandar-master.json`'s `roe-quality`
+    /// rule (`roe_ttm >= 12`), weight 1.0 (fundamentals group).
+    static let roeQuality: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">=",
+              item1: 1461, item1_name: "Return on Equity (TTM)",
+              item2: "12", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// FCF Positive (templateID 6676291): Free cash flow (TTM) (2538) > 0.
+    /// Single-column `basic` filter — mirrors `bandar-master.json`'s `fcf-positive`
+    /// rule (`fcf_ttm > 0`), weight 1.0 (fundamentals group).
+    static let fcfPositive: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: ">",
+              item1: 2538, item1_name: "Free cash flow (TTM)",
+              item2: "0", item2_name: "",
+              multiplier: "0"),
+    ]
+
+    /// Manageable Debt (templateID 6676292): Debt to Equity Ratio (Quarter) (1508) < 1.5.
+    /// Single-column `basic` filter — mirrors `bandar-master.json`'s `manageable-debt`
+    /// rule (`der < 1.5`), weight 1.0 (fundamentals group).
+    static let manageableDebt: [ScreenerFilter] = [
+        .init(type: .basic,
+              operator_: "<",
+              item1: 1508, item1_name: "Debt to Equity Ratio (Quarter)",
+              item2: "1.5", item2_name: "",
+              multiplier: "0"),
+    ]
 }
 
 nonisolated struct ScreenerConfig: Codable, Sendable {
@@ -234,7 +296,12 @@ nonisolated struct ScreenerConfig: Codable, Sendable {
     /// introduce new metric IDs — bandar-shift-today added 14425.
     static func metricName(for id: Int) -> String {
         switch id {
+        case 1461:  return "Return on Equity (TTM)"
+        case 1508:  return "Debt to Equity Ratio (Quarter)"
+        case 2538:  return "Free cash flow (TTM)"
         case 2661:  return "Price"
+        case 2896:  return "Current Price to Book Value"
+        case 2898:  return "Earnings Yield (TTM)"
         case 12460: return "Price MA 50"
         case 12462: return "Price MA 200"
         case 12464: return "Volume MA 20"
