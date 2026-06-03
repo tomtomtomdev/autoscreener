@@ -16,6 +16,7 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Configurable refresh schedule** (§16): on-demand / 15-min / hourly / daily 08:45 (IDX open) / daily 16:15 (IDX close). Auto-refresh modes persist per-screener + watchlist snapshots to Application Support and seed instant boot.
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
+- [x] **Stock-code search** (§7.3): a `.searchable` toolbar field on the Liquidity Floor, Intraday Liquidity, and Watchlist tabs filters rows by ticker (case-insensitive substring on the symbol). On the two paginated screener tabs, entering a term auto-loads all remaining pages first, so a match is never hidden behind lazy pagination; the Watchlist already holds the complete set.
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
 - [x] **Build DMG**: `scripts/build_dmg.sh` produces a notarisable `Autoscreener.dmg`.
 
@@ -328,7 +329,15 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 ### 7.2 Toolbar + status bar
 
 - Header row: `config.name` (template name) and `config.universe.scope`, plus a `ProgressView` while a fetch is in flight. No action buttons — the screener auto-runs on launch and auto-paginates on scroll, and the network log lives in Settings.
-- Status bar (below the table): "N of T rows · page P" when total is known, "N rows · page P" otherwise.
+- Status bar (below the table): "N of T rows · page P" when total is known, "N rows · page P" otherwise. With an active search it switches to "N of M rows match".
+
+### 7.3 Stock-code search
+
+The **Liquidity Floor** and **Intraday Liquidity** tabs — and the **Watchlist** (§15) — expose a `.searchable` toolbar field. It's opt-in per tab via `ScreenerView(enableSearch:)` (the Watchlist always has it), so the other 18 screener tabs that share `ScreenerView`/`ScreenerViewModel` are unaffected. Matching is a case-insensitive substring over the row's `symbol` **only** (company name is not matched); a blank/whitespace query shows everything. The view renders `vm.visibleRows` (the filtered set) instead of `vm.rows`, and a no-match search shows `ContentUnavailableView.search`.
+
+The filter is a single shared implementation: `Array.filteredBySymbol(_:)` on the `SymbolSearchable` protocol, to which both `ScreenerRow` and `WatchlistRow` conform — so the two screener tabs and the Watchlist share one tested code path (`SymbolSearch.swift`).
+
+Because the two screener tabs are lazily paginated, a naive filter over loaded rows would miss a symbol sitting on a not-yet-scrolled page. So the first non-empty keystroke kicks `ScreenerViewModel.loadAllForSearch()`, which walks `loadMore()` until `hasMore` is false — eagerly pulling every remaining page before filtering. A re-entrancy guard (`isExhaustingPages`) collapses rapid keystrokes into one sweep, and once all pages are in it's a no-op. The Watchlist needs none of this — it already holds the full aggregated set, so its `visibleRows` filter is always complete. Search terms are transient UI state, never persisted to snapshots.
 
 ---
 
@@ -360,7 +369,7 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 
 ## 10. Testing
 
-112 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
+137 unit tests at present (`xcodebuild -only-testing:AutoscreenerTests test`). Coverage:
 
 - `JWTTests` — payload base64url decode, `isExpiring` window
 - `LoginServiceTests` — request body + headers, three response envelopes (trusted-device, new-device, flat), `expired_at` parsing, MFA outcome detection, 401 → `invalidCredentials`, refresh bearer attach
@@ -375,6 +384,9 @@ Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run
 - `ScreenerSnapshotStoreTests` — round-trip per-screener + watchlist JSON in a temp dir, missing-file returns nil, disabled flag suppresses writes
 - `ScreenerViewModelSnapshotTests` — seeded snapshot renders without hitting the network; first-run with no snapshot falls through to GET; refresh writes back; disabled persistence is no-op
 - `ScreenerSchedulerTests` — `.onDemand` leaves `nextFireDate` nil, `stop()` cancels the loop, instant sleep fires refresh, switching to `.onDemand` halts the cycle
+- `SymbolSearchTests` — shared `filteredBySymbol`: blank/whitespace passthrough, case-insensitivity, substring match, no-match-empty, symbol-not-company-name, surrounding-whitespace trim
+- `ScreenerSearchTests` — `visibleRows` tracks `searchText`; `loadAllForSearch()` exhausts every remaining page and leaves `hasMore == false`
+- `WatchlistSearchTests` — `visibleRows` filters by symbol (blank passthrough, case-insensitive, symbol-not-name)
 
 UI tests in `AutoscreenerUITests` cover launch only; full sign-in is a real-network smoke (run manually).
 
@@ -419,7 +431,7 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 - Watchlist fans out to all fifteen templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **17.5**), sorts descending. Veto-gate rules (Liquidity Floor, Intraday Liquidity) flip a per-row `isVetoed` flag when the stock is missing from either gate — the table renders Symbol/Name in red and shows an "ILLIQUID" Flag column (tooltip lists which gate(s) failed). One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-123 unit tests passing. Next milestone in §16.
+137 unit tests passing. Next milestone in §16.
 
 ---
 

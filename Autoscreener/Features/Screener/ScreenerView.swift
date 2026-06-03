@@ -3,13 +3,34 @@ import SwiftUI
 struct ScreenerView: View {
     @Bindable var vm: ScreenerViewModel
     let title: String
+    /// Opt-in stock-code search field. Off by default so only the screeners that
+    /// want it (Liquidity Floor, Intraday Liquidity) show the search box.
+    let enableSearch: Bool
 
-    init(vm: ScreenerViewModel, title: String) {
+    init(vm: ScreenerViewModel, title: String, enableSearch: Bool = false) {
         self.vm = vm
         self.title = title
+        self.enableSearch = enableSearch
     }
 
+    @ViewBuilder
     var body: some View {
+        if enableSearch {
+            coreView
+                .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
+                .onChange(of: vm.searchText) { oldValue, newValue in
+                    // The first non-empty keystroke kicks a one-shot page exhaust so
+                    // the filter sees every match, not just the pages scrolled in.
+                    if oldValue.isEmpty && !newValue.isEmpty {
+                        Task { await vm.loadAllForSearch() }
+                    }
+                }
+        } else {
+            coreView
+        }
+    }
+
+    private var coreView: some View {
         VStack(spacing: 0) {
             toolbar
             if let msg = vm.paywallMessage {
@@ -83,6 +104,8 @@ struct ScreenerView: View {
             ContentUnavailableView("No matches",
                                    systemImage: "tablecells",
                                    description: Text("\(title) returned no rows in IHSG."))
+        } else if vm.visibleRows.isEmpty && !vm.searchText.isEmpty {
+            ContentUnavailableView.search(text: vm.searchText)
         } else {
             resultsTable
         }
@@ -91,10 +114,13 @@ struct ScreenerView: View {
     private var resultsTable: some View {
         let cols = vm.config.columns
         let firstName = cols.first?.name ?? "Metric 1"
-        let lastSymbol = vm.rows.last?.symbol
-        return Table(vm.rows, sortOrder: $vm.sort) {
+        // Render the filtered view; with an empty search term this is identical to
+        // `vm.rows`, so scroll-pagination behaves exactly as before.
+        let visible = vm.visibleRows
+        let lastSymbol = visible.last?.symbol
+        return Table(visible, sortOrder: $vm.sort) {
             TableColumn("No") { row in
-                if let i = vm.rows.firstIndex(where: { $0.id == row.id }) {
+                if let i = visible.firstIndex(where: { $0.id == row.id }) {
                     Text("\(i + 1)")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
@@ -107,7 +133,8 @@ struct ScreenerView: View {
                     .monospaced()
                     .onAppear {
                         // Last row scrolled into view → kick the next page.
-                        // Idempotent and no-op once the server signals we're done.
+                        // Idempotent and no-op once the server signals we're done
+                        // (and while a search is active, all pages are already in).
                         if row.symbol == lastSymbol {
                             Task { await vm.rowDidAppear(at: vm.rows.count - 1) }
                         }
@@ -155,8 +182,11 @@ struct ScreenerView: View {
     }
 
     private var statusText: String {
-        if let total = vm.total { "\(vm.rows.count) of \(total) rows · page \(vm.currentPage)" }
-        else { "\(vm.rows.count) rows · page \(vm.currentPage)" }
+        if !vm.searchText.isEmpty {
+            return "\(vm.visibleRows.count) of \(vm.rows.count) rows match"
+        }
+        if let total = vm.total { return "\(vm.rows.count) of \(total) rows · page \(vm.currentPage)" }
+        return "\(vm.rows.count) rows · page \(vm.currentPage)"
     }
 
     private func formatDecimal(_ v: Double) -> String {

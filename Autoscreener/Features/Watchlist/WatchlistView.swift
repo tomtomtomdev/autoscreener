@@ -21,6 +21,7 @@ struct WatchlistView: View {
             statusBar
         }
         .frame(minWidth: 720, minHeight: 480)
+        .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
         .task { await vm.autoRunIfNeeded() }
     }
 
@@ -82,13 +83,15 @@ struct WatchlistView: View {
             ContentUnavailableView("No matches",
                                    systemImage: "tablecells",
                                    description: Text("None of the bandar screeners returned rows in IHSG."))
+        } else if vm.visibleRows.isEmpty && !vm.searchText.isEmpty {
+            ContentUnavailableView.search(text: vm.searchText)
         } else {
             resultsTable
         }
     }
 
     private var resultsTable: some View {
-        let rows = vm.rows
+        let rows = vm.visibleRows
         return Table(rows) {
             TableColumn("No") { row in
                 if let i = rows.firstIndex(where: { $0.id == row.id }) {
@@ -147,10 +150,17 @@ struct WatchlistView: View {
             }
             Spacer()
             if !vm.rows.isEmpty {
-                Text("\(vm.rows.count) rows").font(.callout).foregroundStyle(.secondary)
+                Text(rowCountText).font(.callout).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal).padding(.vertical, 6)
+    }
+
+    private var rowCountText: String {
+        if !vm.searchText.isEmpty {
+            return "\(vm.visibleRows.count) of \(vm.rows.count) rows match"
+        }
+        return "\(vm.rows.count) rows"
     }
 
     private func formatScore(_ v: Double) -> String {

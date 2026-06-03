@@ -13,6 +13,10 @@ final class ScreenerViewModel {
     var paywallMessage: String?
     var sort: [KeyPathComparator<ScreenerRow>] = []
 
+    /// Live stock-code search term (bound to the toolbar search field on the
+    /// screeners that opt into search). Empty = no filtering.
+    var searchText: String = ""
+
     /// Wall-clock when the currently-displayed rows landed (from a fresh fetch or a
     /// persisted snapshot). Surfaced to the toolbar as an "as of HH:mm" badge.
     var lastFetchedAt: Date?
@@ -20,6 +24,7 @@ final class ScreenerViewModel {
     private(set) var currentPage: Int = 0
     private var didAutoRun: Bool = false
     private var serverSaysDone: Bool = false  // set when last fetch returned 0 rows or < limit rows
+    private var isExhaustingPages: Bool = false  // guards re-entrant loadAllForSearch
     private let service: any ScreenerServicing
     private let paywall: (any PaywallServicing)?
     private let templates: (any ScreenerTemplateServicing)?
@@ -47,6 +52,12 @@ final class ScreenerViewModel {
         if rows.isEmpty { return false }
         if let total { return rows.count < total }
         return rows.count % config.limit == 0
+    }
+
+    /// Rows after applying the stock-code search. The view renders these instead
+    /// of `rows`; an empty `searchText` returns everything unchanged.
+    var visibleRows: [ScreenerRow] {
+        rows.filteredBySymbol(searchText)
     }
 
     /// One-shot bootstrap — runs once per ViewModel lifetime (per screener tab).
@@ -163,6 +174,20 @@ final class ScreenerViewModel {
         guard !isLoading, hasMore else { return }
         await load(page: currentPage + 1)
         applyTemplateSort()
+    }
+
+    /// Eagerly pulls every remaining page so a stock-code search isn't fooled by
+    /// lazy pagination — a symbol on a not-yet-scrolled page must still surface.
+    /// Driven by the view when the search field transitions from empty to filled.
+    /// Re-entrant calls (rapid keystrokes) no-op via `isExhaustingPages`; once all
+    /// pages are in, `hasMore` is false and the loop ends immediately.
+    func loadAllForSearch() async {
+        guard !isExhaustingPages else { return }
+        isExhaustingPages = true
+        defer { isExhaustingPages = false }
+        while hasMore && !Task.isCancelled {
+            await loadMore()
+        }
     }
 
     /// Triggered by ScreenerView when the last row scrolls into view. Idempotent —

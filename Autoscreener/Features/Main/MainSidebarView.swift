@@ -393,10 +393,10 @@ struct MainSidebarView: View {
             ScreenerView(vm: manageableDebtVM, title: SidebarItem.manageableDebt.title)
                 .id(SidebarItem.manageableDebt)
         case .liquidityFloor:
-            ScreenerView(vm: liquidityFloorVM, title: SidebarItem.liquidityFloor.title)
+            ScreenerView(vm: liquidityFloorVM, title: SidebarItem.liquidityFloor.title, enableSearch: true)
                 .id(SidebarItem.liquidityFloor)
         case .intradayLiquidity:
-            ScreenerView(vm: intradayLiquidityVM, title: SidebarItem.intradayLiquidity.title)
+            ScreenerView(vm: intradayLiquidityVM, title: SidebarItem.intradayLiquidity.title, enableSearch: true)
                 .id(SidebarItem.intradayLiquidity)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)

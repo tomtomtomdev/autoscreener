@@ -13,6 +13,10 @@ final class WatchlistViewModel {
     var rows: [WatchlistRow] = []
     var isLoading: Bool = false
     var error: String?
+    /// Live stock-code search term (bound to the toolbar search field). Empty =
+    /// no filtering. The watchlist isn't paginated, so the filter is always
+    /// complete — no page exhaust needed.
+    var searchText: String = ""
     var paywallMessage: String?
     /// Set when a liquidity veto gate could NOT be enforced this run (its cache was
     /// stale/missing, or its fetch failed) — so the "ILLIQUID" flags reflect only the
@@ -48,6 +52,12 @@ final class WatchlistViewModel {
         self.safetyCap = safetyCap
         self.throttleRange = throttleRange
         self.sleeper = sleeper
+    }
+
+    /// Rows after applying the stock-code search. The view renders these instead
+    /// of `rows`; an empty `searchText` returns everything unchanged.
+    var visibleRows: [WatchlistRow] {
+        rows.filteredBySymbol(searchText)
     }
 
     /// One-shot bootstrap. No-ops on repeat so re-appearing views don't re-fire
