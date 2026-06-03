@@ -1,8 +1,8 @@
 # Autoscreener — Skill Router
 
-iOS/macOS Swift project. Route to the right skill based on what the user is asking, then apply it.
+iOS/macOS Swift project with a built-in investing-research knowledge base. Two skill families live here: **engineering skills** (how to build the app) and **investing & finance skills** (the domain the app reasons about). Route to the right skill based on what the user is asking, then apply it.
 
-## Routing table
+## Engineering skills
 
 | When the user is doing... | Invoke skill |
 |---|---|
@@ -42,3 +42,44 @@ This applies to every bug fix, no matter how small. If the bug is in code that's
 - Swift / SwiftUI / XCTest. Prefer protocol-based DI for testability.
 - When in doubt between MVVM and UDF for new SwiftUI features, consult `swiftui-architecture` (UDF + lightweight clean boundaries is the recommended default).
 - Always run/check the matching skill *before* writing tests or giving code-quality advice — don't answer from priors.
+
+---
+
+# Investing & finance skills
+
+Domain knowledge the screener encodes. Route here whenever the user analyzes a company, a stock, a market, a track record, or a credential path — not just when building the app. As with the engineering skills, consult the matching skill *before* answering from priors.
+
+## Routing table
+
+| When the user is doing... | Invoke skill |
+|---|---|
+| Value investing, margin of safety, intrinsic value, Mr. Market, defensive vs. enterprising investor, "is this stock cheap" | `intelligent-investor` |
+| Reading/interpreting a balance sheet or income statement, computing ratios (current, quick, working capital, net-net, coverage, book value) à la Graham (1937) | `graham-financial-statements` |
+| Qualitative growth analysis — Fisher's 15 Points, Scuttlebutt, management/R&D quality, whether a growth stock is worth holding | `common-stocks-uncommon-profits` |
+| Peter Lynch story-driven analysis, six-category classification, PEG, "what's the story", ten-baggers, fast growers | `one-up-on-wall-street` |
+| Buffett owner-mindset analysis — moats, owner earnings, ROE, "is this a wonderful business", long-term hold | `essays-of-warren-buffett` |
+| Buffett frameworks in his own words from the Berkshire letters — owner/look-through earnings, economic goodwill, float, institutional imperative, retained-earnings test | `buffett-shareholder-letters` |
+| Intrinsic valuation / DCF (FCFF, FCFE), WACC / cost of equity, terminal value, justifying or decomposing a multiple (PE, PEG, EV/EBITDA, P/B) | `damodaran-valuation` |
+| Forensic earnings quality — are reported profits real and cash-backed (O'Glove), core vs. reported EPS, receivables/inventory/tax red flags | `quality-of-earnings` |
+| Detecting accounting gimmicks / earnings manipulation / fraud risk in a 10-K/10-Q (Schilit) — the quality filter to run before trusting numbers in a screen | `financial-shenanigans` |
+| Munger worldly wisdom — four filters, inversion, circle of competence, psychology of misjudgment / bias screen, Lollapalooza, pressure-testing a thesis | `munger-mental-models` |
+| Howard Marks judgment check — second-level thinking, "where are we in the cycle", offense vs. defense, is a thesis already consensus, risk as permanent loss | `howard-marks` |
+| Market-cycle / pendulum / investor-psychology assessment and contrarian positioning from *The Most Important Thing* | `most-important-thing` |
+| Luck vs. skill, survivorship bias, hidden tail/black-swan risk, judging a track record or "winning streak" (Taleb) | `fooled-by-randomness` |
+| Reasoning about risk & probability — odds, expected value, position sizing, regression to the mean, base rates, Bayesian updating (Bernstein) | `against-the-gods` |
+| How to study for / qualify for the CFA charter — levels, topic weights, eligibility, prep providers | `cfa-prep` |
+| Becoming a financial planner / advisor, the CFP credential, the four E's, planning domains, FPSB Indonesia | `cfp-prep` |
+| Indonesian WMI (Wakil Manajer Investasi) license — managing funds/portfolios professionally, OJK licensing, TICMI exams | `wmi-prep` |
+| Indonesian WPPE (Wakil Perantara Pedagang Efek) license — securities brokerage, working at a sekuritas firm, OJK licensing | `wppe-prep` |
+
+## How to layer them
+
+Stock analysis usually wants more than one skill. Treat them as stacked layers:
+
+- **Value the business (quantitative):** `damodaran-valuation` for intrinsic/DCF; `graham-financial-statements` to read the statements; `intelligent-investor` for margin of safety.
+- **Judge business & growth quality (qualitative):** `common-stocks-uncommon-profits` (Fisher), `essays-of-warren-buffett` / `buffett-shareholder-letters` (moats, owner earnings), `one-up-on-wall-street` (Lynch story + category).
+- **Vet the numbers first:** run `financial-shenanigans` / `quality-of-earnings` *before* trusting reported figures fed into any value or growth screen.
+- **Audit the judgment & risk (behavioral):** `munger-mental-models` for bias/decision quality, `howard-marks` / `most-important-thing` for cycle & contrarian positioning, `fooled-by-randomness` and `against-the-gods` for luck-vs-skill and probability/sizing.
+- **Career/credential questions** (`cfa-prep`, `cfp-prep`, `wmi-prep`, `wppe-prep`) are standalone roadmaps — invoke singly, not as part of a stock analysis.
+
+When several apply, lead with the layer the user asked for, then cross-check with the adjacent layers (e.g. value a stock with `damodaran-valuation`, then sanity-check the earnings with `financial-shenanigans` and the decision psychology with `munger-mental-models`).
