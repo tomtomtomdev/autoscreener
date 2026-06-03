@@ -287,12 +287,7 @@ struct MainSidebarView: View {
         NavigationSplitView {
             List(selection: $selection) {
                 Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .liquidityFloor, .intradayLiquidity]) { item in
-                        Label(item.title, systemImage: item.systemImage).tag(item)
-                    }
-                }
-                Section("Fundamental") {
-                    ForEach([SidebarItem.earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt]) { item in
+                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
