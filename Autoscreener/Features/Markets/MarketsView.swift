@@ -5,9 +5,10 @@ import SwiftUI
 /// `WatchlistView`. Mirrors the `NavigationStack` + `.navigationDestination`
 /// pattern in `ScreenerView`.
 ///
-/// The "Commodities" and "Currencies" sections additionally show a live price +
+/// The "Commodities" and "Currencies" sections instead show a live price +
 /// % change snapshot (from `emitten/{symbol}/info` via `CommoditiesViewModel`),
-/// loaded on appear and refreshable by pull-to-refresh.
+/// loaded on appear and refreshable by pull-to-refresh. Those rows have no
+/// historical chart data, so they don't navigate to a detail screen.
 struct MarketsView: View {
     private let chartService: any ChartServicing
     @State private var commodities: CommoditiesViewModel
@@ -25,7 +26,13 @@ struct MarketsView: View {
                 ForEach(MarketCatalog.grouped(), id: \.0) { group, symbols in
                     Section(group.rawValue) {
                         ForEach(symbols) { item in
-                            NavigationLink(value: item) {
+                            // Commodities and currencies have no historical chart
+                            // data, so they render as plain, non-navigating rows.
+                            if item.group.hasChart {
+                                NavigationLink(value: item) {
+                                    row(item)
+                                }
+                            } else {
                                 row(item)
                             }
                         }

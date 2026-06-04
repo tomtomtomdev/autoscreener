@@ -7,10 +7,22 @@ nonisolated enum MarketGroup: String, CaseIterable, Sendable {
     case sector = "Sectors"
     case commodity = "Commodities"
     case currency = "Currencies"
+
+    /// Whether symbols in this group have historical OHLCV data to chart.
+    /// Commodities and currencies only expose a live price snapshot — there's no
+    /// `charts/{symbol}/daily` history for them — so their rows don't navigate.
+    var hasChart: Bool {
+        switch self {
+        case .composite, .index, .sector: true
+        case .commodity, .currency: false
+        }
+    }
 }
 
-/// One chartable market symbol (the composite, an index, or an IDX-IC sector).
-/// `symbol` is the exact IDX ticker the `charts/{symbol}/daily` endpoint expects.
+/// One market symbol — the composite, an index, an IDX-IC sector, a commodity,
+/// or a currency. For chartable groups (`group.hasChart`), `symbol` is the exact
+/// IDX ticker the `charts/{symbol}/daily` endpoint expects; commodities and
+/// currencies only carry a live price snapshot.
 nonisolated struct MarketSymbol: Identifiable, Hashable, Sendable {
     let symbol: String
     let name: String
@@ -51,7 +63,8 @@ nonisolated enum MarketCatalog {
         MarketSymbol(symbol: "IDXTRANS", name: "Transportation & Logistic", group: .sector),
 
         // Commodities — names taken from the live `emitten/{symbol}/info` `name`
-        // field (2026-06-04). Each charts identically via `charts/{symbol}/daily`.
+        // field (2026-06-04). Price snapshot only — no `charts/{symbol}/daily`
+        // history, so these rows don't navigate to a detail chart.
         MarketSymbol(symbol: "OIL", name: "Crude Oil", group: .commodity),
         MarketSymbol(symbol: "BRENT", name: "Brent Oil", group: .commodity),
         MarketSymbol(symbol: "GAS", name: "Natural Gas", group: .commodity),

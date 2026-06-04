@@ -27,6 +27,21 @@ final class MarketsUITests: XCTestCase {
         return button.exists ? button : app.staticTexts[label].firstMatch
     }
 
+    /// The pushed OHLCV chart detail, queried type-agnostically by its identifier
+    /// (it surfaces as different element kinds across macOS builds).
+    private func chartDetail(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "OHLCVChartView").firstMatch
+    }
+
+    @MainActor
+    private func openMarkets() -> XCUIApplication {
+        let app = launchWithFixtures()
+        let markets = sidebarItem(app, "Markets")
+        XCTAssertTrue(markets.waitForExistence(timeout: 15), "Markets sidebar item should appear")
+        markets.click()
+        return app
+    }
+
     @MainActor
     func testMarketsShowsCommodityAndCurrencyPrices() throws {
         // macOS gives each display its own Space; with multiple displays attached,
@@ -61,5 +76,39 @@ final class MarketsUITests: XCTestCase {
         // USD/IDR is present under Currencies.
         XCTAssertTrue(app.staticTexts["USDIDR"].waitForExistence(timeout: 5),
                       "USDIDR currency row should be listed")
+    }
+
+    /// Commodities and currencies have no `charts/{symbol}/daily` history, so their
+    /// rows must NOT push the OHLCV chart detail. A chartable row (the composite)
+    /// is the positive control proving navigation still works for everything else.
+    @MainActor
+    func testCommodityAndCurrencyRowsDoNotNavigateToChart() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = openMarkets()
+
+        // A commodity row clicks but does not push the chart detail.
+        let oil = app.staticTexts["OIL"]
+        XCTAssertTrue(oil.waitForExistence(timeout: 5), "OIL commodity row should be listed")
+        oil.click()
+        XCTAssertFalse(chartDetail(app).waitForExistence(timeout: 2),
+                       "Tapping a commodity row must not push the OHLCV chart")
+
+        // Same for the USD/IDR currency row.
+        let usdidr = app.staticTexts["USDIDR"]
+        XCTAssertTrue(usdidr.waitForExistence(timeout: 5), "USDIDR currency row should be listed")
+        usdidr.click()
+        XCTAssertFalse(chartDetail(app).waitForExistence(timeout: 2),
+                       "Tapping the USD/IDR row must not push the OHLCV chart")
+
+        // Positive control: a chartable row (the composite) still navigates.
+        let composite = app.staticTexts["IHSG"]
+        XCTAssertTrue(composite.waitForExistence(timeout: 5), "IHSG composite row should be listed")
+        composite.click()
+        XCTAssertTrue(chartDetail(app).waitForExistence(timeout: 5),
+                      "Tapping a chartable row should push the OHLCV chart detail")
     }
 }
