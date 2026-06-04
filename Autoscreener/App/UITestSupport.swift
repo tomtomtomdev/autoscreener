@@ -66,6 +66,14 @@ nonisolated struct StubForeignFlowService: ForeignFlowServicing {
     }
 }
 
+nonisolated struct StubChartService: ChartServicing {
+    func candles(symbol: String,
+                 timeframe: ChartTimeframe,
+                 chartType: ChartType) async throws -> PriceSeries {
+        UITestFixtures.priceSeries(symbol: symbol, timeframe: timeframe)
+    }
+}
+
 enum UITestFixtures {
     static let screenerRows: [ScreenerRow] = [
         ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),
@@ -126,6 +134,27 @@ enum UITestFixtures {
                       leg("AK", -210_000_000_000, 1_705, .domestic),
                       leg("DR", -80_000_000_000, 1_701, .domestic)],
             detector: detector)
+    }
+
+    /// Deterministic, offline OHLCV series for the chart view under UI tests.
+    /// 20 daily bars walking up from 1000 with alternating up/down candles.
+    static func priceSeries(symbol: String, timeframe: ChartTimeframe) -> PriceSeries {
+        let day: TimeInterval = 86_400
+        let start: TimeInterval = 1_748_000_000   // fixed epoch, no Date.now()
+        let candles: [PriceCandle] = (0..<20).map { i in
+            let base = 1_000.0 + Double(i) * 10
+            let up = i % 2 == 0
+            let open = base
+            let close = up ? base + 8 : base - 8
+            return PriceCandle(
+                date: Date(timeIntervalSince1970: start + Double(i) * day),
+                open: open,
+                high: Swift.max(open, close) + 5,
+                low: Swift.min(open, close) - 5,
+                close: close,
+                volume: 1_000_000 + Double(i) * 50_000)
+        }
+        return PriceSeries(symbol: symbol, timeframe: timeframe, previousClose: 1_000, candles: candles)
     }
 
     static func foreignFlow(symbol: String) -> ForeignFlow {

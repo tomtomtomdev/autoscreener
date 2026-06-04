@@ -5,22 +5,26 @@ import SwiftUI
 /// (Income / Balance Sheet / Cash Flow) and period basis (Annual / Quarterly).
 struct StockDetailView: View {
     enum DetailTab: String, CaseIterable, Identifiable {
+        case chart = "Chart"
         case financials = "Financials"
         case broker = "Broker"
         case foreign = "Foreign Flow"
         var id: String { rawValue }
     }
 
-    @State private var tab: DetailTab = .financials
+    @State private var tab: DetailTab = .chart
     @State private var vm: StockDetailViewModel
+    @State private var chartVM: OHLCVChartViewModel
     @State private var brokerVM: BrokerSummaryViewModel
     @State private var foreignVM: ForeignFlowViewModel
 
     init(ticker: StockTicker,
          service: any FinancialStatementServicing = AppDependencies.shared.financialStatementService,
+         chartService: any ChartServicing = AppDependencies.shared.chartService,
          brokerService: any BrokerSummaryServicing = AppDependencies.shared.brokerSummaryService,
          foreignService: any ForeignFlowServicing = AppDependencies.shared.foreignFlowService) {
         _vm = State(initialValue: StockDetailViewModel(ticker: ticker, service: service))
+        _chartVM = State(initialValue: OHLCVChartViewModel(symbol: ticker.symbol, name: ticker.name, service: chartService))
         _brokerVM = State(initialValue: BrokerSummaryViewModel(ticker: ticker, service: brokerService))
         _foreignVM = State(initialValue: ForeignFlowViewModel(ticker: ticker, service: foreignService))
     }
@@ -59,6 +63,7 @@ struct StockDetailView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch tab {
+        case .chart: OHLCVChartView(vm: chartVM)
         case .financials: content
         case .broker: BrokerFlowTab(vm: brokerVM)
         case .foreign: ForeignFlowTab(vm: foreignVM)

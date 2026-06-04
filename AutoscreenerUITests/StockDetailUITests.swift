@@ -49,7 +49,14 @@ final class StockDetailUITests: XCTestCase {
                       "BBCA stock-code link should appear in the screener")
         bbca.click()
 
-        // Detail pushes with the default Annual / Income Statement view.
+        // Detail opens on the Chart tab: its timeframe control (default 1Y) is present.
+        XCTAssertTrue(segment(app, "1Y").waitForExistence(timeout: 5),
+                      "Chart tab's timeframe picker should appear by default")
+
+        // Switch to the Financials tab → Annual / Income Statement view.
+        let financials = segment(app, "Financials")
+        XCTAssertTrue(financials.waitForExistence(timeout: 5), "Financials tab should exist")
+        financials.click()
         XCTAssertTrue(app.staticTexts["12M 2025"].waitForExistence(timeout: 5),
                       "Annual period header should appear on the pushed detail")
         XCTAssertTrue(app.staticTexts["Pendapatan"].waitForExistence(timeout: 5),

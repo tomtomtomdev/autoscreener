@@ -21,6 +21,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case manageableDebt
     case liquidityFloor
     case intradayLiquidity
+    case markets
     case watchlist
     case appSettings
 
@@ -47,6 +48,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .manageableDebt:     return "DER <1.5"
         case .liquidityFloor:     return "Liquidity Floor"
         case .intradayLiquidity:  return "Intraday Liquidity"
+        case .markets:            return "Markets"
         case .watchlist:          return "Watchlist"
         case .appSettings:        return "Settings"
         }
@@ -73,6 +75,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .manageableDebt:     return "scalemass"
         case .liquidityFloor:     return "drop.fill"
         case .intradayLiquidity:  return "bolt.fill"
+        case .markets:            return "chart.bar.xaxis"
         case .watchlist:          return "star.circle.fill"
         case .appSettings:        return "gearshape"
         }
@@ -99,6 +102,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .manageableDebt:     return "6676292"
         case .liquidityFloor:     return "6676314"
         case .intradayLiquidity:  return "6676320"
+        case .markets:            return nil
         case .watchlist:          return nil
         case .appSettings:        return nil
         }
@@ -291,6 +295,11 @@ struct MainSidebarView: View {
                         Label(item.title, systemImage: item.systemImage).tag(item)
                     }
                 }
+                Section("Markets") {
+                    Label(SidebarItem.markets.title,
+                          systemImage: SidebarItem.markets.systemImage)
+                        .tag(SidebarItem.markets)
+                }
                 Section {
                     Label(SidebarItem.watchlist.title,
                           systemImage: SidebarItem.watchlist.systemImage)
@@ -393,6 +402,9 @@ struct MainSidebarView: View {
         case .intradayLiquidity:
             ScreenerView(vm: intradayLiquidityVM, title: SidebarItem.intradayLiquidity.title, enableSearch: true)
                 .id(SidebarItem.intradayLiquidity)
+        case .markets:
+            MarketsView()
+                .id(SidebarItem.markets)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)
