@@ -50,6 +50,22 @@ nonisolated struct StubFinancialStatementService: FinancialStatementServicing {
     }
 }
 
+nonisolated struct StubBrokerSummaryService: BrokerSummaryServicing {
+    func summary(symbol: String,
+                 period: BrokerSummaryPeriod,
+                 limit: Int) async throws -> BrokerSummary {
+        UITestFixtures.brokerSummary(symbol: symbol)
+    }
+}
+
+nonisolated struct StubForeignFlowService: ForeignFlowServicing {
+    func flow(symbol: String,
+              period: ForeignFlowPeriod,
+              marketType: ForeignFlowMarketType) async throws -> ForeignFlow {
+        UITestFixtures.foreignFlow(symbol: symbol)
+    }
+}
+
 enum UITestFixtures {
     static let screenerRows: [ScreenerRow] = [
         ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),
@@ -84,5 +100,57 @@ enum UITestFixtures {
     private static func leaf(_ id: String, _ accountID: Int, _ name: String, _ values: [String], emphasized: Bool = false) -> FinancialAccount {
         FinancialAccount(id: id, accountID: accountID, name: name, level: 1,
                          values: values, isEmphasized: emphasized, defaultExpanded: false, children: [])
+    }
+
+    static func brokerSummary(symbol: String) -> BrokerSummary {
+        func bucket(_ accdist: String, _ amount: Double, _ percent: Double) -> BandarBucket {
+            BandarBucket(accdist: accdist, amount: amount, percent: percent, volume: amount / 1700)
+        }
+        func leg(_ code: String, _ value: Double, _ avg: Double, _ cat: InvestorCategory) -> BrokerLeg {
+            BrokerLeg(brokerCode: code, averagePrice: avg, lot: value / avg / 100,
+                      lotGross: value / avg / 100, value: value, valueGross: Swift.abs(value),
+                      frequency: 1_000, category: cat, date: "20260603")
+        }
+        let detector = BandarDetector(
+            accdist: "Dist", averagePrice: 1_702, numberBrokerBuySell: 52,
+            totalBuyer: 65, totalSeller: 13, totalValue: 1_243_143_300_000, totalVolume: 7_302_767,
+            avg: bucket("Dist", -24_000_000_000, -2.0), avg5: bucket("Dist", -120_000_000_000, -10.0),
+            top1: bucket("Big Dist", -100_000_000_000, -8.0), top3: bucket("Big Dist", -240_000_000_000, -19.0),
+            top5: bucket("Big Dist", -322_021_520_000, -25.9), top10: bucket("Big Dist", -360_000_000_000, -29.0))
+        return BrokerSummary(
+            symbol: symbol, from: "2026-06-03", to: "2026-06-03",
+            buyers: [leg("ZP", 568_662_750_500, 1_666, .foreign),
+                     leg("BK", 120_000_000_000, 1_690, .foreign),
+                     leg("CC", 64_000_000_000, 1_695, .domestic)],
+            sellers: [leg("YU", -1_023_119_740_500, 1_697, .foreign),
+                      leg("AK", -210_000_000_000, 1_705, .domestic),
+                      leg("DR", -80_000_000_000, 1_701, .domestic)],
+            detector: detector)
+    }
+
+    static func foreignFlow(symbol: String) -> ForeignFlow {
+        func m(_ raw: Double, _ f: String) -> FlowMetric { FlowMetric(raw: raw, formatted: f) }
+        let value = ForeignFlowBreakdown(
+            label: "Value (IDR)", total: m(2_594_529_577_500, "2.59 T"),
+            foreignTotal: m(2_645_694_406_000, "2.65 T"), foreignPercentage: 50.99,
+            domesticTotal: m(2_543_364_749_000, "2.54 T"), domesticPercentage: 49.01)
+        let volume = ForeignFlowBreakdown(
+            label: "Volume", total: m(7_302_767, "7.30 M"),
+            foreignTotal: m(3_700_000, "3.70 M"), foreignPercentage: 50.7,
+            domesticTotal: m(3_602_767, "3.60 M"), domesticPercentage: 49.3)
+        let frequency = ForeignFlowBreakdown(
+            label: "Frequency", total: m(120_000, "120.00 K"),
+            foreignTotal: m(58_000, "58.00 K"), foreignPercentage: 48.3,
+            domesticTotal: m(62_000, "62.00 K"), domesticPercentage: 51.7)
+        return ForeignFlow(
+            symbol: symbol, dateRange: "3 Jun 2026", from: "2026-06-03", to: "2026-06-03",
+            lastUpdated: "3 Jun 2026",
+            foreignBuy: m(1_142_496_692_500, "1.14 T"),
+            foreignSell: m(1_503_197_713_500, "1.50 T"),
+            netForeign: m(-360_701_021_000, "-360.70 B"),
+            domesticBuy: m(1_452_032_885_000, "1.45 T"),
+            domesticSell: m(1_091_331_864_000, "1.09 T"),
+            netDomestic: m(360_701_021_000, "360.70 B"),
+            value: value, volume: volume, frequency: frequency)
     }
 }

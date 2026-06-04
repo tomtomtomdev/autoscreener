@@ -4,20 +4,38 @@ import SwiftUI
 /// financial statements from `findata-view/v2/financials`, switchable by report
 /// (Income / Balance Sheet / Cash Flow) and period basis (Annual / Quarterly).
 struct StockDetailView: View {
+    enum DetailTab: String, CaseIterable, Identifiable {
+        case financials = "Financials"
+        case broker = "Broker"
+        case foreign = "Foreign Flow"
+        var id: String { rawValue }
+    }
+
+    @State private var tab: DetailTab = .financials
     @State private var vm: StockDetailViewModel
+    @State private var brokerVM: BrokerSummaryViewModel
+    @State private var foreignVM: ForeignFlowViewModel
 
     init(ticker: StockTicker,
-         service: any FinancialStatementServicing = AppDependencies.shared.financialStatementService) {
+         service: any FinancialStatementServicing = AppDependencies.shared.financialStatementService,
+         brokerService: any BrokerSummaryServicing = AppDependencies.shared.brokerSummaryService,
+         foreignService: any ForeignFlowServicing = AppDependencies.shared.foreignFlowService) {
         _vm = State(initialValue: StockDetailViewModel(ticker: ticker, service: service))
+        _brokerVM = State(initialValue: BrokerSummaryViewModel(ticker: ticker, service: brokerService))
+        _foreignVM = State(initialValue: ForeignFlowViewModel(ticker: ticker, service: foreignService))
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            controls
+            tabBar
             Divider()
-            content
+            if tab == .financials {
+                controls
+                Divider()
+            }
+            tabContent
         }
         .frame(minWidth: 600, minHeight: 460)
         .accessibilityIdentifier("StockDetailView")
@@ -25,6 +43,26 @@ struct StockDetailView: View {
         .task { await vm.load() }
         .onChange(of: vm.report) { _, _ in Task { await vm.load() } }
         .onChange(of: vm.basis) { _, _ in Task { await vm.load() } }
+    }
+
+    private var tabBar: some View {
+        Picker("Section", selection: $tab) {
+            ForEach(DetailTab.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .accessibilityIdentifier("StockDetailTabPicker")
+    }
+
+    @ViewBuilder
+    private var tabContent: some View {
+        switch tab {
+        case .financials: content
+        case .broker: BrokerFlowTab(vm: brokerVM)
+        case .foreign: ForeignFlowTab(vm: foreignVM)
+        }
     }
 
     private var header: some View {

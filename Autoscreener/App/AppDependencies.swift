@@ -25,6 +25,8 @@ final class AppDependencies {
     let screenerTemplateService: any ScreenerTemplateServicing
     let screenerService: any ScreenerServicing
     let financialStatementService: any FinancialStatementServicing
+    let brokerSummaryService: any BrokerSummaryServicing
+    let foreignFlowService: any ForeignFlowServicing
     let schedulePreferences: SchedulePreferences
     let snapshotStore: any ScreenerSnapshotStoring
     let scheduler: ScreenerScheduler
@@ -57,6 +59,8 @@ final class AppDependencies {
         self.screenerTemplateService = useFixtures ? StubScreenerTemplateService() : ScreenerTemplateService(apiClient: client)
         self.screenerService = useFixtures ? StubScreenerService() : ScreenerService(apiClient: client)
         self.financialStatementService = useFixtures ? StubFinancialStatementService() : FinancialStatementService(apiClient: client)
+        self.brokerSummaryService = useFixtures ? StubBrokerSummaryService() : BrokerSummaryService(apiClient: client)
+        self.foreignFlowService = useFixtures ? StubForeignFlowService() : ForeignFlowService(apiClient: client)
         self.schedulePreferences = prefs
         self.snapshotStore = useFixtures ? StubSnapshotStore() : snapshots
         self.scheduler = ScreenerScheduler(preferences: prefs)
