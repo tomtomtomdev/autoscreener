@@ -7,14 +7,26 @@ struct ScreenerView: View {
     /// want it (Liquidity Floor, Intraday Liquidity) show the search box.
     let enableSearch: Bool
 
+    /// Set when a stock code is tapped — drives the push to `StockDetailView`.
+    @State private var selectedTicker: StockTicker?
+
     init(vm: ScreenerViewModel, title: String, enableSearch: Bool = false) {
         self.vm = vm
         self.title = title
         self.enableSearch = enableSearch
     }
 
-    @ViewBuilder
     var body: some View {
+        NavigationStack {
+            listView
+                .navigationDestination(item: $selectedTicker) { ticker in
+                    StockDetailView(ticker: ticker)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var listView: some View {
         if enableSearch {
             coreView
                 .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
@@ -129,16 +141,22 @@ struct ScreenerView: View {
             .width(min: 36, ideal: 48)
 
             TableColumn("Symbol", value: \.symbol) { row in
-                Text(row.symbol)
-                    .monospaced()
-                    .onAppear {
-                        // Last row scrolled into view → kick the next page.
-                        // Idempotent and no-op once the server signals we're done
-                        // (and while a search is active, all pages are already in).
-                        if row.symbol == lastSymbol {
-                            Task { await vm.rowDidAppear(at: vm.rows.count - 1) }
-                        }
+                Button {
+                    selectedTicker = StockTicker(symbol: row.symbol, name: row.name)
+                } label: {
+                    Text(row.symbol).monospaced()
+                }
+                .buttonStyle(.link)
+                .accessibilityIdentifier("stockcode-\(row.symbol)")
+                .help("View \(row.symbol) financials")
+                .onAppear {
+                    // Last row scrolled into view → kick the next page.
+                    // Idempotent and no-op once the server signals we're done
+                    // (and while a search is active, all pages are already in).
+                    if row.symbol == lastSymbol {
+                        Task { await vm.rowDidAppear(at: vm.rows.count - 1) }
                     }
+                }
             }
             .width(min: 80, ideal: 100)
 

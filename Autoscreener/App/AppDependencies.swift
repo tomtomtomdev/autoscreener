@@ -24,6 +24,7 @@ final class AppDependencies {
     let paywallService: any PaywallServicing
     let screenerTemplateService: any ScreenerTemplateServicing
     let screenerService: any ScreenerServicing
+    let financialStatementService: any FinancialStatementServicing
     let schedulePreferences: SchedulePreferences
     let snapshotStore: any ScreenerSnapshotStoring
     let scheduler: ScreenerScheduler
@@ -32,6 +33,7 @@ final class AppDependencies {
     static let shared = AppDependencies()
 
     private init() {
+        let useFixtures = ProcessInfo.processInfo.isUITestFixtures
         let store = KeychainTokenStore()
         let session = LoggingHTTPSession(URLSession.shared)
         let login = LoginService(session: session, tokens: store)
@@ -51,12 +53,17 @@ final class AppDependencies {
         self.loginService = login
         self.deviceVerificationService = verifier
         self.apiClient = client
-        self.paywallService = PaywallService(apiClient: client)
-        self.screenerTemplateService = ScreenerTemplateService(apiClient: client)
-        self.screenerService = ScreenerService(apiClient: client)
+        self.paywallService = useFixtures ? StubPaywallService() : PaywallService(apiClient: client)
+        self.screenerTemplateService = useFixtures ? StubScreenerTemplateService() : ScreenerTemplateService(apiClient: client)
+        self.screenerService = useFixtures ? StubScreenerService() : ScreenerService(apiClient: client)
+        self.financialStatementService = useFixtures ? StubFinancialStatementService() : FinancialStatementService(apiClient: client)
         self.schedulePreferences = prefs
-        self.snapshotStore = snapshots
+        self.snapshotStore = useFixtures ? StubSnapshotStore() : snapshots
         self.scheduler = ScreenerScheduler(preferences: prefs)
+
+        // Render the signed-in UI immediately under UI-test fixtures — bypass the
+        // Keychain probe in ContentView (which only runs while phase == .unknown).
+        if useFixtures { authState.phase = .signedIn }
 
         Task { [client, login] in
             await client.setRefresher { refreshToken in

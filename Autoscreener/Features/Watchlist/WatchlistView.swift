@@ -4,25 +4,33 @@ struct WatchlistView: View {
     @Bindable var vm: WatchlistViewModel
     let title: String
 
+    /// Set when a stock code is tapped — drives the push to `StockDetailView`.
+    @State private var selectedTicker: StockTicker?
+
     init(vm: WatchlistViewModel, title: String = "Watchlist") {
         self.vm = vm
         self.title = title
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            if let msg = vm.paywallMessage {
-                paywallBanner(msg)
+        NavigationStack {
+            VStack(spacing: 0) {
+                toolbar
+                if let msg = vm.paywallMessage {
+                    paywallBanner(msg)
+                }
+                Divider()
+                content
+                Divider()
+                statusBar
             }
-            Divider()
-            content
-            Divider()
-            statusBar
+            .frame(minWidth: 720, minHeight: 480)
+            .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
+            .task { await vm.autoRunIfNeeded() }
+            .navigationDestination(item: $selectedTicker) { ticker in
+                StockDetailView(ticker: ticker)
+            }
         }
-        .frame(minWidth: 720, minHeight: 480)
-        .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
-        .task { await vm.autoRunIfNeeded() }
     }
 
     private var toolbar: some View {
@@ -101,8 +109,14 @@ struct WatchlistView: View {
             .width(min: 36, ideal: 48)
 
             TableColumn("Symbol") { row in
-                Text(row.symbol).monospaced()
-                    .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                Button {
+                    selectedTicker = StockTicker(symbol: row.symbol, name: row.name)
+                } label: {
+                    Text(row.symbol).monospaced()
+                        .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                }
+                .buttonStyle(.plain)
+                .help("View \(row.symbol) financials")
             }
             .width(min: 80, ideal: 100)
 
