@@ -221,6 +221,22 @@ final class CancellingSleeper: @unchecked Sendable {
     }
 }
 
+/// Snapshots the VM's published row count and completed-screener count at each
+/// throttle point — i.e. just before every request after the first. Lets a test
+/// prove the table fills in progressively (and the "x/y" progress advances)
+/// instead of all at once. MainActor-isolated because it reads the MainActor VM;
+/// safe to call from the @Sendable sleeper via `await`.
+@MainActor
+final class IncrementalRowProbe {
+    private(set) var rowCounts: [Int] = []
+    private(set) var loadedCounts: [Int] = []
+    weak var vm: WatchlistViewModel?
+    func snapshot() {
+        rowCounts.append(vm?.rows.count ?? -1)
+        loadedCounts.append(vm?.loadedScreenerCount ?? -1)
+    }
+}
+
 enum WatchlistTestHelpers {
     static func config(for templateID: String) -> ScreenerConfig {
         var c = ScreenerConfig()
@@ -539,6 +555,69 @@ enum WatchlistTestHelpers {
         // Verified indirectly: a fresh autoRunIfNeeded re-loads all four templates.
         await vm.autoRunIfNeeded()
         #expect(templates.loadCalls.filter { $0 == "6676213" }.count == 2)
+    }
+
+    /// Progressive publishing: `rows` must be republished after *each* screener
+    /// completes, not held back until all 20 land. Captured at every throttle gap
+    /// (which fires just before each request after the first), the running row
+    /// count should already reflect the kinds completed so far — and only grow as
+    /// more land. Before the incremental-publish change, every snapshot was 0
+    /// because `rows` was assigned exactly once, at the very end of the sweep.
+    @Test func publishesRowsIncrementallyAsEachScreenerCompletes() async {
+        let templates = WatchlistFakeTemplates()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
+                rows: [WatchlistTestHelpers.row("AAA")])),
+            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
+                rows: [WatchlistTestHelpers.row("BBB")])),
+            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
+                rows: [WatchlistTestHelpers.row("CCC")])),
+            // the other 17 kinds return empty (the fake's default) → add no rows.
+        ]
+        let probe = IncrementalRowProbe()
+        let vm = makeVM(templates: templates, sleeper: { _ in await probe.snapshot() })
+        probe.vm = vm
+
+        await vm.autoRunIfNeeded()
+
+        // accumulating fires first (no throttle gap), so the first snapshot is
+        // taken just before aboveMA20's request — AAA is already on the table.
+        #expect(probe.rowCounts.first == 1)
+        // By the time shiftToday and the empty tail fire, BBB then CCC have landed.
+        #expect(probe.rowCounts.contains(2))
+        #expect(probe.rowCounts.contains(3))
+        // Snapshots never decrease — a sweep only ever accumulates rows.
+        #expect(probe.rowCounts == probe.rowCounts.sorted())
+        #expect(vm.rows.count == 3)
+    }
+
+    /// Progress reporting: the VM exposes how many screeners have completed
+    /// (`loadedScreenerCount`) out of the total (`totalScreenerCount`) so the
+    /// loading indicator can show "Loading… x/y". The completed count advances by
+    /// one as each screener lands — captured at each throttle gap it is the count
+    /// finished *so far* — and reaches the total when the sweep ends.
+    @Test func reportsCompletedScreenerProgress() async {
+        let templates = WatchlistFakeTemplates()
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
+            // the other 19 kinds return empty (the fake's default) — still complete.
+        ]
+        let probe = IncrementalRowProbe()
+        let vm = makeVM(templates: templates, sleeper: { _ in await probe.snapshot() })
+        probe.vm = vm
+
+        // Total is derived from the fan-out order (all 20 screeners), not hardcoded.
+        #expect(vm.totalScreenerCount == 20)
+        #expect(vm.loadedScreenerCount == 0)
+
+        await vm.autoRunIfNeeded()
+
+        // accumulating completes before the 2nd request's throttle fires, so the
+        // first captured count is 1; it then climbs and never decreases.
+        #expect(probe.loadedCounts.first == 1)
+        #expect(probe.loadedCounts == probe.loadedCounts.sorted())
+        // All 20 screeners completed by the end of the sweep.
+        #expect(vm.loadedScreenerCount == 20)
     }
 
     /// Serialisation regression: replacing the `async let` fan-out with a sequential

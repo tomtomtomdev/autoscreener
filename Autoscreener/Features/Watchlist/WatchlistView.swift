@@ -48,7 +48,11 @@ struct WatchlistView: View {
             }
             Spacer()
             if vm.isLoading {
-                ProgressView().controlSize(.small)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading… \(vm.loadedScreenerCount)/\(vm.totalScreenerCount)")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
             }
             Button {
                 Task { await vm.refresh() }

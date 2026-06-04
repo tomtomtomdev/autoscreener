@@ -25,6 +25,14 @@ final class WatchlistViewModel {
     /// Wall-clock when the currently-displayed composite landed. Drives the
     /// toolbar's "as of HH:mm" badge.
     var lastFetchedAt: Date?
+    /// Number of screeners whose fetch has completed in the current sweep. Paired
+    /// with `totalScreenerCount`, it drives the "Loading… x/y" label beside the
+    /// spinner so the user sees the throttled sweep advance one screener at a time.
+    var loadedScreenerCount: Int = 0
+
+    /// Total screeners fetched per sweep. Derived from the fan-out order rather
+    /// than hardcoded so it can't drift when the kind list grows.
+    var totalScreenerCount: Int { Self.fanOutOrder.count }
 
     private var didAutoRun: Bool = false
     private let paywall: any PaywallServicing
@@ -76,15 +84,22 @@ final class WatchlistViewModel {
         .liquidityFloor, .intradayLiquidity,
     ]
 
-    private struct FanOutResult {
-        let perKind: [(BandarScreenerKind, Result<KindFetch, Error>)]
-        let cancelled: Bool
-    }
+    /// User-initiated refresh — the live throttled fan-out across every screener,
+    /// composed in memory. This is the only fetch path: the watchlist always reads
+    /// live (on first reveal and on the Refresh button), never from a cache.
+    ///
+    /// Each screener's rows are folded into the running composite and `rows` is
+    /// republished the moment that screener lands — so the table fills in
+    /// progressively across the ~1000–1500ms-spaced sweep instead of staying empty
+    /// until all 20 requests finish.
+    func refresh() async {
+        rows = []
+        error = nil
+        paywallMessage = nil
+        loadedScreenerCount = 0
+        isLoading = true
+        defer { isLoading = false }
 
-    /// Throttled fan-out across every screener. One paywall increment for the whole
-    /// sweep. Does not compose or persist — callers decide what to do with the
-    /// per-kind results.
-    private func fanOut() async -> FanOutResult {
         hasIssuedFirstRequest = false  // fresh throttle window per sweep
 
         let eligibility = await paywall.check(.screener)
@@ -94,48 +109,39 @@ final class WatchlistViewModel {
         // One increment for the entire sweep — not one per screener.
         await paywall.increment(.screener)
 
-        var results: [(BandarScreenerKind, Result<KindFetch, Error>)] = []
+        var byID: [String: WatchlistRow] = [:]
+        // A veto gate is only enforceable if it was freshly fetched (succeeded)
+        // this run; a failed gate must not flag every row ILLIQUID.
+        var evaluableVeto: Set<BandarScreenerKind> = []
+        var perKind: [(BandarScreenerKind, Result<KindFetch, Error>)] = []
         var cancelled = false
+
         for kind in Self.fanOutOrder {
-            let res = await fetchAll(kind)
-            results.append((kind, res))
+            let result = await fetchAll(kind)
+            perKind.append((kind, result))
+            // Count every completed screener (success or failure) so the "x/y"
+            // progress reflects the throttled sweep advancing, not just hits.
+            loadedScreenerCount += 1
+
+            if case .success(let fetched) = result {
+                watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
+                if kind.isVeto { evaluableVeto.insert(kind) }
+                for row in fetched.rows { Self.union(&byID, row: row, kind: kind) }
+                // Publish progressively — the table updates as each screener lands.
+                rows = Self.ranked(byID.values, evaluableVeto: evaluableVeto)
+            }
+
             // If the surrounding Task was cancelled (SwiftUI `.task` tear-down on
             // tab switch is the common case), every subsequent throttle() will
             // throw CancellationError. Stop iterating instead of marching through
             // remaining guaranteed-failure rounds.
-            if Task.isCancelled || isCancellation(res) { cancelled = true; break }
+            if Task.isCancelled || isCancellation(result) { cancelled = true; break }
         }
-        return FanOutResult(perKind: results, cancelled: cancelled)
-    }
 
-    /// User-initiated refresh — the live throttled fan-out across every screener,
-    /// composed in memory. This is the only fetch path: the watchlist always reads
-    /// live (on first reveal and on the Refresh button), never from a cache.
-    func refresh() async {
-        rows = []
-        error = nil
-        paywallMessage = nil
-        isLoading = true
-        defer { isLoading = false }
-
-        let out = await fanOut()
-        // A veto gate is only enforceable if it was freshly fetched (succeeded) this
-        // run; a failed gate must not flag every row ILLIQUID.
-        let evaluableVeto = Set(out.perKind.compactMap { (kind, result) -> BandarScreenerKind? in
-            guard kind.isVeto, case .success = result else { return nil }
-            return kind
-        })
-        var byID: [String: WatchlistRow] = [:]
-        for (kind, result) in out.perKind {
-            guard case .success(let fetched) = result else { continue }
-            watchlistLog.info("\(kind.displayName, privacy: .public): \(fetched.rows.count) rows")
-            for row in fetched.rows { Self.union(&byID, row: row, kind: kind) }
-        }
-        rows = Self.ranked(byID.values, evaluableVeto: evaluableVeto)
         vetoNotice = Self.vetoNotice(skipped: BandarScreenerKind.vetoKinds.subtracting(evaluableVeto))
         lastFetchedAt = Date()
-        if out.cancelled { didAutoRun = false }
-        surfaceFailures(out.perKind)
+        if cancelled { didAutoRun = false }
+        surfaceFailures(perKind)
     }
 
     private static func union(_ byID: inout [String: WatchlistRow], row: ScreenerRow, kind: BandarScreenerKind) {
