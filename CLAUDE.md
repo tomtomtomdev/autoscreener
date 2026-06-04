@@ -28,6 +28,17 @@ Before changing any production code to fix a bug:
 
 This applies to every bug fix, no matter how small. If the bug is in code that's structurally hard to test, consult `legacy-code` to introduce a seam before writing the test — don't skip the test.
 
+## UI verification — non-negotiable workflow
+
+To confirm a UI change actually renders/behaves, **always write or run an XCUITest** — never drive the app via the Accessibility API (`System Events` / `osascript` AX queries) or screen-capture scripts.
+
+1. **Launch under `-UITestFixtures`.** This bypasses Keychain/auth/network and feeds the screen from the canned `Stub*Service`s in `UITestSupport.swift`, so the flow is deterministic and offline. Add a fixture + stub there if the screen needs new data.
+2. **Drive it with `XCUIApplication`** — query by accessibility identifier / label, `.click()`, and assert with `waitForExistence`. Follow the existing `StockDetailUITests` / `MarketsUITests` pattern.
+3. **Guard multi-display.** On a dev machine with >1 display, XCUITest can't snapshot a window that lands on another Space (it sees only the menu bar → 0 windows). Copy the `XCTSkipIf(NSScreen.screens.count > 1, …)` guard so the test passes on single-display/CI and cleanly skips otherwise.
+4. **Give every assertable view an `.accessibilityIdentifier`.** UI is verified through these, not through pixel diffing or AX-tree scraping.
+
+Rationale: accessibility-driven screenshotting is flaky on this multi-display macOS setup and proves nothing repeatable. An XCUITest is the committed, re-runnable proof.
+
 ## Combination rules
 
 - **New feature, test-first** → `tdd-kent-beck` (drive cycle) + `xunit-test-patterns` (test design) + the architecture skill matching the layer.

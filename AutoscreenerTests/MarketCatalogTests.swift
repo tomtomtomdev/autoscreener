@@ -29,6 +29,21 @@ import Testing
     }
 
     @Test func groupedPreservesDeclarationOrder() {
-        #expect(MarketCatalog.grouped().map(\.0) == [.composite, .index, .sector])
+        #expect(MarketCatalog.grouped().map(\.0) == [.composite, .index, .sector, .commodity, .currency])
+    }
+
+    @Test func includesAllPricedCommodityAndCurrencySymbols() {
+        let priced = Set(MarketCatalog.priced.map(\.symbol))
+        let expected: Set<String> = [
+            "OIL", "BRENT", "GAS", "COAL-NEWCASTLE", "CPO", "XAU", "SILVER",
+            "NICKEL", "COPPER", "ALUMINIUM", "TIN", "ZINC-COMMODITIES", "RUBBER",
+            "USDIDR",
+        ]
+        #expect(priced == expected)
+    }
+
+    @Test func usdIdrIsTheOnlyCurrency() {
+        let currencies = MarketCatalog.all.filter { $0.group == .currency }.map(\.symbol)
+        #expect(currencies == ["USDIDR"])
     }
 }

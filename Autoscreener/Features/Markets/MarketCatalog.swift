@@ -5,6 +5,8 @@ nonisolated enum MarketGroup: String, CaseIterable, Sendable {
     case composite = "Composite"
     case index = "Indices"
     case sector = "Sectors"
+    case commodity = "Commodities"
+    case currency = "Currencies"
 }
 
 /// One chartable market symbol (the composite, an index, or an IDX-IC sector).
@@ -47,6 +49,25 @@ nonisolated enum MarketCatalog {
         MarketSymbol(symbol: "IDXTECHNO", name: "Technology", group: .sector),
         MarketSymbol(symbol: "IDXINFRA", name: "Infrastructures", group: .sector),
         MarketSymbol(symbol: "IDXTRANS", name: "Transportation & Logistic", group: .sector),
+
+        // Commodities — names taken from the live `emitten/{symbol}/info` `name`
+        // field (2026-06-04). Each charts identically via `charts/{symbol}/daily`.
+        MarketSymbol(symbol: "OIL", name: "Crude Oil", group: .commodity),
+        MarketSymbol(symbol: "BRENT", name: "Brent Oil", group: .commodity),
+        MarketSymbol(symbol: "GAS", name: "Natural Gas", group: .commodity),
+        MarketSymbol(symbol: "COAL-NEWCASTLE", name: "Newcastle Coal", group: .commodity),
+        MarketSymbol(symbol: "CPO", name: "Palm Oil", group: .commodity),
+        MarketSymbol(symbol: "XAU", name: "Gold", group: .commodity),
+        MarketSymbol(symbol: "SILVER", name: "Silver", group: .commodity),
+        MarketSymbol(symbol: "NICKEL", name: "Nickel", group: .commodity),
+        MarketSymbol(symbol: "COPPER", name: "Copper", group: .commodity),
+        MarketSymbol(symbol: "ALUMINIUM", name: "Aluminium", group: .commodity),
+        MarketSymbol(symbol: "TIN", name: "Tin", group: .commodity),
+        MarketSymbol(symbol: "ZINC-COMMODITIES", name: "Zinc", group: .commodity),
+        MarketSymbol(symbol: "RUBBER", name: "Rubber", group: .commodity),
+
+        // Currencies
+        MarketSymbol(symbol: "USDIDR", name: "US Dollar / Rupiah", group: .currency),
     ]
 
     /// Symbols grouped in `MarketGroup` declaration order, for sectioned lists.
@@ -54,5 +75,11 @@ nonisolated enum MarketCatalog {
         MarketGroup.allCases.map { group in
             (group, all.filter { $0.group == group })
         }
+    }
+
+    /// Symbols that show a live price snapshot in the Markets list (commodities +
+    /// currencies). Backs `CommoditiesViewModel`.
+    static var priced: [MarketSymbol] {
+        all.filter { $0.group == .commodity || $0.group == .currency }
     }
 }

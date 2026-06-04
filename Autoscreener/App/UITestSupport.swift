@@ -74,6 +74,12 @@ nonisolated struct StubChartService: ChartServicing {
     }
 }
 
+nonisolated struct StubCommodityPriceService: CommodityPriceServicing {
+    func quote(symbol: String) async throws -> CommodityQuote {
+        UITestFixtures.commodityQuote(symbol: symbol)
+    }
+}
+
 enum UITestFixtures {
     static let screenerRows: [ScreenerRow] = [
         ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),
@@ -155,6 +161,22 @@ enum UITestFixtures {
                 volume: 1_000_000 + Double(i) * 50_000)
         }
         return PriceSeries(symbol: symbol, timeframe: timeframe, previousClose: 1_000, candles: candles)
+    }
+
+    /// Deterministic commodity/FX quote for the Markets list under UI tests.
+    /// A couple of symbols are seeded as "down" so the red styling is exercised.
+    static func commodityQuote(symbol: String) -> CommodityQuote {
+        let down = symbol == "OIL" || symbol == "GAS"
+        return CommodityQuote(
+            symbol: symbol,
+            name: symbol,
+            price: 100,
+            previousClose: down ? 102 : 98,
+            change: down ? -2 : 2,
+            changePercent: down ? -1.96 : 2.04,
+            volume: 12_345,
+            formattedPrice: "100",
+            asOf: "Thu 14:22")
     }
 
     static func foreignFlow(symbol: String) -> ForeignFlow {

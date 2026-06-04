@@ -18,9 +18,10 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Pagination**: increment `page` in the request body for "Load more".
 - [x] **Stock-code search** (§7.3): a `.searchable` toolbar field on the Liquidity Floor, Intraday Liquidity, and Watchlist tabs filters rows by ticker (case-insensitive substring on the symbol). On the two paginated screener tabs, entering a term auto-loads all remaining pages first, so a match is never hidden behind lazy pagination; the Watchlist already holds the complete set.
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
+- [x] **Markets — commodities & currencies price list** (§17): the Markets screen adds **Commodities** (13: Crude Oil, Brent, Natural Gas, Newcastle Coal, Palm Oil, Gold, Silver, Nickel, Copper, Aluminium, Tin, Zinc, Rubber) and **Currencies** (USD/IDR) sections, each row showing a live last-price + signed % change from `GET /emitten/{symbol}/info`. Loaded on appear, pull-to-refresh, per-symbol failure tolerated. Tapping a row opens the existing OHLCV chart.
 - [x] **Build DMG**: `scripts/build_dmg.sh` produces a notarisable `Autoscreener.dmg`.
 
-Out of scope for v1: charting, real-time WebSocket, saving custom templates, multi-account, paywall enforcement (we hit `paywall/eligibility/check` and surface the result, but don't gate UI), filter-builder UI (canned preset only).
+Out of scope for v1: real-time WebSocket price streaming (`wss-trading.stockbit.com`), saving custom templates, multi-account, paywall enforcement (we hit `paywall/eligibility/check` and surface the result, but don't gate UI), filter-builder UI (canned preset only). Charting and the Markets browser shipped after the original v1 cut (see §17).
 
 ---
 
@@ -389,8 +390,15 @@ Because the two screener tabs are lazily paginated, a naive filter over loaded r
 - `SymbolSearchTests` — shared `filteredBySymbol`: blank/whitespace passthrough, case-insensitivity, substring match, no-match-empty, symbol-not-company-name, surrounding-whitespace trim
 - `ScreenerSearchTests` — `visibleRows` tracks `searchText`; `loadAllForSearch()` exhausts every remaining page and leaves `hasMore == false`
 - `WatchlistSearchTests` — `visibleRows` filters by symbol (blank passthrough, case-insensitive, symbol-not-name)
+- `CommodityPriceServiceTests` — `emitten/{symbol}/info` endpoint shape; parse of live OIL/XAU/CPO captures (string vs JSON-number fields, signed `change`, comma-grouped `formatted_price`, integer-string price, `"NA"` value/average tolerance); non-numeric-price + malformed-JSON throws; error mapping through a real `APIClient` + `StubSession` (unauthorized / paywall 403 / malformed / happy path)
+- `CommoditiesViewModelTests` — fan-out populates all quotes; **partial failure** keeps the other rows; **total failure** sets a screen error; reload-skip when loaded; force-reload refetches; retry after total failure
+- `MarketCatalogTests` — declaration order incl. `.commodity`/`.currency`, all 14 priced symbols present, USD/IDR is the sole currency
 
-UI tests in `AutoscreenerUITests` cover launch only; full sign-in is a real-network smoke (run manually).
+**UI verification.** Confirm UI changes with XCUITest under `-UITestFixtures`, never via the Accessibility API or screenshot scripts (flaky on multi-display macOS). `AutoscreenerUITests`:
+- `StockDetailUITests` — tap a stock code → financial-detail flow (report/period switching)
+- `MarketsUITests` — sidebar → Markets → Commodities/Currencies sections render with stubbed price + % change
+
+Both guard `XCTSkipIf(NSScreen.screens.count > 1)` — they pass on single-display/CI and skip on multi-display dev machines, where XCUITest can't snapshot a window on another Space. Full sign-in remains a real-network smoke (run manually).
 
 ---
 
@@ -527,6 +535,42 @@ Pick from the ranked list — none are in-flight.
 2. **Saved screeners list** — wire `GET /screener/templates`, `GET /screener/favorites`, `GET /screener/preset?mobile=1`. A sidebar with the user's templates + Stockbit's curated presets.
 3. **Persist last-used screener config** in UserDefaults so the next launch opens straight to the user's most recent screener, not bandar-accumulating.
 4. **Company detail on row click** — `GET /emitten/<TICKER>/info`, `GET /charts/<TICKER>/daily?...`, render an inline detail pane or sheet.
-5. **Real-time price overlay** — the WebSocket endpoint `wss-jkt.trading.stockbit.com/ws` (and a peer at `ws3.stockbit.com`) streams price updates. Currently descoped (§1).
+5. **Real-time price overlay** — the WebSocket endpoint `wss-trading.stockbit.com/ws` (and a peer at `ws3.stockbit.com`) streams price updates. The REST `emitten/{symbol}/info` snapshot (§17) is the poll-based stand-in; live ticks are still descoped (§1). Note: the WS *message* format isn't in the proxseer captures (they record only the HTTP upgrade), so building this needs a frame-level capture.
 6. **Migrate the remaining JSONSerialization spots to Codable** — paywall envelope, MFA challenge/verify responses, LoginService MFA detection. Cheap follow-up now that we've seen real shapes.
 7. **Macros-toolbar real-time market clock** — `GET /company-price-feed/market-time/session` + `GET /charts/ihsg/daily`. Adds context, costs little.
+
+---
+
+## 17. Markets — commodities & currencies price list
+
+The Markets sidebar screen (`Features/Markets/`) lists the composite, indices, and IDX-IC sectors as chartable rows; it now also shows two **priced** sections — **Commodities** (13 symbols) and **Currencies** (USD/IDR) — each row carrying a live last-price + signed % change. Tapping any row still opens the shared `OHLCVChartView` (commodities chart identically via `charts/{symbol}/daily`).
+
+### 17.1 Price source — `GET /emitten/{symbol}/info`
+
+The detail-header price snapshot lives in `data` of `emitten/{symbol}/info`, **not** `company-price-feed/indicative-price-volume/{symbol}` (which returns `data:null` outside the pre-open indicative auction). Verified live 2026-06-04 on OIL/XAU/CPO/USDIDR. Wire-format gotchas the DTO tolerates:
+
+| Field | Type on wire | Note |
+|---|---|---|
+| `price` | **string** | float-precision noise (`"95.04000091552734"`) or clean int (`"4680"`) → parse with `Double()` |
+| `previous` / `change` / `volume` | **string** | `change` is signed (`"+26.44"` / `"-0.98"`) — `Double("+…")` works |
+| `percentage` | **JSON number** | `-1.02` |
+| `formatted_price` | string | display only, has thousands commas (`"4,493"`) — never `Double()` it |
+| `value` / `average` | `"NA"` for commodities | left undecoded, can't break the decode |
+| `name` / `time` | string | `"Crude Oil"` / `"Thu 14:22"` |
+
+### 17.2 Components
+
+```
+Features/Markets/
+├── MarketCatalog.swift          // + .commodity / .currency MarketGroup cases, 14 symbols, `priced` helper
+├── CommodityModels.swift        // CommodityQuote (domain) + EmittenInfoResponseDTO + toDomain()
+├── CommodityPriceService.swift  // CommodityPriceServicing; static makeEndpoint/parse; APIError→CommodityPriceError mapping (mirrors ChartService)
+├── CommoditiesViewModel.swift   // @MainActor @Observable; concurrent withTaskGroup fan-out; per-symbol failure tolerance
+└── MarketsView.swift            // priced rows for .commodity/.currency (price + green/red %); .task load + .refreshable
+```
+
+DI: `AppDependencies.commodityPriceService` (`StubCommodityPriceService` under `-UITestFixtures`). The VM merges per-symbol results so a refresh that fails one symbol keeps its prior value; a screen-level error surfaces only when **every** symbol fails (leaving `hasLoaded` false so the next appearance retries). No auto-polling — refresh is on-appear + pull-to-refresh.
+
+### 17.3 Commodity symbols
+
+OIL (Crude Oil), BRENT (Brent Oil), GAS (Natural Gas), COAL-NEWCASTLE (Newcastle Coal), CPO (Palm Oil), XAU (Gold), SILVER, NICKEL, COPPER, ALUMINIUM, TIN, ZINC-COMMODITIES (Zinc), RUBBER — plus USDIDR (US Dollar / Rupiah) under Currencies (`type_company:"FX"`).

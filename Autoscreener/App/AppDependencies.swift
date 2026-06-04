@@ -28,6 +28,7 @@ final class AppDependencies {
     let brokerSummaryService: any BrokerSummaryServicing
     let foreignFlowService: any ForeignFlowServicing
     let chartService: any ChartServicing
+    let commodityPriceService: any CommodityPriceServicing
     let schedulePreferences: SchedulePreferences
     let snapshotStore: any ScreenerSnapshotStoring
     let scheduler: ScreenerScheduler
@@ -63,6 +64,7 @@ final class AppDependencies {
         self.brokerSummaryService = useFixtures ? StubBrokerSummaryService() : BrokerSummaryService(apiClient: client)
         self.foreignFlowService = useFixtures ? StubForeignFlowService() : ForeignFlowService(apiClient: client)
         self.chartService = useFixtures ? StubChartService() : ChartService(apiClient: client)
+        self.commodityPriceService = useFixtures ? StubCommodityPriceService() : CommodityPriceService(apiClient: client)
         self.schedulePreferences = prefs
         self.snapshotStore = useFixtures ? StubSnapshotStore() : snapshots
         self.scheduler = ScreenerScheduler(preferences: prefs)
