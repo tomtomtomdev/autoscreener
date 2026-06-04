@@ -313,6 +313,8 @@ Backed by `NetworkLog.shared` (an `@Observable` ring buffer, last 50 entries) po
 
 The second metric column is conditional: single-column screeners like Accum/Dist Positive (`sequence: [14400]`) render only one metric column.
 
+**Column widths:** `No` and `Symbol` are pinned to fixed widths (`.width(44)` and `.width(60)`) rather than flexible min/ideal ranges — the row index never exceeds the ~900-stock IHSG universe (4 digits) and IDX tickers are 4–5 letters, so neither needs to grow. This keeps both columns tight and hands the freed horizontal space to `Name` and the metric columns. The same widths apply in the Watchlist table (§15), which shares the column layout.
+
 The `Last` / `Δ%` columns from the original sketch were removed — Stockbit's `screener/templates` response doesn't carry intraday price for metric-only filters (those come from `/company-price-feed`, separate feature).
 
 ### 7.1 Auto-pagination

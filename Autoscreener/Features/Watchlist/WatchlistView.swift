@@ -106,7 +106,9 @@ struct WatchlistView: View {
                     Text("\(i + 1)").monospacedDigit().foregroundStyle(.secondary)
                 }
             }
-            .width(min: 36, ideal: 48)
+            // Row index never exceeds the IHSG universe (~900 rows), so 4 digits
+            // is the most it ever shows — pin it so the column can't grow wider.
+            .width(44)
 
             TableColumn("Symbol") { row in
                 Button {
@@ -118,7 +120,9 @@ struct WatchlistView: View {
                 .buttonStyle(.plain)
                 .help("View \(row.symbol) financials")
             }
-            .width(min: 80, ideal: 100)
+            // IDX tickers are 4 letters (occasionally 5) — pin to 5 monospaced
+            // chars so the code column stays tight and doesn't steal width.
+            .width(60)
 
             TableColumn("Name") { row in
                 Text(row.name)
