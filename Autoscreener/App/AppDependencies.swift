@@ -29,9 +29,6 @@ final class AppDependencies {
     let foreignFlowService: any ForeignFlowServicing
     let chartService: any ChartServicing
     let commodityPriceService: any CommodityPriceServicing
-    let schedulePreferences: SchedulePreferences
-    let snapshotStore: any ScreenerSnapshotStoring
-    let scheduler: ScreenerScheduler
     let authState = AuthState()
 
     static let shared = AppDependencies()
@@ -43,15 +40,6 @@ final class AppDependencies {
         let login = LoginService(session: session, tokens: store)
         let verifier = DeviceVerificationService(session: session)
         let client = APIClient(session: session, tokens: store)
-        let prefs = SchedulePreferences()
-        // Capture the schedule by-value at construction time of each save. We can't
-        // hop to MainActor inside the snapshot store's nonisolated actor, so the
-        // closure consults UserDefaults directly — same source the prefs read.
-        let defaults = UserDefaults.standard
-        let snapshots = ScreenerSnapshotStore(isEnabled: { @Sendable in
-            let raw = defaults.string(forKey: "autoscreener.schedule") ?? ScreenerSchedule.onDemand.rawValue
-            return ScreenerSchedule(rawValue: raw) != .onDemand
-        })
 
         self.tokens = store
         self.loginService = login
@@ -65,9 +53,6 @@ final class AppDependencies {
         self.foreignFlowService = useFixtures ? StubForeignFlowService() : ForeignFlowService(apiClient: client)
         self.chartService = useFixtures ? StubChartService() : ChartService(apiClient: client)
         self.commodityPriceService = useFixtures ? StubCommodityPriceService() : CommodityPriceService(apiClient: client)
-        self.schedulePreferences = prefs
-        self.snapshotStore = useFixtures ? StubSnapshotStore() : snapshots
-        self.scheduler = ScreenerScheduler(preferences: prefs)
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).

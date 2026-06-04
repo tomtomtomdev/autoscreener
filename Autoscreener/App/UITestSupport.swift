@@ -17,16 +17,6 @@ nonisolated struct StubPaywallService: PaywallServicing {
     func increment(_ feature: PaywallFeature) async {}
 }
 
-/// No-op snapshot store so the fixture run shows the canned template rows rather
-/// than any stale snapshot persisted by a previous real session.
-nonisolated struct StubSnapshotStore: ScreenerSnapshotStoring {
-    func loadScreener(templateID: String) async -> ScreenerSnapshot? { nil }
-    func saveScreener(_ snapshot: ScreenerSnapshot) async {}
-    func loadWatchlist() async -> WatchlistSnapshot? { nil }
-    func saveWatchlist(_ snapshot: WatchlistSnapshot) async {}
-    var persistenceEnabled: Bool { get async { false } }
-}
-
 nonisolated struct StubScreenerTemplateService: ScreenerTemplateServicing {
     func load(templateID: String) async throws -> ScreenerInitialResult {
         ScreenerInitialResult(

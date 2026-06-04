@@ -138,152 +138,130 @@ struct MainSidebarView: View {
 
     init() {
         let deps = AppDependencies.shared
-        let snaps = deps.snapshotStore
         _bandarAccumulatingVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676213"
         ))
         _bandarAboveMA20VM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676217"
         ))
         _bandarShiftTodayVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676221"
         ))
         _accumDistPositiveVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676223"
         ))
         _foreignFlow1MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676225"
         ))
         _foreignFlow6MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676228"
         ))
         _foreignFlow3MVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676231"
         ))
         _foreignBuyStreakVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676235"
         ))
         _freshForeignBuyVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676238"
         ))
         _freqSpikeVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676260"
         ))
         _volumeSpikeVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676263"
         ))
         _above50MAVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676264"
         ))
         _above200MAVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676268"
         ))
         _earningsYieldVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676273"
         ))
         _pbvBelow2VM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676280"
         ))
         _roeQualityVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676288"
         ))
         _fcfPositiveVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676291"
         ))
         _manageableDebtVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676292"
         ))
         _liquidityFloorVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676314"
         ))
         _intradayLiquidityVM = State(initialValue: ScreenerViewModel(
             service: deps.screenerService,
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            snapshots: snaps,
             templateID: "6676320"
         ))
         _watchlistVM = State(initialValue: WatchlistViewModel(
             paywall: deps.paywallService,
             templates: deps.screenerTemplateService,
-            screener: deps.screenerService,
-            snapshots: snaps
+            screener: deps.screenerService
         ))
     }
 
@@ -316,27 +294,6 @@ struct MainSidebarView: View {
         } detail: {
             detail
         }
-        .task { startScheduler() }
-        // Restart the scheduler whenever the user changes the cadence.
-        .onChange(of: AppDependencies.shared.schedulePreferences.schedule) { _, _ in
-            startScheduler()
-        }
-        // Settings' "Refresh now" button posts this; the sidebar owns the watchlist VM.
-        // Explicit "refresh now" forces a fresh fetch of every screener cache (then
-        // re-aggregates), unlike the watchlist toolbar button which just re-unions cache.
-        .onReceive(NotificationCenter.default.publisher(for: .autoscreenerRefreshNow)) { _ in
-            Task { await watchlistVM.scheduledRefresh() }
-        }
-    }
-
-    /// Wires the global scheduler to the watchlist VM. A scheduled fire refreshes
-    /// every per-screener cache with the throttled fan-out, then rebuilds the
-    /// composite from those caches — so the watchlist's own reveal/refresh never
-    /// pays the sequential fetch (see `WatchlistViewModel.scheduledRefresh`).
-    private func startScheduler() {
-        let scheduler = AppDependencies.shared.scheduler
-        let vm = watchlistVM
-        scheduler.start(refresh: { await vm.scheduledRefresh() })
     }
 
     @ViewBuilder

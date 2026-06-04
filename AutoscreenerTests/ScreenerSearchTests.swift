@@ -3,8 +3,7 @@ import Testing
 @testable import Autoscreener
 
 /// Search behavior on the `ScreenerViewModel` — `visibleRows` filtering and the
-/// page-exhaust that backs a search on a paginated screener. Reuses the
-/// top-level `FakeSnapshotStore` from `ScreenerViewModelSnapshotTests`.
+/// page-exhaust that backs a search on a paginated screener.
 @MainActor
 @Suite struct ScreenerSearchTests {
 
@@ -15,6 +14,20 @@ import Testing
             config.screenerID = templateID
             let rows = ScreenerSearchTests.makeRows(prefix: "P1", count: config.limit)
             return ScreenerInitialResult(config: config, page: ScreenerPage(rows: rows, total: nil, page: 1))
+        }
+    }
+
+    // GET (page 1) returns exactly two named rows as a complete page (total == 2),
+    // so a search filters over a complete, single-page set with no pagination.
+    private final class TwoRowTemplates: ScreenerTemplateServicing, @unchecked Sendable {
+        func load(templateID: String) async throws -> ScreenerInitialResult {
+            var config = ScreenerConfig()
+            config.screenerID = templateID
+            let rows = [
+                ScreenerRow(symbol: "BBCA", name: "BCA", values: [], lastPrice: nil, pctChange: nil),
+                ScreenerRow(symbol: "BBRI", name: "BRI", values: [], lastPrice: nil, pctChange: nil),
+            ]
+            return ScreenerInitialResult(config: config, page: ScreenerPage(rows: rows, total: 2, page: 1))
         }
     }
 
@@ -34,21 +47,9 @@ import Testing
     }
 
     @Test func visibleRowsReflectSearchText() async {
-        var config = ScreenerConfig()
-        config.screenerID = "6676314"
-        let store = FakeSnapshotStore()
-        store.seedScreener(ScreenerSnapshot(
-            templateID: "6676314",
-            config: config,
-            rows: [
-                ScreenerRow(symbol: "BBCA", name: "BCA", values: [], lastPrice: nil, pctChange: nil),
-                ScreenerRow(symbol: "BBRI", name: "BRI", values: [], lastPrice: nil, pctChange: nil),
-            ],
-            total: nil,
-            fetchedAt: Date(timeIntervalSince1970: 1_780_000_000)))
         let vm = ScreenerViewModel(service: PagedService(), paywall: nil,
-                                   templates: PagedTemplates(), snapshots: store, templateID: "6676314")
-        await vm.autoRunIfNeeded()  // renders the seeded snapshot, no network
+                                   templates: TwoRowTemplates(), templateID: "6676314")
+        await vm.autoRunIfNeeded()  // live-loads the two rows (a single complete page)
 
         #expect(vm.visibleRows.count == 2)
         vm.searchText = "bbr"
@@ -59,7 +60,7 @@ import Testing
 
     @Test func loadAllForSearchExhaustsEveryPage() async {
         let vm = ScreenerViewModel(service: PagedService(), paywall: nil,
-                                   templates: PagedTemplates(), snapshots: nil, templateID: "6676314")
+                                   templates: PagedTemplates(), templateID: "6676314")
         await vm.autoRunIfNeeded()  // bootstrap loads page 1 (a full page)
         let firstPageCount = vm.rows.count
         #expect(vm.hasMore == true)

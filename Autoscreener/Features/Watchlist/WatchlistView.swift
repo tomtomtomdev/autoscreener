@@ -55,7 +55,7 @@ struct WatchlistView: View {
             } label: {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .help("Rebuild from the latest per-screener caches (or refetch all if on-demand)")
+            .help("Refetch every screener live and rebuild the composite")
             .disabled(vm.isLoading)
         }
         .padding()
