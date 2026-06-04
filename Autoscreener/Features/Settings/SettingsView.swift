@@ -69,8 +69,39 @@ struct SettingsView: View {
             Label("Signed in", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .font(.callout)
+            sessionStatusRows
+        } else if vm.session?.isRefreshExpired == true {
+            Label("Session expired — sign in again to refresh data",
+                  systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.callout)
         }
     }
+
+    /// Caption lines under "Signed in" telling the user how long the session lasts.
+    @ViewBuilder
+    private var sessionStatusRows: some View {
+        if let session = vm.session {
+            if let refresh = session.refreshExpiry {
+                Text("Sign-in valid until \(Self.expiryFormatter.string(from: refresh))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let access = session.accessExpiry, access.timeIntervalSinceNow < 0 {
+                // Access token lapsed but refresh is still good → it renews on next request.
+                Text("Access token expired — renews automatically on next request")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private static let expiryFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
 
     // MARK: - Verification rows
 

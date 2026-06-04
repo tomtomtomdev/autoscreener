@@ -104,8 +104,12 @@ private func makeVM(login: FakeLoginService = .init(),
     @Test func submitTogglesToSignOutWhenSignedIn() async {
         let svc = FakeLoginService()
         let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
-        let vm = makeVM(login: svc, store: store)
-        try? await Task.sleep(nanoseconds: 10_000_000)
+        // Deterministic rehydrate instead of racing a 10ms sleep against the init Task.
+        let vm = SettingsViewModel(loginService: svc,
+                                   verificationService: FakeDeviceVerificationService(),
+                                   tokens: store, autoRehydrate: false)
+        await vm.rehydrateSession()
+        #expect(vm.isSignedIn)
 
         await vm.submit()
 
@@ -237,5 +241,64 @@ private func makeVM(login: FakeLoginService = .init(),
 
         #expect(vm.phase == .signIn)
         #expect(vm.error == "Verification challenge expired. Please sign in again.")
+    }
+
+    // MARK: - Session expiry surfacing
+
+    @Test func expiredRefreshTokenSignsOutAndFlagsExpired() async {
+        let auth = AuthState(); auth.setSignedIn()
+        let store = InMemoryTokenStore(initial: TokenPair(
+            accessToken: "A", refreshToken: "R",
+            accessExpiresAt: Date().addingTimeInterval(-3600),
+            refreshExpiresAt: Date().addingTimeInterval(-60)))
+        let vm = SettingsViewModel(
+            loginService: FakeLoginService(),
+            verificationService: FakeDeviceVerificationService(),
+            tokens: store, authState: auth, autoRehydrate: false)
+
+        await vm.rehydrateSession()
+
+        #expect(vm.isSignedIn == false)
+        #expect(vm.phase == .signIn)
+        #expect(vm.session?.isRefreshExpired == true)
+        #expect(auth.phase == .signedOut)
+        #expect(await store.load() == nil)   // dead token is cleared
+    }
+
+    @Test func validTokenSurfacesSessionValidity() async {
+        let auth = AuthState()
+        let refreshExpiry = Date().addingTimeInterval(7 * 24 * 3600)
+        let store = InMemoryTokenStore(initial: TokenPair(
+            accessToken: "A", refreshToken: "R",
+            accessExpiresAt: Date().addingTimeInterval(900),
+            refreshExpiresAt: refreshExpiry))
+        let vm = SettingsViewModel(
+            loginService: FakeLoginService(),
+            verificationService: FakeDeviceVerificationService(),
+            tokens: store, authState: auth, autoRehydrate: false)
+
+        await vm.rehydrateSession()
+
+        #expect(vm.isSignedIn)
+        #expect(vm.session?.isRefreshExpired == false)
+        #expect(vm.session?.refreshExpiry == refreshExpiry)
+        #expect(auth.phase == .signedIn)
+    }
+
+    @Test func signOutClearsSessionStatus() async {
+        let store = InMemoryTokenStore(initial: TokenPair(
+            accessToken: "A", refreshToken: "R",
+            refreshExpiresAt: Date().addingTimeInterval(3600)))
+        let vm = SettingsViewModel(
+            loginService: FakeLoginService(),
+            verificationService: FakeDeviceVerificationService(),
+            tokens: store, autoRehydrate: false)
+        await vm.rehydrateSession()
+        #expect(vm.session != nil)
+
+        await vm.signOut()
+
+        #expect(vm.session == nil)
+        #expect(vm.phase == .signIn)
     }
 }
