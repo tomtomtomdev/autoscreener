@@ -136,34 +136,43 @@ struct StockDetailView: View {
 
     private func statementGrid(_ statement: FinancialStatement) -> some View {
         let columns = Array(statement.periods.indices)
-        return ScrollView([.vertical, .horizontal]) {
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                GridRow {
-                    Text("Account")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ForEach(columns, id: \.self) { i in
-                        Text(statement.periods[i])
+        // Pin the grid to the viewport's top-leading corner. A bidirectional
+        // ScrollView centers content that's smaller than its bounds; matching the
+        // content frame to the viewport keeps short statements aligned top-left
+        // while still letting larger ones scroll.
+        return GeometryReader { proxy in
+            ScrollView([.vertical, .horizontal]) {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
+                    GridRow {
+                        Text("Account")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .gridColumnAlignment(.trailing)
+                        ForEach(columns, id: \.self) { i in
+                            Text(statement.periods[i])
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .gridColumnAlignment(.trailing)
+                        }
                     }
-                }
-                Divider()
-                ForEach(vm.rows) { row in
-                    if row.isSpacer {
-                        Color.clear.frame(height: 4)
-                    } else {
-                        GridRow {
-                            nameCell(row)
-                            ForEach(columns, id: \.self) { i in
-                                valueCell(row, column: i)
+                    Divider()
+                    ForEach(vm.rows) { row in
+                        if row.isSpacer {
+                            Color.clear.frame(height: 4)
+                        } else {
+                            GridRow {
+                                nameCell(row)
+                                ForEach(columns, id: \.self) { i in
+                                    valueCell(row, column: i)
+                                }
                             }
                         }
                     }
                 }
+                .padding()
+                .frame(minWidth: proxy.size.width,
+                       minHeight: proxy.size.height,
+                       alignment: .topLeading)
             }
-            .padding()
         }
     }
 
