@@ -22,7 +22,8 @@ live, and the plan for the server-side **regime job** that closes the top-down (
 | **L4 Regime** — instruments | ✅ Have | `MarketCatalog` (IHSG, LQ45, IDX30/80, 11 sectors, commodities, USD/IDR) |
 | **L4 Regime** — *synthesis / read* | ❌ Missing | no aggregate flow, no valuation percentile, no breadth, no BI rate, no risk-on/off output |
 | **§4** liquidity floor | ✅ Have | screener veto gates 5B/10B IDR |
-| **§4** Graham metrics / forensic | ❌ Missing | computation/screens unbuilt |
+| **§4** Graham Number / valuation ratios | ✅ Have | `KeystatsRatioService` (keystats/ratio) + `GrahamNumber` calc |
+| **§4** forensic / governance screens | ❌ Missing | unbuilt |
 | **§5** paper trading / microstructure / journal | ❌ Missing | entirely unbuilt |
 | **§6** performance vs IHSG | ❌ Missing | unbuilt |
 
@@ -39,9 +40,9 @@ Endpoints that close gaps the app doesn't yet use:
 
 | Gap | Stockbit endpoint | Verdict |
 |---|---|---|
-| §3 **aggregate foreign flow** | `/findata-view/foreign-domestic/v1/chart-data/IHSG?market_type=&period=` | ✅ **Free win** — same family as the existing per-stock service, point it at `IHSG` |
+| §3 **aggregate foreign flow** | `/findata-view/foreign-domestic/v1/chart-data/IHSG?market_type=&period=` | ✅ **Built** — `AggregateForeignFlowService` (per-stock family pinned to `IHSG`) |
 | §3 breadth (adv/dec) | `/order-trade/market-mover?mover_type=`, `/order-trade/top-stock` | 🟡 proxy |
-| §4 valuation history | `/keystats/ratio/v1/{sym}?year_limit=10` | ✅ per-stock PE/PBV/BVPS/EPS + current/quick ratio (Graham inputs) |
+| §4 valuation history | `/keystats/ratio/v1/{sym}?year_limit=10` | ✅ **Built** — `KeystatsRatioService`; PE/PBV/BVPS/EPS + current/quick (Graham inputs) |
 | §4 forensic/governance | `/insider/company/majorholder`, `/insider/shareholding/composition/...`, `/emitten-metadata/subsidiary/{sym}`, `/corpaction/{sym}` | ✅ ownership, related-party, dilution/rights |
 | §5 microstructure | `/company-price-feed/v2/orderbook/companies/{sym}`, `/order-trade/running-trade`, `/company-price-feed/market-time/session` | ✅ depth + executed ticks + session |
 | L2 deeper flow | `/order-trade/broker/top`, `/broker/distribution`, `/broker/activity/historical` | ✅ market-wide + historical broker flow |
@@ -50,9 +51,14 @@ Endpoints that close gaps the app doesn't yet use:
 paper-trading *state* (positions/journal/performance — local by design).
 
 ### Verified Stockbit endpoints (live, 200)
-- `/keystats/ratio/v1/{sym}?year_limit=10` → grouped ratios: **Valuation** (PE annualised+TTM, P/S,
-  **P/B**, P/CF, P/FCF, EV/EBITDA), **Per-share** (EPS, **BVPS**, Cash/sh, FCF/sh), **Solvency**
-  (**Current 3.09 / Quick 2.45 / D/E 1.38**). → Graham Number `√(22.5·EPS·BVPS)` is a direct calc.
+- `/keystats/ratio/v1/{sym}?year_limit=10` → grouped ratios (**built: `KeystatsRatioService`**):
+  **Valuation** (PE annualised+TTM, P/S, **P/B**, P/CF, P/FCF, EV/EBITDA), **Per-share** (EPS, **BVPS**,
+  Cash/sh, FCF/sh), **Solvency** (**Current 3.09 / Quick 2.45 / D/E 1.38**), plus Profitability (ROE 31.87%),
+  Dividend, IS/BS/CF, Growth, Price-Performance. → Graham Number `√(22.5·EPS·BVPS)` direct (TPIA ≈ 2034).
+  Wire: `data.closure_fin_items_results[].fin_name_results[].fitem{id,name,value}`; `value` is a display
+  string (`"1,688.51"`, `"(5,349)"`=neg, `"31.87%"`, `"-"`=n/a). Map by **stable `id`**: PE 12148 ·
+  PE-TTM 2891 · P/S 2893 · P/B 2896 · P/CF 16533 · P/FCF 15881 · EV/EBITDA 21457 · EPS-TTM 13200
+  (EPS-annualised 12988) · BVPS 15718 · Cash/sh 15879 · FCF/sh 15882 · Current 1498 · Quick 1500 · D/E 1508.
 - `/emitten/{sym}/info` → price, **previous close**, **board** (Papan Utama/Akselerasi),
   `notation[]` (UMA flags), top-of-book, index membership. **No ARA/ARB field** → compute from BEI
   rules + previous close. (Corrects an earlier assumption.)
@@ -178,8 +184,8 @@ percentile test under `-UITestFixtures`.
 2. Loss-maker + outlier handling — bake into the scraper (above).
 
 **Wider flow (separate tasks, unbuilt):**
-- §3 aggregate foreign flow (the Stockbit "free win") + LQ45 breadth (% > 200dma).
-- §4 Graham metrics + forensic/governance screens.
+- §3 aggregate foreign flow ✅ built (`AggregateForeignFlowService`); LQ45 breadth (% > 200dma) still unbuilt.
+- §4 Graham Number ✅ built (`KeystatsRatioService` + `GrahamNumber`); forensic/governance screens unbuilt.
 - §5 paper trading + IDX microstructure (lot/tick/ARA-ARB/fees) + journal.
 - §6 performance vs IHSG total return.
 

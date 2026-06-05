@@ -40,6 +40,18 @@ nonisolated struct StubFinancialStatementService: FinancialStatementServicing {
     }
 }
 
+nonisolated struct StubKeystatsRatioService: KeystatsRatioServicing {
+    func ratios(symbol: String, yearLimit: Int) async throws -> ValuationRatios {
+        ValuationRatios(
+            symbol: symbol,
+            pe: 12.07, peTTM: 5.68, priceToSales: 0.81, priceToBook: 1.81,
+            priceToCashFlow: 15.09, priceToFreeCashFlow: -22.24, evToEBITDA: 31.66,
+            eps: 242.08, bookValuePerShare: 759.60, cashPerShare: 555.47,
+            freeCashFlowPerShare: -61.83, currentRatio: 3.09, quickRatio: 2.45, debtToEquity: 1.38
+        )
+    }
+}
+
 nonisolated struct StubBrokerSummaryService: BrokerSummaryServicing {
     func summary(symbol: String,
                  period: BrokerSummaryPeriod,

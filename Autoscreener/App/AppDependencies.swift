@@ -25,6 +25,7 @@ final class AppDependencies {
     let screenerTemplateService: any ScreenerTemplateServicing
     let screenerService: any ScreenerServicing
     let financialStatementService: any FinancialStatementServicing
+    let keystatsRatioService: any KeystatsRatioServicing
     let brokerSummaryService: any BrokerSummaryServicing
     let foreignFlowService: any ForeignFlowServicing
     let aggregateForeignFlowService: any AggregateForeignFlowServicing
@@ -50,6 +51,7 @@ final class AppDependencies {
         self.screenerTemplateService = useFixtures ? StubScreenerTemplateService() : ScreenerTemplateService(apiClient: client)
         self.screenerService = useFixtures ? StubScreenerService() : ScreenerService(apiClient: client)
         self.financialStatementService = useFixtures ? StubFinancialStatementService() : FinancialStatementService(apiClient: client)
+        self.keystatsRatioService = useFixtures ? StubKeystatsRatioService() : KeystatsRatioService(apiClient: client)
         self.brokerSummaryService = useFixtures ? StubBrokerSummaryService() : BrokerSummaryService(apiClient: client)
         self.foreignFlowService = useFixtures ? StubForeignFlowService() : ForeignFlowService(apiClient: client)
         // Aggregate (market-wide) flow is the same endpoint family pinned to IHSG,
