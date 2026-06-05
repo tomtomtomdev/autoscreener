@@ -1,0 +1,5 @@
+# Build output — published to the `data` branch by CI, not committed to main.
+dist/
+__pycache__/
+.pytest_cache/
+*.pyc

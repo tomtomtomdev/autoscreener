@@ -20,16 +20,21 @@ live, and the plan for the server-side **regime job** that closes the top-down (
 | **L2 Who** — foreign flow (per-stock) | ✅ Have | `ForeignFlowService` `/foreign-domestic/.../{sym}` |
 | **L3 When** — charts (OHLCV) | ✅ Have | `ChartService` (stocks/indices/sectors, multi-timeframe) |
 | **L4 Regime** — instruments | ✅ Have | `MarketCatalog` (IHSG, LQ45, IDX30/80, 11 sectors, commodities, USD/IDR) |
-| **L4 Regime** — *synthesis / read* | ❌ Missing | no aggregate flow, no valuation percentile, no breadth, no BI rate, no risk-on/off output |
+| **L4 Regime** — *synthesis / read* | ✅ Have | `RegimeSynthesizer` + `RegimeViewModel`/`RegimeView` (Market Regime screen): weighted risk-on/neutral/risk-off read across all six factors, with the Howard-Marks late-cycle valuation guard (an expensive market can't read risk-on). Breadth built (see below); valuation percentile + BI rate consumed from the `regime.json` contract (`RegimeSnapshotService`) — **real** values await the §6 scraper, read degrades to live factors until then. |
+| **§3** LQ45 breadth (% > 200dma) | ✅ Have | `BreadthService` over `LQ45Constituents` + `ChartService` (`MovingAverage`) |
 | **§4** liquidity floor | ✅ Have | screener veto gates 5B/10B IDR |
 | **§4** Graham Number / valuation ratios | ✅ Have | `KeystatsRatioService` (keystats/ratio) + `GrahamNumber` calc |
 | **§4** forensic / governance screens | ❌ Missing | unbuilt |
 | **§5** paper trading / microstructure / journal | ❌ Missing | entirely unbuilt |
 | **§6** performance vs IHSG | ❌ Missing | unbuilt |
 
-**Key point:** the app has the L4 *instruments* but not the L4 *regime read* — the synthesis the
-doc is actually about (how aggressive to be). Index price alone is one input of four; it gives
-trend, not altitude (valuation), flow durability, breadth, or the macro driver.
+**Key point (now closed):** the app has both the L4 *instruments* and the L4 *regime read* — the
+synthesis the doc is actually about (how aggressive to be). The read combines valuation percentile
+(weighted 2× as the dominant driver of future risk), BI-rate direction, aggregate foreign flow,
+IHSG trend vs. 200dma, the rupiah, and LQ45 breadth into a single posture, and is framed as cycle
+position, not a forecast. The one remaining dependency is **data**: the valuation percentile and BI
+rate come from `regime.json`, which the §6 server-side scraper (still unbuilt) must publish; until
+then the read runs on its live factors alone.
 
 ---
 
@@ -175,16 +180,39 @@ Cloudflare logic on-device.**
 **Verification:** pytest on parse/aggregation against a saved real fixture; Swift decode +
 percentile test under `-UITestFixtures`.
 
+> **On-device consumer status (built):** the contract above is implemented as `RegimeSnapshot`
+> (`Decodable`) and fetched read-only by `RegimeSnapshotService` (plain `URLSession`, no auth, no
+> Cloudflare on-device) from the `data`-branch raw URL. `RegimeSynthesizer` turns it (plus the live
+> flow / trend / rupiah / breadth factors) into the risk-on/neutral/risk-off read. **The server-side
+> job is now built** (`tools/idx-regime-scraper/`, 19 pytest cases green); only its first GitHub
+> Actions run that publishes to the `data` branch remains. Until then the fetch 404s and the read
+> falls back to live factors by design.
+
 ---
 
 ## 7. Open gaps & next steps
 
-**In the regime job:**
-1. LQ45/IDX30 valuation — needs a constituents config (Composite + sectors don't).
-2. Loss-maker + outlier handling — bake into the scraper (above).
+**In the regime job (now built — `tools/idx-regime-scraper/`):**
+1. LQ45/IDX30 valuation — constituents config shipped (`constituents/lq45.json`, `idx30.json`;
+   maintained at each Feb/Aug rebalance). ✅
+2. Loss-maker + outlier handling — baked into `aggregate_index` (drop non-positive equity, exclude
+   loss-makers from PE both sides, winsorise extreme per-stock ratios). ✅
+3. Remaining: the **first GitHub Actions run** that publishes `regime.json` + `regime-history.json`
+   to the `data` branch (use the `backfill` input once to seed 5–10y of percentile history). Until
+   that runs, the app's `RegimeSnapshotService` 404s and the read uses live factors only.
+
+**Regime read (now built — `Features/Regime/`):**
+- §3 aggregate foreign flow ✅ (`AggregateForeignFlowService`); LQ45 breadth % > 200dma ✅
+  (`BreadthService` + `LQ45Constituents` + `MovingAverage`).
+- §3 synthesis ✅ — `RegimeSynthesizer` (pure, fully unit-tested) + `RegimeViewModel`/`RegimeView`.
+  Weighted vote, valuation 2×, one-sided late-cycle valuation guard, graceful degradation when a
+  factor (or the whole snapshot) is missing.
+- §6 scraper ✅ built (`tools/idx-regime-scraper/` + `.github/workflows/idx-regime.yml`): cap-weighted
+  index P/E·P/B (Composite + sectors + LQ45/IDX30) + BI rate, pytest-covered, emits the app contract.
+  Only its **first publishing run** to the `data` branch remains — until then the valuation-percentile
+  and BI-rate factors are absent and the read uses live factors (flow/trend/rupiah/breadth) only.
 
 **Wider flow (separate tasks, unbuilt):**
-- §3 aggregate foreign flow ✅ built (`AggregateForeignFlowService`); LQ45 breadth (% > 200dma) still unbuilt.
 - §4 Graham Number ✅ built (`KeystatsRatioService` + `GrahamNumber`); forensic/governance screens unbuilt.
 - §5 paper trading + IDX microstructure (lot/tick/ARA-ARB/fees) + journal.
 - §6 performance vs IHSG total return.

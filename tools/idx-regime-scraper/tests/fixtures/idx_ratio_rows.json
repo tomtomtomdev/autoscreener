@@ -1,0 +1,6 @@
+[
+  {"code": "AAA", "sectorCode": "FIN", "per": 10, "priceBV": 2, "equity": 100, "eps": 50, "bookValue": 500},
+  {"code": "BBB", "sectorCode": "FIN", "per": 20, "priceBV": 4, "equity": 50, "eps": 10, "bookValue": 250},
+  {"code": "CCC", "sectorCode": "ENE", "per": -5, "priceBV": 1, "equity": 80, "eps": -8, "bookValue": 400},
+  {"code": "DDD", "sectorCode": "ENE", "per": 15, "priceBV": 3, "equity": -10, "eps": 5, "bookValue": -50}
+]
