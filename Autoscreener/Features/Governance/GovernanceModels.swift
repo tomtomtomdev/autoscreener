@@ -29,12 +29,17 @@ nonisolated struct MajorHolder: Sendable, Equatable {
     let pledgedPercent: Double?
 }
 
-/// Shareholding composition — the split that yields free float. `publicFloatPercent` is the
-/// non-controlling, freely-tradable share; thin float is both a liquidity and a
-/// minority-protection risk (`idx-investing-research.md` §4).
+/// Shareholding composition — the ownership breakdown (named ≥5% holders + category
+/// buckets like "Individual"/"Corporate") as returned by the composition endpoint. The feed
+/// has *no single public-float field*, so both free float and concentration are derived from
+/// this list in `GovernanceRules` (`idx-investing-research.md` §4).
 nonisolated struct ShareholdingComposition: Sendable, Equatable {
-    let publicFloatPercent: Double?
-    let foreignPercent: Double?
+    let holders: [HolderSlice]
+
+    nonisolated struct HolderSlice: Sendable, Equatable {
+        let label: String
+        let percent: Double?   // percent of shares, e.g. 30.57
+    }
 }
 
 /// A corporate action. `type.isDilutive` marks the ones that issue new shares against

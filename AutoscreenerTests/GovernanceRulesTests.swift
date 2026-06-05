@@ -20,25 +20,36 @@ private func holder(_ name: String = "X",
                 ownershipPercent: own, changeInOwnershipPct: change, pledgedPercent: nil)
 }
 
+/// A composition from a list of holder percentages (each ≥5% counts against free float).
+private func comp(_ percents: Double...) -> ShareholdingComposition {
+    ShareholdingComposition(holders: percents.enumerated().map {
+        ShareholdingComposition.HolderSlice(label: "H\($0.offset)", percent: $0.element)
+    })
+}
+
 // MARK: - Per-flag classifiers
 
 @Suite struct GovernanceFlagClassifierTests {
-    @Test func thinFloatWatchAndConcernBands() {
-        #expect(GovernanceRules.thinFloatFlag(.init(publicFloatPercent: 25, foreignPercent: nil)) == nil)          // healthy
-        #expect(GovernanceRules.thinFloatFlag(.init(publicFloatPercent: 12, foreignPercent: nil))?.severity == .watch)
-        #expect(GovernanceRules.thinFloatFlag(.init(publicFloatPercent: 5, foreignPercent: nil))?.severity == .concern)
-        #expect(GovernanceRules.thinFloatFlag(nil) == nil)                                                          // absent
+    @Test func freeFloatIsHundredMinusHoldersAtOrAbove5() {
+        // 30.57 + 20.96 + 5.6 are ≥5% (summed); the 2.0 bucket is below the line.
+        let c = comp(30.57, 20.96, 5.6, 2.0)
+        #expect(abs((GovernanceRules.freeFloat(c) ?? -1) - (100 - (30.57 + 20.96 + 5.6))) < 1e-9)
+        #expect(GovernanceRules.freeFloat(comp()) == nil)
+        #expect(GovernanceRules.freeFloat(nil) == nil)
     }
 
-    @Test func thinFloatToleratesFractionOrPercent() {
-        #expect(GovernanceRules.thinFloatFlag(.init(publicFloatPercent: 0.05, foreignPercent: nil))?.severity == .concern)
+    @Test func thinFloatWatchAndConcernBands() {
+        #expect(GovernanceRules.thinFloatFlag(comp(40, 30)) == nil)              // free 30% → healthy
+        #expect(GovernanceRules.thinFloatFlag(comp(50, 38))?.severity == .watch)    // free 12%
+        #expect(GovernanceRules.thinFloatFlag(comp(50, 45))?.severity == .concern)  // free 5%
+        #expect(GovernanceRules.thinFloatFlag(nil) == nil)                          // absent
     }
 
     @Test func concentrationControllingAndDominant() {
-        #expect(GovernanceRules.concentrationFlag([holder(own: 40)]) == nil)
-        #expect(GovernanceRules.concentrationFlag([holder(own: 60)])?.severity == .watch)
-        #expect(GovernanceRules.concentrationFlag([holder(own: 85)])?.severity == .concern)
-        #expect(GovernanceRules.concentrationFlag([]) == nil)
+        #expect(GovernanceRules.concentrationFlag(comp(40, 10)) == nil)
+        #expect(GovernanceRules.concentrationFlag(comp(60, 10))?.severity == .watch)
+        #expect(GovernanceRules.concentrationFlag(comp(85))?.severity == .concern)
+        #expect(GovernanceRules.concentrationFlag(nil) == nil)
     }
 
     @Test func insiderSellingCountsOnlyInsidersAndOnlyNetSelling() {
@@ -99,16 +110,15 @@ private func holder(_ name: String = "X",
     @Test func cleanWhenNothingFires() {
         let data = GovernanceData(
             symbol: "OK", period: .oneYear,
-            majorHolders: [holder(own: 30, change: 1)],
-            composition: .init(publicFloatPercent: 40, foreignPercent: nil))
+            majorHolders: [holder(own: 30, change: 1)],   // insider buying, not selling
+            composition: comp(30, 25, 20))                // top 30% (<50), free 25% — both fine
         #expect(GovernanceRules.assess(data, now: now).level == .clean)
     }
 
     @Test func anyConcernEscalatesToSignificant() {
         let data = GovernanceData(
             symbol: "BAD", period: .oneYear,
-            majorHolders: [holder(own: 88)],
-            composition: .init(publicFloatPercent: 5, foreignPercent: nil))
+            composition: comp(88))   // dominant 88% → concern; free 12% → watch
         let assessment = GovernanceRules.assess(data, now: now)
         #expect(assessment.level == .significant)
         #expect(assessment.flags.count >= 2)   // thin float + dominant concentration

@@ -76,3 +76,53 @@ import Testing
         #expect(data.missingSections.isEmpty)  // parsed-but-empty ≠ missing
     }
 }
+
+// MARK: - Parsing against the Phase 0 fixtures
+
+@Suite struct GovernanceParseTests {
+    @Test func parsesMajorHoldersWithBadgesAndSignedChange() {
+        let holders = GovernanceService.parseMajorHolders(GovernanceFixtures.majorHolder)
+        #expect(holders.count == 2)
+        let director = holders[0]
+        #expect(director.insiderID == "15283")
+        #expect(director.isInsider)                       // DIREKTUR badge
+        #expect(director.ownershipPercent == 2.0)
+        #expect(director.changeInOwnershipPct == -1.5)    // signed "-1.50"
+        #expect(holders[1].isInsider == false)            // no role badge
+    }
+
+    @Test func parsesCompositionBreakdown() {
+        let composition = GovernanceService.parseComposition(GovernanceFixtures.composition)
+        #expect(composition?.holders.count == 4)
+        #expect(composition?.holders.first?.label == "SCG CHEMICALS PUBLIC COMPANY")
+        #expect(composition?.holders.first?.percent == 30.57)
+        // The same data flowing through the rule → thin float (free = 100 − 57.13).
+        #expect(GovernanceRules.freeFloat(composition).map { abs($0 - 42.87) < 1e-9 } == true)
+    }
+
+    @Test func parsesCorpActionsTypesAndNestedExDate() {
+        let actions = GovernanceService.parseCorpActions(GovernanceFixtures.corpAction)
+        #expect(actions.count == 4)
+        let rights = actions.first { $0.type == .rightsIssue }
+        #expect(rights != nil)                                  // "rightissue" mapped
+        #expect(rights?.date != nil)                            // pulled rightissue_exdate
+        #expect(actions.contains { $0.type == .cashDividend })  // "dividend"
+        #expect(actions.contains { $0.type == .split })         // "stocksplit"
+        #expect(actions.contains { $0.type == .other })         // "rups"
+    }
+
+    @Test func parsesSubsidiaries() {
+        let subs = GovernanceService.parseSubsidiaries(GovernanceFixtures.subsidiary)
+        #expect(subs.count == 2)
+        #expect(subs.first?.name == "Aster Chemicals and Energy Pte. Ltd.")
+        #expect(subs.first?.ownershipPercent == 100.0)
+    }
+
+    @Test func parsesCrossHoldingsExcludingTheQueriedSymbol() {
+        let cross = GovernanceService.parseCrossHoldings(GovernanceFixtures.ownership, holderName: "fallback", excluding: "TPIA")
+        #expect(cross.count == 1)                       // TPIA itself filtered out
+        #expect(cross.first?.symbol == "BRPT")
+        #expect(cross.first?.holderName == "DIRECTOR A") // taken from data.insider_name
+        #expect(cross.first?.ownershipPercent == 3.5)
+    }
+}

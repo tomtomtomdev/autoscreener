@@ -30,23 +30,34 @@ nonisolated enum GovernanceRules {
 
     // MARK: - Per-flag classifiers
 
-    /// Public free float below the band → thin-float flag. Tolerates the percentage being
-    /// expressed as `12.5` or `0.125`.
+    /// Free float ≈ 100% − the sum of every holder at or above 5% (the
+    /// non-substantial-shareholder proxy). Returned as a percent (0…100), or `nil` when the
+    /// composition is unavailable. The composition feed has no single public-float field, so
+    /// this is the agreed derivation.
+    static func freeFloat(_ composition: ShareholdingComposition?) -> Double? {
+        guard let holders = composition?.holders, !holders.isEmpty else { return nil }
+        let substantial = holders.compactMap(\.percent).filter { $0 >= 5 }.reduce(0, +)
+        return max(0, 100 - substantial)
+    }
+
+    /// Thin derived free float → thin-float flag. Tolerates the value as `9.05` or `0.0905`.
     static func thinFloatFlag(_ composition: ShareholdingComposition?) -> GovernanceFlag? {
-        guard let raw = composition?.publicFloatPercent else { return nil }
-        let pct = raw > 1 ? raw / 100 : raw
+        guard let free = freeFloat(composition) else { return nil }
+        let pct = free > 1 ? free / 100 : free
         guard pct <= Threshold.floatWatch else { return nil }
         let severity: GovernanceSeverity = pct <= Threshold.floatConcern ? .concern : .watch
         return GovernanceFlag(
             kind: .thinFloat, severity: severity,
-            evidence: "Public free float ≈ \(pct.asPercent) of shares.",
+            evidence: "Free float ≈ \(pct.asPercent) (100% − holders ≥5%).",
             whyItMatters: "A thin float concentrates control and makes a clean exit hard — minority holders are price-takers and can be squeezed in a delisting or take-private.",
             whatToCheckNext: "Confirm the float against the latest KSEI/IDX composition and check daily value traded against the screener's liquidity floor.")
     }
 
-    /// Largest holder above the controlling threshold → concentration flag.
-    static func concentrationFlag(_ holders: [MajorHolder]) -> GovernanceFlag? {
-        let top = holders.compactMap(\.ownershipPercent).map { $0 > 1 ? $0 / 100 : $0 }.max()
+    /// Largest holder above the controlling threshold → concentration flag. Reads the
+    /// composition breakdown (the movement feed only carries small director trades).
+    static func concentrationFlag(_ composition: ShareholdingComposition?) -> GovernanceFlag? {
+        let percents: [Double] = (composition?.holders ?? []).compactMap(\.percent)
+        let top = percents.map { $0 > 1 ? $0 / 100 : $0 }.max()
         guard let top, top >= Threshold.controlling else { return nil }
         let severity: GovernanceSeverity = top >= Threshold.dominant ? .concern : .watch
         return GovernanceFlag(
@@ -130,7 +141,7 @@ nonisolated enum GovernanceRules {
     static func assess(_ data: GovernanceData, now: Date) -> GovernanceAssessment {
         var flags: [GovernanceFlag] = []
         if let f = thinFloatFlag(data.composition) { flags.append(f) }
-        if let f = concentrationFlag(data.majorHolders) { flags.append(f) }
+        if let f = concentrationFlag(data.composition) { flags.append(f) }
         if let f = insiderSellingFlag(data.majorHolders, period: data.period) { flags.append(f) }
         flags.append(contentsOf: dilutionFlags(data.corpActions, now: now))
         if let f = relatedPartyFlag(subsidiaries: data.subsidiaries, crossHoldings: data.crossHoldings) { flags.append(f) }
