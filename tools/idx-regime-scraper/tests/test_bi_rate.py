@@ -32,13 +32,16 @@ def test_fred_csv_parses_and_drops_missing_dots():
     assert parse_fred_csv(text) == [("2025-11-01", 5.75), ("2026-01-01", 4.75)]
 
 
-def test_bi_html_sorts_newest_last_and_derives_a_cut():
+def test_bi_html_ignores_no_column_and_reads_the_rate():
+    # Regression: the live table leads with a "No" index column whose integers
+    # (1, 2, …) also parse as plausible rates. The parser must read the BI-Rate
+    # column (the '%' cell), not the row number — and normalise the Bahasa date.
     html = (FIXTURES / "bi_rate.html").read_text()
     bi = to_bi_rate(parse_bi_rate_html(html))
     assert bi is not None
-    assert bi.value == 4.75
-    assert bi.direction == "cut"           # 5.00 (Dec) → 4.75 (Jan)
-    assert "2026" in bi.as_of
+    assert bi.value == 5.25                 # BI-Rate column, not the leading "No" (=1)
+    assert bi.direction == "hike"           # 4.75 (Apr) → 5.25 (May)
+    assert bi.as_of == "2026-05-20"         # normalised to ISO, not "20 Mei 2026"
 
 
 def test_direction_classifies_last_move():

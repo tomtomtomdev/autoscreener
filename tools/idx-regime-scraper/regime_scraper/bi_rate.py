@@ -8,8 +8,8 @@ from typing import List, Optional, Tuple
 
 from .models import BIRate
 
-# A parsed observation: (original date string, rate). The original string is kept
-# verbatim for `asOf`; a separate parsed date is used only for sorting.
+# A parsed observation: (original date string, rate). The original string is carried
+# through sorting (which parses it for ordering); `to_bi_rate` normalises it to ISO.
 Observation = Tuple[str, float]
 
 _MONTHS = {
@@ -107,7 +107,12 @@ def parse_bi_rate_html(html: str) -> List[Observation]:
     for tr in soup.find_all("tr"):
         cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
         date_cell = next((c for c in cells if parse_date(c) is not None), None)
-        rate_cell = next((parse_rate(c) for c in cells if parse_rate(c) is not None), None)
+        # The BI-Rate column is rendered with a percent sign; prefer it so the leading
+        # "No" index column — a bare integer that also parses as a plausible rate — can't
+        # be read as the rate. Fall back to any rate-like cell if the page drops '%'.
+        rate_cell = next((parse_rate(c) for c in cells if "%" in c and parse_rate(c) is not None), None)
+        if rate_cell is None:
+            rate_cell = next((parse_rate(c) for c in cells if parse_rate(c) is not None), None)
         if date_cell and rate_cell is not None:
             out.append((date_cell, rate_cell))
     return out
@@ -128,9 +133,13 @@ def direction(observations: List[Observation]) -> str:
 
 def to_bi_rate(observations: List[Observation]) -> Optional[BIRate]:
     """Build the ``BIRate`` from a (possibly unsorted) observation list: sort
-    chronologically, take the latest as the level, derive the direction."""
+    chronologically, take the latest as the level, derive the direction. ``as_of`` is
+    normalised to ISO (``2026-05-20``) so both the BI-HTML and FRED paths — and the
+    published ``regime.json`` contract — agree on date shape."""
     series = sort_observations(observations)
     if not series:
         return None
-    as_of, value = series[-1]
+    as_of_raw, value = series[-1]
+    parsed = parse_date(as_of_raw)  # sort_observations dropped unparseable rows, so this holds
+    as_of = parsed.isoformat() if parsed else as_of_raw
     return BIRate(value=value, direction=direction(series), as_of=as_of)
