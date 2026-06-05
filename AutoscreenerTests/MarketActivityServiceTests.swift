@@ -128,3 +128,52 @@ import Testing
         #expect(abs(flow.value.foreignPercentage - 50.986015) < 0.001)
     }
 }
+
+// MARK: - AggregateForeignFlowService
+
+@Suite struct AggregateForeignFlowServiceTests {
+    /// Reuses the per-stock foreign-flow fixture as a representative payload: the
+    /// market-wide endpoint is the same `chart-data/{symbol}` family pointed at the
+    /// composite index, so the response shape is identical. (Pending a real IHSG
+    /// capture — see `idx-regime-data-research.md` §2.)
+    private func makeService(_ body: Data) -> (AggregateForeignFlowService, StubSession) {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let service = AggregateForeignFlowService(flowService: ForeignFlowService(apiClient: client))
+        return (service, session)
+    }
+
+    @Test func targetsCompositeIndexSymbol() async throws {
+        let (svc, session) = makeService(MarketActivityFixtures.foreignFlowTPIA)
+
+        _ = try await svc.marketFlow(period: .oneDay)
+
+        let req = session.received[0]
+        #expect(req.httpMethod == "GET")
+        #expect(req.url?.path == "/findata-view/foreign-domestic/v1/chart-data/IHSG")
+        let query = req.url?.query ?? ""
+        #expect(query.contains("market_type=MARKET_TYPE_REGULAR"))
+        #expect(query.contains("period=PERIOD_RANGE_1D"))
+        #expect(req.value(forHTTPHeaderField: "authorization") == "Bearer A")
+    }
+
+    @Test func defaultPeriodIsOneDay() async throws {
+        let (svc, session) = makeService(MarketActivityFixtures.foreignFlowTPIA)
+        _ = try await svc.marketFlow()
+        #expect(session.received[0].url?.query?.contains("period=PERIOD_RANGE_1D") == true)
+    }
+
+    @Test func decodesFlowTaggedAsComposite() async throws {
+        let (svc, _) = makeService(MarketActivityFixtures.foreignFlowTPIA)
+
+        let flow = try await svc.marketFlow(period: .oneDay)
+
+        // Domain symbol comes from the service (pinned to IHSG), not the payload body.
+        #expect(flow.symbol == "IHSG")
+        // Negative net foreign = market-wide risk-off tell (the regime signal).
+        #expect(flow.netForeign.raw == -360701021000)
+        #expect(flow.netForeign.raw < 0)
+        #expect(flow.value.label == "Value (IDR)")
+    }
+}

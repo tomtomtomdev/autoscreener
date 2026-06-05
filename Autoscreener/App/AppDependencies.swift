@@ -27,6 +27,7 @@ final class AppDependencies {
     let financialStatementService: any FinancialStatementServicing
     let brokerSummaryService: any BrokerSummaryServicing
     let foreignFlowService: any ForeignFlowServicing
+    let aggregateForeignFlowService: any AggregateForeignFlowServicing
     let chartService: any ChartServicing
     let commodityPriceService: any CommodityPriceServicing
     let authState = AuthState()
@@ -51,6 +52,9 @@ final class AppDependencies {
         self.financialStatementService = useFixtures ? StubFinancialStatementService() : FinancialStatementService(apiClient: client)
         self.brokerSummaryService = useFixtures ? StubBrokerSummaryService() : BrokerSummaryService(apiClient: client)
         self.foreignFlowService = useFixtures ? StubForeignFlowService() : ForeignFlowService(apiClient: client)
+        // Aggregate (market-wide) flow is the same endpoint family pinned to IHSG,
+        // so it wraps whichever per-stock service we resolved (real or stub).
+        self.aggregateForeignFlowService = AggregateForeignFlowService(flowService: self.foreignFlowService)
         self.chartService = useFixtures ? StubChartService() : ChartService(apiClient: client)
         self.commodityPriceService = useFixtures ? StubCommodityPriceService() : CommodityPriceService(apiClient: client)
 
