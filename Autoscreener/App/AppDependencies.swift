@@ -31,6 +31,8 @@ final class AppDependencies {
     let aggregateForeignFlowService: any AggregateForeignFlowServicing
     let chartService: any ChartServicing
     let commodityPriceService: any CommodityPriceServicing
+    let regimeSnapshotService: any RegimeSnapshotProviding
+    let breadthService: any BreadthServicing
     let authState = AuthState()
 
     static let shared = AppDependencies()
@@ -59,6 +61,12 @@ final class AppDependencies {
         self.aggregateForeignFlowService = AggregateForeignFlowService(flowService: self.foreignFlowService)
         self.chartService = useFixtures ? StubChartService() : ChartService(apiClient: client)
         self.commodityPriceService = useFixtures ? StubCommodityPriceService() : CommodityPriceService(apiClient: client)
+        // regime.json is public, static, unauthenticated data — fetched off the same
+        // logging session, NOT the authenticated Stockbit client.
+        self.regimeSnapshotService = useFixtures ? StubRegimeSnapshotService() : RegimeSnapshotService(session: session)
+        // Breadth fans out per-constituent chart calls, so it wraps whichever chart
+        // service we resolved (real or the deterministic stub under UI fixtures).
+        self.breadthService = useFixtures ? StubBreadthService() : BreadthService(chartService: self.chartService)
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).

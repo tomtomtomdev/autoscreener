@@ -82,6 +82,17 @@ nonisolated struct StubCommodityPriceService: CommodityPriceServicing {
     }
 }
 
+nonisolated struct StubRegimeSnapshotService: RegimeSnapshotProviding {
+    func snapshot() async throws -> RegimeSnapshot { UITestFixtures.regimeSnapshot }
+}
+
+nonisolated struct StubBreadthService: BreadthServicing {
+    func reading(symbols: [String], period: Int) async -> BreadthReading {
+        // 28 of 45 LQ45 above their 200-day average → 62% → broad (risk-on).
+        BreadthReading(above: 28, measured: 45)
+    }
+}
+
 enum UITestFixtures {
     static let screenerRows: [ScreenerRow] = [
         ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),
@@ -180,6 +191,17 @@ enum UITestFixtures {
             formattedPrice: "100",
             asOf: "Thu 14:22")
     }
+
+    /// Deterministic regime snapshot for the Market Regime screen under UI tests:
+    /// composite valuation mid-range (P/E·P/B ≈ 49th pctile → neutral) with the BI
+    /// rate easing (a cut → risk-on).
+    static let regimeSnapshot = RegimeSnapshot(
+        asOf: "2026-01-31",
+        biRate: RegimeSnapshot.BIRate(value: 4.75, direction: .cut, asOf: "2026-01-15"),
+        indices: [
+            "COMPOSITE": RegimeSnapshot.IndexValuation(pe: 13.2, pb: 2.1, pePctile: 0.42, pbPctile: 0.55),
+            "LQ45": RegimeSnapshot.IndexValuation(pe: 12.1, pb: 1.9, pePctile: 0.38, pbPctile: 0.49),
+        ])
 
     static func foreignFlow(symbol: String) -> ForeignFlow {
         func m(_ raw: Double, _ f: String) -> FlowMetric { FlowMetric(raw: raw, formatted: f) }
