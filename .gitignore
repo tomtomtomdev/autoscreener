@@ -29,3 +29,6 @@ proxseer_collection*.json
 *.env
 .env*
 secrets.*
+
+# Phase 0 governance wire-shape captures — raw API responses, fetched with a live token
+tools/governance-captures/

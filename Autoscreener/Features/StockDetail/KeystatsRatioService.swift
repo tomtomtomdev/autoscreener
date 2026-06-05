@@ -153,17 +153,7 @@ nonisolated final class KeystatsRatioService: KeystatsRatioServicing {
     /// `"1,688.51"` → 1688.51, `"-22.24"` → −22.24, `"(5,349)"` → −5349,
     /// `"31.87%"` → 31.87, and `"-"` / `""` → nil (field not applicable).
     static func parseDisplayDecimal(_ raw: String) -> Double? {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-        guard !s.isEmpty, s != "-" else { return nil }
-        var negative = false
-        if s.hasPrefix("("), s.hasSuffix(")") {
-            negative = true
-            s = String(s.dropFirst().dropLast())
-        }
-        s = s.replacingOccurrences(of: ",", with: "")
-        if s.hasSuffix("%") { s = String(s.dropLast()) }
-        guard let value = Double(s) else { return nil }
-        return negative ? -value : value
+        DisplayNumber.parseDecimal(raw)
     }
 
     /// Stable keystats item ids (`fitem.id`) for the fields we model.
