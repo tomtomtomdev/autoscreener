@@ -372,4 +372,52 @@ enum SelectionFundamentals {
         let signal = (net as NSDecimalNumber).doubleValue / (gross as NSDecimalNumber).doubleValue
         return max(-1, min(1, signal))
     }
+
+    // MARK: - Market regime → engine MarketContext (Phase 1.7, §3)
+    //
+    // `MarketContext` is the engine's market-wide regime input (consumed by `RegimeAssessor.assess`,
+    // which accumulates a risk score from these seven facts). The app ALREADY gathers every one of
+    // them for the Market Regime screen, so `RegimeFactorBuilder.factors(…)` and this adapter are two
+    // consumers of the IDENTICAL raw inputs (server snapshot + aggregate foreign flow + IHSG 200-day
+    // distance + USD/IDR move + LQ45 breadth, + the relevant commodity move). Phase 1.8 therefore
+    // reuses `RegimeViewModel`'s proven fan-out wiring verbatim and hands the results here. Kept pure
+    // (no networking) so the field mapping + degradation policy are unit-tested in isolation, exactly
+    // like the fundamentals adapters above.
+    //
+    // Degradation policy — an input is absent when its feed failed or the snapshot isn't published yet.
+    // `RegimeFactorBuilder` simply DROPS an absent factor, but `MarketContext` has no optionals, so this
+    // adapter must default each field. It defaults to the **neutral / no-evidence** value, never
+    // fabricating a confident read:
+    //   • valuation / breadth → 0.5 (mid-cycle). Defaulting the dominant valuation driver to 0 ("cheapest")
+    //     on a missing snapshot would manufacture a false risk-on — the exact bias to avoid.
+    //   • idrWeakening / biRateRising → false (no evidence of FX or rate stress; don't claim a hike with no snapshot).
+    //   • indexAbove200dma / commodityTailwind → false (an unconfirmed uptrend / unseen tailwind is not
+    //     scored as one — conservatively each then ADDS, not removes, regime risk in `assess`).
+    //   • marketForeignFlowNet → 0 (`assess` only penalises a NEGATIVE net, so 0 = no flow signal).
+    // When LITERALLY every input is absent the engine would still score a phantom (neutral-to-risk-off)
+    // regime, so 1.8 should `throw` rather than call this with an all-nil set — mirroring `RegimeViewModel`,
+    // which surfaces an error rather than reading an empty factor list.
+
+    /// Builds the engine's `MarketContext` from the same raw regime inputs `RegimeFactorBuilder`
+    /// consumes. `marketForeignFlowNet` is `AggregateForeignFlow.netForeign.raw`; `ihsgDistanceFrom200dma`
+    /// is `MovingAverage.distanceFromSMA(ihsg, period: 200)` (≥ 0 ⇒ above trend); `usdIdrChangePercent`
+    /// is the USD/IDR daily move (> 0 ⇒ rupiah weakening); `commodityChangePercent` is the relevant
+    /// market commodity's move (> 0 ⇒ tailwind). Absent inputs follow the neutral degradation policy above.
+    static func marketContext(
+        snapshot: RegimeSnapshot?,
+        marketForeignFlowNet: Double?,
+        ihsgDistanceFrom200dma: Double?,
+        usdIdrChangePercent: Double?,
+        breadth: BreadthReading?,
+        commodityChangePercent: Double?
+    ) -> MarketContext {
+        MarketContext(
+            indexValuationPercentile: snapshot?.composite?.valuationPercentile ?? 0.5,
+            breadthAbove200dma: breadth?.fraction ?? 0.5,
+            indexAbove200dma: ihsgDistanceFrom200dma.map { $0 >= 0 } ?? false,
+            idrWeakeningTrend: usdIdrChangePercent.map { $0 > 0 } ?? false,
+            biRateRising: snapshot?.biRate?.direction == .hike,
+            marketForeignFlowNet: Decimal(marketForeignFlowNet ?? 0),
+            commodityTailwind: commodityChangePercent.map { $0 > 0 } ?? false)
+    }
 }

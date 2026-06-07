@@ -107,14 +107,30 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   only meaningful unit; `brokerCodes` is exposed so 1.8 can later track a curated "smart-money" group
   (signal math unchanged). Tests: `AutoscreenerTests/BrokerActivityServiceTests.swift`. **Full
   `AutoscreenerTests` bundle: TEST EXECUTE SUCCEEDED.**
+- **Phase 1.7 ✅ (2026-06-07)** — **regime → engine `MarketContext`**. Pure adapter
+  `SelectionFundamentals.marketContext(snapshot:marketForeignFlowNet:ihsgDistanceFrom200dma:
+  usdIdrChangePercent:breadth:commodityChangePercent:)` in `SelectionAdapters.swift`. The app already
+  gathers all seven raw inputs for the Regime screen — this adapter and `RegimeFactorBuilder.factors`
+  are two consumers of the **identical** input set, so 1.8 reuses `RegimeViewModel`'s fan-out verbatim
+  (snapshot composite valuation pctile, `AggregateForeignFlow.netForeign.raw`, IHSG
+  `MovingAverage.distanceFromSMA(_,200)`, USD/IDR change, LQ45 `BreadthReading.fraction`, relevant
+  commodity move). **Sign conventions pinned:** distance ≥ 0 ⇒ above trend; USD/IDR > 0 ⇒ rupiah
+  weakening; `biRate.direction == .hike` ⇒ rising; net < 0 ⇒ outflow; commodity > 0 ⇒ tailwind.
+  **Degradation policy (decided & tested):** `MarketContext` has no optionals but `RegimeFactorBuilder`
+  drops absent factors, so each field defaults to the **neutral / no-evidence** value — valuation &
+  breadth → 0.5 (mid-cycle; defaulting the dominant valuation driver to "cheapest" would manufacture a
+  false risk-on), stress/trend/tailwind booleans → false, net → 0. **1.8 must `throw` on an all-nil
+  input set** (mirrors `RegimeViewModel` refusing to read an empty factor list) rather than score a
+  phantom regime. Tests: `AutoscreenerTests/MarketContextAdapterTests.swift` (8 cases). **Full
+  `AutoscreenerTests` bundle: TEST SUCCEEDED.**
 
-**Next action:** continue **§8 Phase 1** from **1.7** (`marketContext()` from `RegimeFactorBuilder`
-inputs, §3 — near-free re-pack of the seven regime inputs the app already computes). Then **1.8**
-(assemble `StockbitDataProvider: DataProvider` — fetch + throttle/cache/paywall; compose the now-complete
-adapter set: keystats→TTM, fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`,
-`ohlcvSeries` for the stock **and** the `sectorIndexSymbol(for:)` bars, `foreignNetFlowSeries`,
-`brokerAccumulationSignal`, `freeFloat`/`sector` from `EmittenService`). **Every Phase-1 unit
-data-source + adapter is now built; 1.7 + 1.8 are pure assembly/wiring.**
+**Next action:** continue **§8 Phase 1** at **1.8** — assemble `StockbitDataProvider: DataProvider`
+(fetch + throttle/cache/paywall pre-check; compose the now-complete adapter set: keystats→TTM,
+fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`, `ohlcvSeries` for the
+stock **and** the `sectorIndexSymbol(for:)` bars, `foreignNetFlowSeries`, `brokerAccumulationSignal`,
+`freeFloat`/`sector` from `EmittenService`, and `marketContext(…)` via `RegimeViewModel`'s fan-out —
+**throwing when no regime input resolves**). **Every Phase-1 unit data-source + adapter is now built;
+1.8 is pure assembly/wiring and completes Phase 1.**
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -345,7 +361,11 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     daily NET) + `SelectionFundamentals.brokerAccumulationSignal` = value-weighted Σnet/Σ(buy+sell)
     over a window, clamped [-1,1]. No "degrade". CAVEAT: unfiltered = default-broker net (per-broker is
     the only meaningful unit; all-broker net is identically 0); `brokerCodes` exposed for later.
-1.7 **`marketContext()`** from `RegimeFactorBuilder` inputs (§3) — near-free.
+1.7 ✅ **`marketContext()`** from `RegimeFactorBuilder` inputs (§3): pure adapter
+    `SelectionFundamentals.marketContext(…)` re-packs the same seven raw regime inputs the app already
+    gathers into the engine's `MarketContext`. Sign conventions + a neutral/no-evidence degradation
+    policy (absent → valuation/breadth 0.5, booleans false, net 0; 1.8 throws on an all-nil set) are
+    pinned by `MarketContextAdapterTests`.
 1.8 **Assemble `StockbitDataProvider: DataProvider`** + shared throttle / per-symbol cache / paywall
     pre-check (§7, §13-B6) — now ~8 calls/ticker.
 
