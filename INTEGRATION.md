@@ -27,11 +27,24 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   pipeline incl. exact composite/MoS/weight + the 13-line audit trail) and
   `AutoscreenerTests/DisplayNumberTests.swift`. **All green.** This is the baseline Phase 2's
   "industrial path byte-for-byte unchanged" refactor is verified against.
+- **Phase 0.2 ✅ (2026-06-07)** — `OHLCV` adapter + the service it needs, built against the
+  **verified** wire shape (from the WIFI capture; envelope `{message, data:{paginate:{next_page},
+  result:[…]}}`, rows are JSON numbers newest-first with true `value` + `net_foreign`):
+  - `Autoscreener/Features/Charts/CompanyPriceFeedService.swift` — `GET company-price-feed/historical/
+    summary/{SYM}` (period/start/end/limit/page). Decodes numbers **straight to `Decimal`** (exact;
+    no `Double` round-trip), maps APIError→`CompanyPriceFeedError` like `ChartService`, and
+    `dailyBars(symbol:from:to:)` walks `next_page` and returns bars **ascending**.
+  - `Autoscreener/Features/Selection/SelectionAdapters.swift` — `HistoricalSummaryBar.ohlcv` +
+    `Sequence.ohlcvSeries` (sorts ascending; engine expects oldest→newest) and `.foreignNetFlowSeries`
+    (free for §1.6). Tests: `AutoscreenerTests/CompanyPriceFeedServiceTests.swift`, all green.
 
-**Next action:** Phase 0.2 — the `OHLCV` adapter. NOTE it depends on a new
-`/company-price-feed/historical/summary/{SYM}` service that does not exist yet, so in practice it is
-Phase-1 networking work (build the service + model, then the `summary row → OHLCV` adapter). After
-that, Phase 1 (`StockbitDataProvider`).
+**Next action:** Phase 1 — `StockbitDataProvider`. Start at **1.1 keystats → `TTMFinancials`** (field
+ids in §8 / §11) and **1.2 fundachart → `AnnualFinancials`**, then assemble the provider (1.8). The
+`OHLCV`/foreign-flow inputs (0.2) and `marketContext()` source (§3) are ready.
+
+**Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
+(`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
+`~/Downloads`. Use these for verifying Phase 1 wire shapes (keystats/fundachart are in `-2.json`/`-3.json`).
 
 **Input file locations:**
 - Engine spec (reference-only / **not** in any target — the pristine locked copy):
