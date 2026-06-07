@@ -50,6 +50,26 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   `2545` / Total Assets `1559` are scaled (`parseScaledDecimal`). The 6 industrial-essential fields
   throw `AdapterError.missingField` when `"-"` (banks → Phase 2 archetype, not coerced to 0); the 3
   absolute fields (unread by today's gates/scorers, only seed §1.4 shares) degrade to 0.
+- **Phase 1.3 ✅ (2026-06-07)** — **industrial balance-sheet extractor**. No new endpoint — reuses
+  `FinancialStatementService.load(report:.balanceSheet, basis:.annual)` (the display-string tree).
+  Added to `SelectionFundamentals`: `BalanceSheetItems`, `balanceSheetItems(from:) -> [Int:…]`
+  (DFS for the *valued* bold subtotal — skips the same-named empty section header that wraps each
+  one; verified on WIFI: `Aset Lancar` 8,688 B, `Liabilitas Jangka Pendek` 3,981 B, `Piutang Usaha`
+  223 B; parsed with `parseScaledDecimal`, keyed by the year in "12M 2025"), and
+  `merging(_:balanceSheet:) -> [AnnualFinancials]` overlaying the 3 fields by year (everything else
+  preserved; years with no column / banks lacking the subtotals → 0, which the engine's NCAV /
+  forensic consumers guard). Tests: `AutoscreenerTests/BalanceSheetExtractorTests.swift`, all green.
+- **Phase 1.4 ✅ (2026-06-07)** — **company fields**. New `Autoscreener/Features/StockDetail/
+  EmittenService.swift` (`EmittenServicing`): `info(symbol:)` → `EmittenInfo{symbol,name,sector,
+  subSector,indexes}` from `GET /emitten/{SYM}/info`; `profile(symbol:)` → `EmittenProfile{
+  freeFloatDisplay,sharesDisplay}` from `GET /emitten/{SYM}/profile.history`. Same error-mapping
+  shape as the other exodus services; DTO fields decoded tolerantly. Pure adapters in
+  `SelectionFundamentals`: `freeFloat(fromProfile:)` ("40.00%"→0.40 ratio), `sharesOutstanding(
+  fromKeystats:)` (NetIncome `1555` ÷ EPS `13200`; loss-maker fallback Common Equity `15883` ÷ BVPS
+  `15718`; nil when neither basis), `assigning(sharesOutstanding:toLatestOf:)` (stamps the most-recent
+  annual only — NCAV reads `.last`). Note: profile `history.shares` (156 M) lags WIFI's 2025 rights
+  issue, so the keystats derivation (~5.3 B) is primary, not the profile count. Tests:
+  `AutoscreenerTests/EmittenServiceTests.swift`. **Full `AutoscreenerTests` bundle: TEST SUCCEEDED.**
 - **Phase 1.2 ✅ (2026-06-07)** — **fundachart → `[AnnualFinancials]`**. New
   `Autoscreener/Features/Charts/FundachartService.swift` reads `GET fundachart/v2/{SYM}/financials`
   (query is **`data_type`=1/2/3 + `report`** — `report=2` annual / `report=1` quarterly; note this is
@@ -62,14 +82,15 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   `AutoscreenerTests/FundachartServiceTests.swift` (real WIFI bodies), all green. Full
   `AutoscreenerTests` bundle: **TEST SUCCEEDED**.
 
-**Next action:** continue **§8 Phase 1** from **1.3** (industrial balance-sheet extractor:
-`Piutang Usaha`/`Aset Lancar`/`Liabilitas Jangka Pendek` from `/findata-view/v2/financials` via
-`parseScaledDecimal` — or skip if `useNCAV=false` + receivables rule off) and **1.4** (company fields:
-`sector`/`free_float` from `/emitten/{SYM}/info`+`/profile`; `sharesOutstanding` = NetIncome `1555` ÷
-EPS `13200` with the loss-maker fallback). Then 1.5 (sector→IDX-index map), 1.6 (flow/broker —
-foreign series already free from 0.2), 1.7 (`marketContext()`, §3), 1.8 (assemble
-`StockbitDataProvider` + throttle/cache/paywall). The `TTMFinancials`/`AnnualFinancials`/`OHLCV`/
-foreign-flow adapters are now all in `SelectionAdapters.swift`, ready for 1.8 to wire.
+**Next action:** continue **§8 Phase 1** from **1.5** (sector→IDX-index static map for
+`sectorIndexBars` — author the ~11-row Indonesian-name → index-symbol table; WIFI's `info.indexes`
+already lists `IDXTECHNO`, and `info.sector`="Teknologi" is now available from `EmittenService`).
+Then **1.6** (broker accumulation signal from `/order-trade/broker/activity/historical`; the foreign
+series is already free from 0.2), **1.7** (`marketContext()` from `RegimeFactorBuilder`, §3), **1.8**
+(assemble `StockbitDataProvider: DataProvider` — fetch + throttle/cache/paywall; compose the adapters:
+keystats→TTM, fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`,
+ohlcvSeries, foreignNetFlowSeries, `freeFloat`/`sector` from `EmittenService`). **All Phase-1 adapters
+now live in `SelectionAdapters.swift`; the only un-built unit data-source is the broker signal (1.6).**
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -280,14 +301,17 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     TotalLiabilities / OperatingCF as raw numerics from `GET /fundachart/v2/{SYM}/financials`
     (`data_type` 1/2/3, `report=2` annual); shareholderEquity = assets − liabilities. Joined by year,
     ascending. (`FundachartService` + `SelectionFundamentals.annualFinancials`.)
-1.3 **Industrial balance-sheet extractor** (§5, reduced): pull the 3 tree-only items
-    `Piutang Usaha` (receivables), `Aset Lancar`, `Liabilitas Jangka Pendek` from
-    `/findata-view/v2/financials` via `DisplayNumber`. (Skippable if `useNCAV=false` + receivables
-    rule off.)
-1.4 **Company fields:** `sector`/`sub_sector` from `/emitten/{SYM}/info`; `freeFloatPct` from
-    `/emitten/{SYM}/profile.history.free_float`; `sharesOutstanding` = NetIncome `1555` ÷ EPS `13200`
-    with a fallback (Equity `15883` ÷ BVPS `15718`, or profile share-count ÷ %) for loss-makers
-    (§13-A3).
+1.3 ✅ **Industrial balance-sheet extractor** (§5, reduced): pulls the 3 tree-only items
+    `Piutang Usaha` (receivables), `Aset Lancar`, `Liabilitas Jangka Pendek` from the existing
+    `FinancialStatementService` (`report:.balanceSheet, basis:.annual`) via `parseScaledDecimal`.
+    Reads the *valued* bold subtotal, not the same-named empty section header; keys by fiscal year
+    ("12M 2025"→2025). `SelectionFundamentals.balanceSheetItems(from:)` + `merging(_:balanceSheet:)`
+    overlays onto the §1.2 annuals; absent items → 0 (banks safe, consumers guard `>0`).
+1.4 ✅ **Company fields:** new `EmittenService` (`/emitten/{SYM}/info` → sector/subSector/indexes;
+    `/emitten/{SYM}/profile` → free_float/shares). Adapters: `freeFloat(fromProfile:)`
+    ("40.00%"→0.40); `sharesOutstanding(fromKeystats:)` = NetIncome `1555` ÷ EPS `13200`, loss-maker
+    fallback Common Equity `15883` ÷ BVPS `15718` (§13-A3); `assigning(sharesOutstanding:toLatestOf:)`
+    stamps the latest annual (NCAV reads `financials.last`).
 1.5 **Sector → IDX-index static map** (§13-B4) for `sectorIndexBars`; enumerate the exact Indonesian
     sector names from `/emitten/company/catalog`.
 1.6 **Flow & broker (now real series, §11):** `foreignNetFlow` per-day from historical-summary
