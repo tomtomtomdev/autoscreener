@@ -118,16 +118,25 @@ nonisolated final class KeystatsRatioService: KeystatsRatioServicing {
         )
     }
 
-    /// Decodes the grouped keystats payload, flattens every item into an
-    /// `id → value` map, and pulls the fields we model by their stable numeric id
-    /// (`Field`). Ids are language-independent; the human `name` is not. Mapped to
-    /// `ValuationRatios` via `parseDisplayDecimal` (values arrive as strings).
-    static func parse(_ data: Data, symbol: String) throws -> ValuationRatios {
+    /// Flattens the grouped keystats payload into a single `fitem.id → display value`
+    /// map. Ids are language-independent (the human `name` is not), so callers pull
+    /// exactly the fields they model by stable id. Shared by `parse` (the
+    /// `ValuationRatios` view) and the selection engine's `TTMFinancials` adapter, which
+    /// read different — overlapping — slices of the same payload.
+    static func fieldMap(_ data: Data) throws -> [String: String] {
         let dto = try JSONDecoder().decode(KeystatsResponseDTO.self, from: data)
         var byID: [String: String] = [:]
         for group in dto.data.groups {
             for item in group.items { byID[item.fitem.id] = item.fitem.value }
         }
+        return byID
+    }
+
+    /// Decodes the grouped keystats payload and pulls the valuation / per-share /
+    /// solvency fields we model by their stable numeric id (`Field`), via
+    /// `parseDisplayDecimal` (values arrive as strings).
+    static func parse(_ data: Data, symbol: String) throws -> ValuationRatios {
+        let byID = try fieldMap(data)
         func num(_ id: String) -> Double? { byID[id].flatMap(parseDisplayDecimal) }
 
         return ValuationRatios(

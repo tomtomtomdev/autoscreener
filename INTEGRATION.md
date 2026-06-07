@@ -19,8 +19,10 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   no errors/collisions. `Reference/selection-engine/*` kept pristine as the locked spec.
 - **Phase 0.3 ✅** — confirmed `DisplayNumber.parseDecimal` covers `%`, `( )` negatives, thousands
   separators, `"-"`/blank→nil. **Gap found & pinned:** it does NOT handle magnitude suffixes
-  (`B`/`T`); §1.3's balance-sheet extractor ("223 B") must extend it. fundachart (§1.2) returns raw
-  numerics so the Phase 0/1 *core* is unaffected.
+  (`B`/`T`). **Closed in Phase 1.1** (below): added sibling `DisplayNumber.parseScaledDecimal`
+  (`K`/`M`/`B`/`T` → ×10³/⁶/⁹/¹²) rather than mutate `parseDecimal`, so the ratio/percent callers
+  (keystats-ratios, governance) stay byte-for-byte unchanged. Turns out keystats *also* needs it
+  (the TTM absolute fields print as `"490 B"`), so it wasn't §1.3-only.
 - **Safety net ✅** — characterization/golden-master tests (Swift Testing) added:
   `AutoscreenerTests/SelectionEngineCharacterizationTests.swift` (in-memory Stub `DataProvider` +
   `SecurityData` Object Mother; pins regime branches, every hard gate's failure reason, and the full
@@ -37,10 +39,37 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   - `Autoscreener/Features/Selection/SelectionAdapters.swift` — `HistoricalSummaryBar.ohlcv` +
     `Sequence.ohlcvSeries` (sorts ascending; engine expects oldest→newest) and `.foreignNetFlowSeries`
     (free for §1.6). Tests: `AutoscreenerTests/CompanyPriceFeedServiceTests.swift`, all green.
+- **Phase 1.1 ✅ (2026-06-07)** — **keystats → `TTMFinancials`**. `DisplayNumber.parseScaledDecimal`
+  added (see 0.3). `KeystatsRatioService` gained a reusable `static fieldMap(_:) -> [String:String]`
+  (DRY refactor; `parse`→`ValuationRatios` now sits on top of it — characterization-safe, existing
+  `KeystatsRatioParseTests` still green). Pure adapter `SelectionFundamentals.ttm(fromKeystats:)` in
+  `Autoscreener/Features/Selection/SelectionAdapters.swift` builds the engine `TTMFinancials`.
+  **Two unit pitfalls pinned by tests** (`AutoscreenerTests/SelectionFundamentalsAdapterTests.swift`):
+  (a) ROE `1461` is a **percent** → ÷100 to a ratio (engine `roeFloor=0.10`); (b) epsGrowth `1471`
+  is a **percent-number** kept verbatim (engine PEG does `pe/g`, g≈15). Net Income `1555` / CFO
+  `2545` / Total Assets `1559` are scaled (`parseScaledDecimal`). The 6 industrial-essential fields
+  throw `AdapterError.missingField` when `"-"` (banks → Phase 2 archetype, not coerced to 0); the 3
+  absolute fields (unread by today's gates/scorers, only seed §1.4 shares) degrade to 0.
+- **Phase 1.2 ✅ (2026-06-07)** — **fundachart → `[AnnualFinancials]`**. New
+  `Autoscreener/Features/Charts/FundachartService.swift` reads `GET fundachart/v2/{SYM}/financials`
+  (query is **`data_type`=1/2/3 + `report`** — `report=2` annual / `report=1` quarterly; note this is
+  *not* the findata-view `report_type`/`statement_type`). Neutral `FundachartFinancials` (x_axis +
+  per-legend `y_axis` decoded straight to `Decimal`, no display parsing). Pure adapter
+  `SelectionFundamentals.annualFinancials(income:balance:cashFlow:)` joins data_type 1 (Revenue, Net
+  Income), 2 (Total Assets, Total Liabilities), 3 (Operating) **by fiscal year**, sorts ascending,
+  sets `shareholderEquity = assets − liabilities`. `currentAssets`/`currentLiabilities`/`receivables`
+  (§1.3) and per-year `sharesOutstanding` (§1.4) left **0** (engine guards each consumer). Tests:
+  `AutoscreenerTests/FundachartServiceTests.swift` (real WIFI bodies), all green. Full
+  `AutoscreenerTests` bundle: **TEST SUCCEEDED**.
 
-**Next action:** Phase 1 — `StockbitDataProvider`. Start at **1.1 keystats → `TTMFinancials`** (field
-ids in §8 / §11) and **1.2 fundachart → `AnnualFinancials`**, then assemble the provider (1.8). The
-`OHLCV`/foreign-flow inputs (0.2) and `marketContext()` source (§3) are ready.
+**Next action:** continue **§8 Phase 1** from **1.3** (industrial balance-sheet extractor:
+`Piutang Usaha`/`Aset Lancar`/`Liabilitas Jangka Pendek` from `/findata-view/v2/financials` via
+`parseScaledDecimal` — or skip if `useNCAV=false` + receivables rule off) and **1.4** (company fields:
+`sector`/`free_float` from `/emitten/{SYM}/info`+`/profile`; `sharesOutstanding` = NetIncome `1555` ÷
+EPS `13200` with the loss-maker fallback). Then 1.5 (sector→IDX-index map), 1.6 (flow/broker —
+foreign series already free from 0.2), 1.7 (`marketContext()`, §3), 1.8 (assemble
+`StockbitDataProvider` + throttle/cache/paywall). The `TTMFinancials`/`AnnualFinancials`/`OHLCV`/
+foreign-flow adapters are now all in `SelectionAdapters.swift`, ready for 1.8 to wire.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -243,12 +272,14 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
 
 ### Phase 1 — `StockbitDataProvider` (industrial path) (§4, §11)
 
-1.1 **keystats → `TTMFinancials`** (all fields present): eps `13200`, bvps `15718`, currentRatio
-    `1498`, D/E `1508`, ROE `1461`, netIncome `1555`, CFO `2545`, totalAssets `1559`, epsGrowthPct
-    `1471`. Null-safe (§13-A3): every field may be `"-"`.
-1.2 **fundachart → multi-year `AnnualFinancials` core:** Revenue / NetIncome / TotalAssets /
+1.1 ✅ **keystats → `TTMFinancials`** (all fields present): eps `13200`, bvps `15718`, currentRatio
+    `1498`, D/E `1508`, ROE `1461` (÷100 → ratio), netIncome `1555`, CFO `2545`, totalAssets `1559`
+    (all three scaled via `parseScaledDecimal`), epsGrowthPct `1471` (percent-number, verbatim).
+    Null-safe (§13-A3): essential fields throw `missingField` on `"-"`; absolute fields degrade to 0.
+1.2 ✅ **fundachart → multi-year `AnnualFinancials` core:** Revenue / NetIncome / TotalAssets /
     TotalLiabilities / OperatingCF as raw numerics from `GET /fundachart/v2/{SYM}/financials`
-    (`data_type` 1/2/3); shareholderEquity = assets − liabilities.
+    (`data_type` 1/2/3, `report=2` annual); shareholderEquity = assets − liabilities. Joined by year,
+    ascending. (`FundachartService` + `SelectionFundamentals.annualFinancials`.)
 1.3 **Industrial balance-sheet extractor** (§5, reduced): pull the 3 tree-only items
     `Piutang Usaha` (receivables), `Aset Lancar`, `Liabilitas Jangka Pendek` from
     `/findata-view/v2/financials` via `DisplayNumber`. (Skippable if `useNCAV=false` + receivables
