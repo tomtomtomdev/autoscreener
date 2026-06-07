@@ -445,8 +445,27 @@ struct EarningsQualityScorer: Scorer {
 
 // MARK: - 7. Valuation & margin of safety
 
-enum Valuator {
-    static func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double {
+/// Computes per-share intrinsic value and the margin of safety against price. Behind a protocol
+/// (DIP) so each `CompanyArchetype` can supply its own intrinsic-value model — the industrial
+/// `GrahamValuator` below today, a P/B-vs-ROE bank valuator in Phase 3 — while the engine's MoS
+/// gate, composite, and sizing stay archetype-agnostic.
+protocol Valuator: Sendable {
+    func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double
+    func marginOfSafety(_ s: SecurityData, config: SelectionConfig) -> Ratio
+}
+extension Valuator {
+    /// MoS is the same ratio for every archetype once intrinsic value is known, so it has a single
+    /// shared definition; only `intrinsicValue` varies by profile.
+    func marginOfSafety(_ s: SecurityData, config: SelectionConfig) -> Ratio {
+        let iv = intrinsicValue(s, config: config); guard iv > 0 else { return -1 }
+        return (iv - nsDouble(s.price)) / iv
+    }
+}
+
+/// Industrial intrinsic value: min(Graham number, NCAV/share), gated by config. This is the
+/// pre-Phase-2 `Valuator` logic verbatim — only its home changed (free enum → protocol witness).
+struct GrahamValuator: Valuator {
+    func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double {
         var candidates: [Double] = []
         let eps = nsDouble(s.ttm.eps), bvps = nsDouble(s.ttm.bookValuePerShare)
         if config.valuation.useGrahamNumber, eps > 0, bvps > 0 {
@@ -457,10 +476,6 @@ enum Valuator {
             if ncav > 0 { candidates.append(ncav) }
         }
         return candidates.min() ?? 0
-    }
-    static func marginOfSafety(_ s: SecurityData, config: SelectionConfig) -> Ratio {
-        let iv = intrinsicValue(s, config: config); guard iv > 0 else { return -1 }
-        return (iv - nsDouble(s.price)) / iv
     }
 }
 
@@ -492,6 +507,45 @@ enum Modifiers {
     }
 }
 
+// MARK: - 8b. Company archetype & selection profile (Phase 2 seam, §14)
+
+/// How a company is screened. The pipeline core (regime → MoS gate → composite → rank → sizing) is
+/// archetype-agnostic; only the *producers* of scores differ — which gates run, which scorers score,
+/// and which intrinsic-value model applies. Open for `insurer` / `reit` later (YAGNI).
+enum CompanyArchetype: String, Sendable, Codable {
+    case industrial, financial
+
+    /// Classify by IDX-IC sector (`SecurityData.sector`, from `/emitten/{SYM}/info.sector`). IDX-IC's
+    /// financial sector is "Keuangan" (capture-verified on BBCA, §14); everything else is industrial.
+    /// Case- and whitespace-insensitive.
+    static func classify(sector: String) -> CompanyArchetype {
+        sector.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) == "keuangan"
+            ? .financial : .industrial
+    }
+}
+
+/// The strategy the engine runs for one security: its gates, scorers, and valuator. Selected per
+/// name via `StockSelectionEngine.profileSelector` (DIP). Phase 2 ships only `.industrial`; Phase 3
+/// adds a financial profile (bank gates/scorers + P/B-vs-ROE valuator) without touching the core.
+struct SelectionProfile: Sendable {
+    let archetype: CompanyArchetype
+    let gates: [Gate]
+    let scorers: [Scorer]
+    let valuator: any Valuator
+}
+
+extension SelectionProfile {
+    /// Today's industrial path: the existing gate/scorer order and the Graham valuator. The gate and
+    /// scorer ordering is preserved exactly so the audit trail and composite stay byte-for-byte equal.
+    static func industrial(_ config: SelectionConfig) -> SelectionProfile {
+        SelectionProfile(
+            archetype: .industrial,
+            gates: [DataIntegrityGate(), LiquidityGate(), ForensicGate(), SolvencyGate()],
+            scorers: [GrahamValueScorer(), QualityScorer(), GrowthLynchScorer(), EarningsQualityScorer()],
+            valuator: GrahamValuator())
+    }
+}
+
 // MARK: - 9. Output
 
 struct Recommendation: Sendable {
@@ -515,24 +569,47 @@ protocol DataProvider: Sendable {
 struct StockSelectionEngine: Sendable {
     let provider: DataProvider
     let config: SelectionConfig                 // <- the calibration surface
-    let gates: [Gate] = [DataIntegrityGate(), LiquidityGate(), ForensicGate(), SolvencyGate()]
-    let scorers: [Scorer] = [GrahamValueScorer(), QualityScorer(), GrowthLynchScorer(), EarningsQualityScorer()]
+    let profileSelector: @Sendable (SecurityData) -> SelectionProfile   // <- archetype seam (DIP)
 
-    init(provider: DataProvider, config: SelectionConfig = .balanced) {
-        self.provider = provider; self.config = config
+    init(provider: DataProvider,
+         config: SelectionConfig = .balanced,
+         profileSelector: (@Sendable (SecurityData) -> SelectionProfile)? = nil) {
+        self.provider = provider
+        self.config = config
+        self.profileSelector = profileSelector ?? { Self.defaultProfile(for: $0, config: config) }
+    }
+
+    /// Default DIP wiring: classify the security, then pick its profile. Phase 2 ships only the
+    /// industrial profile, so both archetypes resolve to it (banks are still screened by the
+    /// industrial rules exactly as before); Phase 3 swaps `.financial` in here.
+    static func defaultProfile(for s: SecurityData, config: SelectionConfig) -> SelectionProfile {
+        switch CompanyArchetype.classify(sector: s.sector) {
+        case .industrial, .financial: return .industrial(config)
+        }
+    }
+
+    /// One scored survivor of the gate + MoS pass, carrying the valuator chosen for it so `allocate`
+    /// reports the right intrinsic value per archetype.
+    private struct Scored {
+        let data: SecurityData
+        let composite: Double
+        let marginOfSafety: Ratio
+        let audit: [String]
+        let valuator: any Valuator
     }
 
     func run() async throws -> [Recommendation] {
         let policy = RegimeAssessor.assess(try await provider.marketContext(), config: config)
         if policy.maxTotalExposure <= 0 { return [] }
 
-        var scored: [(SecurityData, Double, Ratio, [String])] = []
+        var scored: [Scored] = []
         for t in try await provider.universe() {
             let s = try await provider.data(for: t)
+            let profile = profileSelector(s)
             var audit = ["regime=\(policy.regime.rawValue)"]
 
             var eliminated = false
-            for g in gates {
+            for g in profile.gates {
                 if case let .fail(reason) = g.evaluate(s, config: config, policy: policy) {
                     audit.append("✗ \(g.name): \(reason)"); eliminated = true; break
                 }
@@ -540,12 +617,12 @@ struct StockSelectionEngine: Sendable {
             }
             if eliminated { continue }
 
-            let mos = Valuator.marginOfSafety(s, config: config)
+            let mos = profile.valuator.marginOfSafety(s, config: config)
             audit.append("MoS \(pct(mos)) vs req \(pct(policy.minMarginOfSafety))")
             if mos < policy.minMarginOfSafety { continue }
 
             var num = 0.0, den = 0.0
-            for sc in scorers {
+            for sc in profile.scorers {
                 let c = sc.score(s, config: config)
                 let w = config.weights.base(c.id) * (policy.weightTilt[c.id.rawValue] ?? 1.0)
                 num += c.value * w; den += w
@@ -555,28 +632,31 @@ struct StockSelectionEngine: Sendable {
             let f = Modifiers.flow(s, config: config); composite += f.0; audit.append("flow \(signed(f.0)) [\(f.1)]")
             let tm = Modifiers.timing(s, config: config); composite += tm.0; audit.append("timing \(signed(tm.0)) [\(tm.1)]")
             composite = clamp01(composite)
-            scored.append((s, composite, mos, audit))
+            scored.append(Scored(data: s, composite: composite, marginOfSafety: mos,
+                                 audit: audit, valuator: profile.valuator))
         }
 
-        scored.sort { $0.1 > $1.1 }
+        scored.sort { $0.composite > $1.composite }
         return allocate(scored, policy: policy)
     }
 
-    private func allocate(_ ranked: [(SecurityData, Double, Ratio, [String])], policy: RegimePolicy) -> [Recommendation] {
+    private func allocate(_ ranked: [Scored], policy: RegimePolicy) -> [Recommendation] {
         var out: [Recommendation] = []; var deployed: Ratio = 0; var perSector: [String: Ratio] = [:]
-        for (s, comp, mos, audit) in ranked {
+        for item in ranked {
+            let s = item.data
             if out.count >= policy.maxNames || deployed >= policy.maxTotalExposure { break }
-            let conviction = comp
+            let conviction = item.composite
             var weight = conviction * policy.maxPositionPct
             weight = min(weight, policy.maxTotalExposure - deployed)
             weight = min(weight, policy.maxSectorPct - perSector[s.sector, default: 0])
             weight = min(weight, liquidityCap(s))
             if weight <= config.sizing.minWeightFloor { continue }
             deployed += weight; perSector[s.sector, default: 0] += weight
-            var trail = audit; trail.append("→ conviction \(round2(conviction)) weight \(pct(weight))")
-            out.append(.init(ticker: s.ticker, compositeScore: comp,
-                             intrinsicValue: Valuator.intrinsicValue(s, config: config),
-                             marginOfSafety: mos, conviction: conviction, suggestedWeight: weight, audit: trail))
+            var trail = item.audit; trail.append("→ conviction \(round2(conviction)) weight \(pct(weight))")
+            out.append(.init(ticker: s.ticker, compositeScore: item.composite,
+                             intrinsicValue: item.valuator.intrinsicValue(s, config: config),
+                             marginOfSafety: item.marginOfSafety, conviction: conviction,
+                             suggestedWeight: weight, audit: trail))
         }
         return out
     }

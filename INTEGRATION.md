@@ -143,17 +143,50 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   degrade-vs-propagate, marketContext map + all-nil throw, throttle pacing). **Full `AutoscreenerTests`
   bundle: 396 passed, 0 failures.**
 
+- **Phase 2 ✅ (2026-06-07) — ARCHETYPE SEAM COMPLETE (additive, industrial path byte-for-byte
+  unchanged).** The §14 rework landed entirely inside `Autoscreener/Features/Selection/
+  StockSelectionEngine.swift` (the working copy; `Reference/` left pristine). Three pieces:
+  - **`enum CompanyArchetype { industrial, financial }`** + `classify(sector:)` — IDX-IC sector
+    "Keuangan" (capture-verified, BBCA) → `.financial`, everything else → `.industrial`; case/
+    whitespace-insensitive. Open for insurer/reit later (YAGNI).
+  - **`Valuator` is now a protocol** (`intrinsicValue` + a shared `marginOfSafety` default-extension —
+    MoS is archetype-invariant once IV is known). The old `enum Valuator` body moved verbatim into
+    `struct GrahamValuator: Valuator` (industrial min(GrahamNo, NCAV/share)). No caller outside the
+    engine referenced `Valuator`, so the change was contained.
+  - **`struct SelectionProfile { archetype, gates, scorers, valuator }`** + `.industrial(config)`
+    factory (today's exact gate/scorer ORDER + `GrahamValuator`). Engine gained
+    `profileSelector: @Sendable (SecurityData) -> SelectionProfile` (DIP); default = classify →
+    profile. **Phase 2 ships ONLY the industrial profile, so `defaultProfile(for:config:)` routes BOTH
+    archetypes to it** — banks still run the industrial rules exactly as before (no behaviour change);
+    Phase 3 swaps `.financial` into that one switch. `run()`/`allocate()` now read the per-security
+    profile's gates/scorers/valuator; the old 4-tuple `scored` became a private `Scored` struct
+    carrying the chosen valuator so `allocate` reports the right IV per archetype. Engine init stays
+    source-compatible (new `profileSelector` param optional/defaulted — BacktestHarness call site
+    untouched).
+  - **Verification:** the locked golden master (`SelectionEngineCharacterizationTests` — exact
+    composite/MoS/IV/weight + the full 13-line audit trail) **still passes unchanged**, which IS the
+    byte-for-byte proof. New `AutoscreenerTests/CompanyArchetypeProfileTests.swift` (10 tests: classify
+    cases, industrial-profile composition, default-routing incl. the bank→industrial Phase-2 fallback,
+    and the DIP seam — a gate-less injected profile admits a name the default screens out; injected
+    scorers drive the audit; injected valuator drives the reported IV). **Full `AutoscreenerTests`
+    bundle: TEST SUCCEEDED, 0 failures.**
+
 **Next action:** **Phase 1 is complete** — `StockSelectionEngine(provider: StockbitDataProvider(
 universe: …, <services>))` can now run Tier-A live. Two follow-ups, neither blocking:
 (a) **Wire-up** — add the new services (`CompanyPriceFeedService`, `FundachartService`,
 `EmittenService`, `BrokerActivityService`) to `AppDependencies` + a thin entry point (screen/command)
 that builds the provider and calls `engine.run()`; settle the §10 universe source
 (screener/watchlist/sector) and the default preset.
-(b) **§8 Phase 2** — the additive `CompanyArchetype` / `SelectionProfile` seam (§14),
-characterization-tested so the industrial path stays byte-for-byte unchanged.
-**Recommended: Phase 2** — banks currently throw `missingField` inside `data(for:)` (correct but
-blunt: it aborts the run for that name); the archetype seam routes `sector == "Keuangan"` to a
-financial profile instead. Read this Status header to resume.
+(b) **§8 Phase 3** — implement the financial (bank) `SelectionProfile` on the seam Phase 2 built:
+capital-strength gate (Common Equity ÷ Total Assets), justified-P/B valuator (IV = ((ROE−g)/(r−g))×
+BVPS), bank value/quality/earnings-quality scorers, then flip `defaultProfile(for:config:)`'s
+`.financial` case from `.industrial(config)` to `.financial(config)` (§14, §8 Phase 3.1–3.5).
+**Recommended: Phase 3.** NOTE — the engine seam is done, but banks still **fail upstream** inside
+`StockbitDataProvider.data(for:)`: keystats essential fields (`currentRatio`/`D/E`/etc.) are `"-"`
+for banks, so the §1.1 adapter throws `missingField` *before a SecurityData is ever built* — the
+archetype can't be classified for a name that never constructs. So Phase 3 also needs the provider to
+build a **bank-shaped `SecurityData`** (don't throw on the null industrial fields; populate the bank
+block) for `sector == "Keuangan"`. Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -407,13 +440,18 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     cases: composition, cache, degrade-vs-propagate, marketContext map + all-nil throw, throttle
     pacing). **Full `AutoscreenerTests` bundle: 396 passed, 0 failures.**
 
-### Phase 2 — Archetype seam (the §14 rework — additive, no behavior change)
+### Phase 2 — Archetype seam (the §14 rework — additive, no behavior change) ✅ DONE 2026-06-07
 
-2.1 Add `enum CompanyArchetype { industrial, financial }` + `struct SelectionProfile { gates,
-    scorers, valuator }`; engine gains `profileSelector: (SecurityData) -> SelectionProfile` (DIP).
-2.2 Sector → archetype classifier (`"Keuangan"` → `.financial`), driven by 1.4's `sector`.
-2.3 **Refactor today's gates/scorers into the `.industrial` profile and dispatch `Valuator` by
-    archetype — characterization-tested to prove the industrial path is byte-for-byte unchanged.**
+2.1 ✅ Added `enum CompanyArchetype { industrial, financial }` + `struct SelectionProfile { archetype,
+    gates, scorers, valuator }`; engine gained `profileSelector: @Sendable (SecurityData) ->
+    SelectionProfile` (DIP), optional/defaulted so existing call sites are source-compatible.
+2.2 ✅ Sector → archetype classifier `CompanyArchetype.classify(sector:)` (`"Keuangan"` → `.financial`,
+    case/whitespace-insensitive), driven by 1.4's `SecurityData.sector`.
+2.3 ✅ `Valuator` became a protocol (`GrahamValuator` = the industrial witness, body verbatim) and the
+    gates/scorers/valuator now come from the per-security `SelectionProfile.industrial(config)`. The
+    `defaultProfile` selector routes both archetypes to industrial in Phase 2 (only profile that
+    exists). Proven byte-for-byte by the unchanged `SelectionEngineCharacterizationTests` golden
+    master; seam exercised by `CompanyArchetypeProfileTests`. Full bundle green.
 
 ### Phase 3 — Financial (bank) profile (§14)
 
