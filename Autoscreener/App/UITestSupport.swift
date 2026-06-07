@@ -50,6 +50,8 @@ nonisolated struct StubKeystatsRatioService: KeystatsRatioServicing {
             freeCashFlowPerShare: -61.83, currentRatio: 3.09, quickRatio: 2.45, debtToEquity: 1.38
         )
     }
+    // Not exercised under UI fixtures — no screen consumes the selection engine yet.
+    func fields(symbol: String, yearLimit: Int) async throws -> [String: String] { [:] }
 }
 
 nonisolated struct StubBrokerSummaryService: BrokerSummaryServicing {

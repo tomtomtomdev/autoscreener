@@ -75,11 +75,22 @@ nonisolated protocol KeystatsRatioServicing: Sendable {
     /// Latest grouped valuation ratios for `symbol`. `yearLimit` requests up to
     /// N years of history from the endpoint (default 10, per the research doc).
     func ratios(symbol: String, yearLimit: Int) async throws -> ValuationRatios
+
+    /// The raw keystats `fitem.id → display value` map for `symbol` — the primitive
+    /// that `ratios` is a typed view over. The selection engine's TTM / shares
+    /// adapters (`SelectionFundamentals`) read fields `ratios` doesn't surface
+    /// (Net Income, Cash From Operations, Total Assets, …), so the §1.8
+    /// `StockbitDataProvider` consumes this directly.
+    func fields(symbol: String, yearLimit: Int) async throws -> [String: String]
 }
 
 extension KeystatsRatioServicing {
     func ratios(symbol: String) async throws -> ValuationRatios {
         try await ratios(symbol: symbol, yearLimit: 10)
+    }
+    /// Raw field map with the default 10-year history window.
+    func fields(symbol: String) async throws -> [String: String] {
+        try await fields(symbol: symbol, yearLimit: 10)
     }
 }
 
@@ -91,21 +102,35 @@ nonisolated final class KeystatsRatioService: KeystatsRatioServicing {
     init(apiClient: APIClient) { self.apiClient = apiClient }
 
     func ratios(symbol: String, yearLimit: Int) async throws -> ValuationRatios {
-        let endpoint = Self.makeEndpoint(symbol: symbol, yearLimit: yearLimit)
-        let data: Data
+        let data = try await rawData(symbol: symbol, yearLimit: yearLimit)
         do {
-            data = try await apiClient.sendRaw(endpoint)
+            return try Self.parse(data, symbol: symbol)
+        } catch {
+            throw KeystatsRatioError.malformedResponse
+        }
+    }
+
+    func fields(symbol: String, yearLimit: Int) async throws -> [String: String] {
+        let data = try await rawData(symbol: symbol, yearLimit: yearLimit)
+        do {
+            return try Self.fieldMap(data)
+        } catch {
+            throw KeystatsRatioError.malformedResponse
+        }
+    }
+
+    /// Shared fetch + `APIError` → domain-error mapping for both the `ratios` view
+    /// and the raw `fields` map.
+    private func rawData(symbol: String, yearLimit: Int) async throws -> Data {
+        let endpoint = Self.makeEndpoint(symbol: symbol, yearLimit: yearLimit)
+        do {
+            return try await apiClient.sendRaw(endpoint)
         } catch APIError.unauthorized, APIError.notSignedIn {
             throw KeystatsRatioError.unauthorized
         } catch APIError.http(let status, _) where status == 402 || status == 403 {
             throw KeystatsRatioError.paywall
         } catch let err as APIError {
             throw KeystatsRatioError.network(String(describing: err))
-        }
-        do {
-            return try Self.parse(data, symbol: symbol)
-        } catch {
-            throw KeystatsRatioError.malformedResponse
         }
     }
 

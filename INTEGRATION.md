@@ -123,14 +123,37 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   input set** (mirrors `RegimeViewModel` refusing to read an empty factor list) rather than score a
   phantom regime. Tests: `AutoscreenerTests/MarketContextAdapterTests.swift` (8 cases). **Full
   `AutoscreenerTests` bundle: TEST SUCCEEDED.**
+- **Phase 1.8 ✅ (2026-06-07) — PHASE 1 COMPLETE.** `StockbitDataProvider: DataProvider` assembled
+  (`Autoscreener/Features/Selection/StockbitDataProvider.swift`, an `actor`). Pure assembly of the
+  1.1–1.7 adapters into `SecurityData` / `MarketContext`, owning the §7/§13-B6 orchestration: a shared
+  `RequestThrottle` serialises the per-ticker fan-out (anti-burst, like `GovernanceService`;
+  `marketContext()` reuses `RegimeViewModel`'s concurrent fan-out verbatim, unthrottled), per-symbol +
+  shared-index-bar caches (each index fetched once/run), and graceful degradation (ESSENTIAL legs —
+  keystats→TTM, fundachart annuals, daily bars, sector — propagate; BEST-EFFORT legs — balance-sheet
+  overlay, profile free-float→0, sector/market index bars, broker signal→0 — degrade).
+  `marketContext()` throws `SelectionProviderError.noRegimeInputs` when `RegimeFactorBuilder.factors`
+  is empty (all regime inputs absent). Universe is an injected candidate list (defers §10). **Seam
+  added:** `KeystatsRatioServicing.fields(symbol:)` (raw `[String:String]`; `ratios` refactored onto a
+  shared private `rawData`) — the provider reads the TTM/shares/price fields `ValuationRatios` omits;
+  `StubKeystatsRatioService` updated. **Isolation fix:** the pure `SelectionAdapters` sequence helpers
+  (`ohlcv`, `ohlcvSeries`, `foreignNetFlowSeries`) are now `nonisolated` — the module sets
+  `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so the non-Main actor couldn't otherwise call them (the
+  `SelectionFundamentals` static funcs already compiled from the actor, left untouched). Tests:
+  `AutoscreenerTests/StockbitDataProviderTests.swift` (9 cases: composition, cache,
+  degrade-vs-propagate, marketContext map + all-nil throw, throttle pacing). **Full `AutoscreenerTests`
+  bundle: 396 passed, 0 failures.**
 
-**Next action:** continue **§8 Phase 1** at **1.8** — assemble `StockbitDataProvider: DataProvider`
-(fetch + throttle/cache/paywall pre-check; compose the now-complete adapter set: keystats→TTM,
-fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`, `ohlcvSeries` for the
-stock **and** the `sectorIndexSymbol(for:)` bars, `foreignNetFlowSeries`, `brokerAccumulationSignal`,
-`freeFloat`/`sector` from `EmittenService`, and `marketContext(…)` via `RegimeViewModel`'s fan-out —
-**throwing when no regime input resolves**). **Every Phase-1 unit data-source + adapter is now built;
-1.8 is pure assembly/wiring and completes Phase 1.**
+**Next action:** **Phase 1 is complete** — `StockSelectionEngine(provider: StockbitDataProvider(
+universe: …, <services>))` can now run Tier-A live. Two follow-ups, neither blocking:
+(a) **Wire-up** — add the new services (`CompanyPriceFeedService`, `FundachartService`,
+`EmittenService`, `BrokerActivityService`) to `AppDependencies` + a thin entry point (screen/command)
+that builds the provider and calls `engine.run()`; settle the §10 universe source
+(screener/watchlist/sector) and the default preset.
+(b) **§8 Phase 2** — the additive `CompanyArchetype` / `SelectionProfile` seam (§14),
+characterization-tested so the industrial path stays byte-for-byte unchanged.
+**Recommended: Phase 2** — banks currently throw `missingField` inside `data(for:)` (correct but
+blunt: it aborts the run for that name); the archetype seam routes `sector == "Keuangan"` to a
+financial profile instead. Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -366,8 +389,23 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     gathers into the engine's `MarketContext`. Sign conventions + a neutral/no-evidence degradation
     policy (absent → valuation/breadth 0.5, booleans false, net 0; 1.8 throws on an all-nil set) are
     pinned by `MarketContextAdapterTests`.
-1.8 **Assemble `StockbitDataProvider: DataProvider`** + shared throttle / per-symbol cache / paywall
-    pre-check (§7, §13-B6) — now ~8 calls/ticker.
+1.8 ✅ **Assembled `StockbitDataProvider: DataProvider`** (`Autoscreener/Features/Selection/
+    StockbitDataProvider.swift`, an `actor`). Pure assembly: composes the 1.1–1.7 adapters into the
+    engine's `SecurityData` / `MarketContext`. Owns the orchestration concerns (§7, §13-B6): a shared
+    `RequestThrottle` serialises the per-ticker fan-out (anti-burst, like `GovernanceService`; the
+    one-shot `marketContext()` reuses `RegimeViewModel`'s concurrent fan-out verbatim, unthrottled);
+    a per-symbol `SecurityData` cache + shared index-bar cache (each index fetched once/run);
+    graceful degradation — ESSENTIAL legs (keystats→TTM, fundachart annuals, daily bars, sector)
+    propagate, BEST-EFFORT legs (balance-sheet overlay, profile free-float→0, sector/market index
+    bars, broker signal→0) degrade. `marketContext()` throws `SelectionProviderError.noRegimeInputs`
+    when `RegimeFactorBuilder.factors` is empty (all regime inputs absent). Universe is an injected
+    candidate list (defers the §10 source decision). Needed one seam: `KeystatsRatioServicing` gained
+    `fields(symbol:)` (raw `[String:String]` map; `ratios` refactored onto a shared `rawData`) so the
+    provider reads the TTM/shares/price fields `ValuationRatios` doesn't surface. Pure
+    `SelectionAdapters` sequence helpers marked `nonisolated` (the module defaults to `@MainActor`) so
+    the non-Main actor can call them. Tests: `AutoscreenerTests/StockbitDataProviderTests.swift` (9
+    cases: composition, cache, degrade-vs-propagate, marketContext map + all-nil throw, throttle
+    pacing). **Full `AutoscreenerTests` bundle: 396 passed, 0 failures.**
 
 ### Phase 2 — Archetype seam (the §14 rework — additive, no behavior change)
 

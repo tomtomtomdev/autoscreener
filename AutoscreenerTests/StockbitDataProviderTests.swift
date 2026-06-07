@@ -1,0 +1,387 @@
+import Foundation
+import Testing
+@testable import Autoscreener
+
+// Phase 1.8 (§8): the live Tier-A `DataProvider`. Pure assembly — these tests pin the WIRING:
+// that the per-ticker fan-out composes the 1.1–1.7 adapters into a correct `SecurityData`, that
+// best-effort legs degrade (not abort) while essential legs propagate, that results are cached,
+// that the fan-out is paced through the shared throttle, and that `marketContext()` reuses the
+// regime fan-out and refuses to score a phantom regime when every input is absent. The adapters'
+// own field-mapping is covered by their unit tests; here we only check orchestration.
+
+private enum StubError: Error { case absent }
+
+private let B: Decimal = 1_000_000_000
+private func bil(_ n: Int) -> Decimal { Decimal(n) * B }
+
+// MARK: - Canned "happy path" inputs (industrial, WIFI-like)
+
+/// A complete industrial keystats field map — every field `ttm(fromKeystats:)` requires is present.
+private let happyFields: [String: String] = [
+    "13200": "242.08",     // EPS (TTM)
+    "15718": "759.60",     // Book Value / share
+    "1498": "3.09",        // Current Ratio
+    "1508": "1.38",        // Debt / Equity
+    "1461": "6.57%",       // ROE (percent → 0.0657)
+    "1471": "-11.46%",     // EPS YoY growth (percent-number, verbatim)
+    "1555": "490 B",       // Net Income (TTM, scaled)
+    "2545": "(1,899 B)",   // Cash From Operations (TTM, scaled)
+    "1559": "16,196 B",    // Total Assets (scaled)
+    "15883": "7,464 B",    // Common Equity (scaled, shares fallback)
+]
+
+/// Shares derived from the happy field map: NetIncome(490 B) ÷ EPS(242.08).
+private let expectedShares = Decimal(490_000_000_000.0 / 242.08)
+
+private func series(_ legend: String, _ values: [Decimal]) -> FundachartSeries {
+    FundachartSeries(legend: legend, values: values)
+}
+
+/// Three fiscal years, newest-first (as the real feed returns).
+private let happyFundachart = StubFundachart(
+    income: FundachartFinancials(periods: ["2025", "2024", "2023"], series: [
+        series("Revenue", [bil(1659), bil(1500), bil(1400)]),
+        series("Net Income", [bil(490), bil(400), bil(350)]),
+    ]),
+    balance: FundachartFinancials(periods: ["2025", "2024", "2023"], series: [
+        series("Total Assets", [bil(16196), bil(15000), bil(14000)]),
+        series("Total Liabilities", [bil(9000), bil(8500), bil(8000)]),
+    ]),
+    cashFlow: FundachartFinancials(periods: ["2025", "2024", "2023"], series: [
+        series("Operating", [bil(-1899), bil(1200), bil(1100)]),
+    ]))
+
+private func subtotal(_ name: String, _ values: [String]) -> FinancialAccount {
+    FinancialAccount(id: name, accountID: 0, name: name, level: 1, values: values,
+                     isEmphasized: true, defaultExpanded: true, children: [])
+}
+
+/// Annual balance sheet with the three §1.3 subtotals, columns aligned to fundachart's years.
+private let happyStatement = FinancialStatement(
+    currency: "IDR",
+    periods: ["12M 2025", "12M 2024", "12M 2023"],
+    accounts: [
+        subtotal("Aset Lancar", ["8,688 B", "8,000 B", "7,500 B"]),
+        subtotal("Liabilitas Jangka Pendek", ["3,981 B", "3,800 B", "3,600 B"]),
+        subtotal("Piutang Usaha", ["223 B", "200 B", "180 B"]),
+    ])
+
+private let happyInfo = EmittenInfo(
+    symbol: "WIFI", name: "PT Solusi Sinergi Digital", sector: "Teknologi",
+    subSector: "Perangkat Lunak & Jasa TI", indexes: ["IDXTECHNO", "LQ45"])
+private let happyProfile = EmittenProfile(freeFloatDisplay: "40.00%", sharesDisplay: "156,558,200")
+
+private func bar(day: Int, close: Decimal, value: Decimal, net: Decimal) -> HistoricalSummaryBar {
+    HistoricalSummaryBar(date: Date(timeIntervalSince1970: TimeInterval(day * 86_400)),
+                         open: close, high: close, low: close, close: close,
+                         volume: 1000, value: value, netForeign: net)
+}
+
+/// Stock bars (deliberately newest-last-and-first-mixed so the ascending sort is exercised).
+private let wifiBars: [HistoricalSummaryBar] = [
+    bar(day: 3, close: 120, value: bil(12), net: bil(8)),
+    bar(day: 1, close: 100, value: bil(10), net: bil(-5)),
+    bar(day: 2, close: 110, value: bil(11), net: bil(3)),
+]
+/// Generic index bars (sector/market) — just needs to be non-empty.
+private let indexBars: [HistoricalSummaryBar] = [
+    bar(day: 1, close: 7000, value: bil(1), net: 0),
+    bar(day: 2, close: 7050, value: bil(1), net: 0),
+]
+private let happyPriceFeed = StubPriceFeed(
+    barsBySymbol: ["WIFI": wifiBars], defaultBars: indexBars)
+
+private let happyBrokerRecords = [
+    BrokerActivityRecord(date: Date(timeIntervalSince1970: 0),
+                         netValue: bil(10), buyValue: bil(60), sellValue: bil(50)),
+]
+
+// MARK: - Regime inputs
+
+private func makeSnapshot(valuation: Double?, rate: BIRateDirection?) -> RegimeSnapshot {
+    let composite = RegimeSnapshot.IndexValuation(pe: nil, pb: nil, pePctile: valuation, pbPctile: nil)
+    let biRate = rate.map { RegimeSnapshot.BIRate(value: 5.75, direction: $0, asOf: "2026-06-01") }
+    return RegimeSnapshot(asOf: "2026-06-01", biRate: biRate,
+                          indices: [RegimeSnapshot.compositeKey: composite])
+}
+
+private func makeFlow(net: Double) -> ForeignFlow {
+    let m = FlowMetric(raw: net, formatted: "\(net)")
+    let zero = FlowMetric(raw: 0, formatted: "0")
+    let bd = ForeignFlowBreakdown(label: "", total: zero, foreignTotal: zero,
+                                  foreignPercentage: 0, domesticTotal: zero, domesticPercentage: 0)
+    return ForeignFlow(symbol: "IHSG", dateRange: "", from: "", to: "", lastUpdated: "",
+                       foreignBuy: zero, foreignSell: zero, netForeign: m,
+                       domesticBuy: zero, domesticSell: zero, netDomestic: zero,
+                       value: bd, volume: bd, frequency: bd)
+}
+
+private func makeCommodity(changePercent: Double?) -> CommodityQuote {
+    CommodityQuote(symbol: "USDIDR", name: "USD/IDR", price: 16000, previousClose: 15944,
+                   change: 56, changePercent: changePercent, volume: nil,
+                   formattedPrice: "16,000", asOf: "")
+}
+
+// MARK: - Stubs
+
+private actor StubKeystats: KeystatsRatioServicing {
+    let result: [String: String]
+    private(set) var fieldsCallCount = 0
+    init(_ result: [String: String]) { self.result = result }
+    func ratios(symbol: String, yearLimit: Int) async throws -> ValuationRatios { throw StubError.absent }
+    func fields(symbol: String, yearLimit: Int) async throws -> [String: String] {
+        fieldsCallCount += 1
+        return result
+    }
+}
+
+private struct StubFundachart: FundachartServicing {
+    let income, balance, cashFlow: FundachartFinancials
+    func financials(symbol: String, dataset: FundachartDataset,
+                    report: FundachartReport) async throws -> FundachartFinancials {
+        switch dataset {
+        case .incomeStatement: return income
+        case .balanceSheet:    return balance
+        case .cashFlow:        return cashFlow
+        }
+    }
+}
+
+private struct StubStatements: FinancialStatementServicing {
+    var statement: FinancialStatement?
+    func load(symbol: String, report: FinancialReportType,
+              basis: FinancialPeriodBasis) async throws -> FinancialStatement {
+        guard let statement else { throw StubError.absent }
+        return statement
+    }
+}
+
+private struct StubEmitten: EmittenServicing {
+    var infoResult: EmittenInfo
+    var profileResult: EmittenProfile?
+    func info(symbol: String) async throws -> EmittenInfo { infoResult }
+    func profile(symbol: String) async throws -> EmittenProfile {
+        guard let profileResult else { throw StubError.absent }
+        return profileResult
+    }
+}
+
+private struct StubPriceFeed: CompanyPriceFeedServicing {
+    var barsBySymbol: [String: [HistoricalSummaryBar]]
+    var defaultBars: [HistoricalSummaryBar]
+    var throwingSymbols: Set<String> = []
+    func historicalSummary(symbol: String, period: HistoricalSummaryPeriod, startDate: Date,
+                           endDate: Date, limit: Int, page: Int) async throws -> HistoricalSummaryPage {
+        if throwingSymbols.contains(symbol) { throw StubError.absent }
+        return HistoricalSummaryPage(bars: barsBySymbol[symbol] ?? defaultBars, nextPage: nil)
+    }
+}
+
+private struct StubBroker: BrokerActivityServicing {
+    var records: [BrokerActivityRecord]?
+    func dailyActivity(symbol: String, period: BrokerActivityPeriod, brokerCodes: [String],
+                       limit: Int, page: Int) async throws -> [BrokerActivityRecord] {
+        guard let records else { throw StubError.absent }
+        return records
+    }
+}
+
+private struct StubSnapshot: RegimeSnapshotProviding {
+    var value: RegimeSnapshot?
+    func snapshot() async throws -> RegimeSnapshot {
+        guard let value else { throw StubError.absent }
+        return value
+    }
+}
+
+private struct StubAggFlow: AggregateForeignFlowServicing {
+    var value: ForeignFlow?
+    func marketFlow(period: ForeignFlowPeriod) async throws -> ForeignFlow {
+        guard let value else { throw StubError.absent }
+        return value
+    }
+}
+
+/// Always throws — the provider tests never need a real `PriceSeries` (the 200-day distance
+/// mapping is covered by `MarketContextAdapterTests`).
+private struct StubChart: ChartServicing {
+    func candles(symbol: String, timeframe: ChartTimeframe,
+                 chartType: ChartType) async throws -> PriceSeries { throw StubError.absent }
+}
+
+private struct StubCommodity: CommodityPriceServicing {
+    var value: CommodityQuote?
+    func quote(symbol: String) async throws -> CommodityQuote {
+        guard let value else { throw StubError.absent }
+        return value
+    }
+}
+
+private struct StubBreadth: BreadthServicing {
+    var result: BreadthReading
+    func reading(symbols: [String], period: Int) async -> BreadthReading { result }
+}
+
+private actor DelayRecorder {
+    private(set) var delays: [UInt64] = []
+    func record(_ ns: UInt64) { delays.append(ns) }
+}
+
+// MARK: - Provider factory (every leg defaults to the happy path; override per test)
+
+private func makeProvider(
+    universe: [Ticker] = ["WIFI"],
+    keystats: any KeystatsRatioServicing = StubKeystats(happyFields),
+    fundachart: any FundachartServicing = happyFundachart,
+    statements: any FinancialStatementServicing = StubStatements(statement: happyStatement),
+    emitten: any EmittenServicing = StubEmitten(infoResult: happyInfo, profileResult: happyProfile),
+    priceFeed: any CompanyPriceFeedServicing = happyPriceFeed,
+    broker: any BrokerActivityServicing = StubBroker(records: happyBrokerRecords),
+    snapshot: any RegimeSnapshotProviding = StubSnapshot(value: makeSnapshot(valuation: 0.42, rate: .hike)),
+    flow: any AggregateForeignFlowServicing = StubAggFlow(value: makeFlow(net: -1_500_000_000)),
+    chart: any ChartServicing = StubChart(),
+    commodity: any CommodityPriceServicing = StubCommodity(value: makeCommodity(changePercent: 0.35)),
+    breadth: any BreadthServicing = StubBreadth(result: BreadthReading(above: 30, measured: 40)),
+    sleeper: @escaping RequestThrottle.Sleeper = { _ in }
+) -> StockbitDataProvider {
+    StockbitDataProvider(
+        universe: universe, keystats: keystats, fundachart: fundachart, statements: statements,
+        emitten: emitten, priceFeed: priceFeed, broker: broker, snapshotProvider: snapshot,
+        flowService: flow, chartService: chart, commodityService: commodity, breadthService: breadth,
+        breadthConstituents: ["BBCA"], sleeper: sleeper)
+}
+
+// MARK: - universe()
+
+@Suite struct StockbitDataProviderUniverseTests {
+    @Test func universeReturnsTheInjectedCandidateList() async throws {
+        let provider = makeProvider(universe: ["WIFI", "BBCA", "ASII"])
+        #expect(try await provider.universe() == ["WIFI", "BBCA", "ASII"])
+    }
+}
+
+// MARK: - data(for:) composition
+
+@Suite struct StockbitDataProviderCompositionTests {
+
+    @Test func composesEveryAdapterIntoOneSecurityData() async throws {
+        let s = try await makeProvider().data(for: "WIFI")
+
+        // Company fields + TTM (keystats → §1.1, emitten → §1.4).
+        #expect(s.ticker == "WIFI")
+        #expect(s.sector == "Teknologi")
+        #expect(s.freeFloatPct == 0.40)
+        #expect(s.ttm.currentRatio == 3.09)
+        #expect(abs(s.ttm.returnOnEquity - 0.0657) < 1e-9)
+        #expect(s.ttm.epsGrowthPct == -11.46)
+
+        // Price = last (ascending) close of the daily bars.
+        #expect(s.price == 120)
+        #expect(s.dailyBars.count == 3)
+        #expect(s.foreignNetFlow == [bil(-5), bil(3), bil(8)])
+
+        // Multi-year annuals (§1.2), ascending, balance-sheet overlaid (§1.3) on the latest year.
+        #expect(s.financials.count == 3)
+        let latest = try #require(s.financials.last)
+        #expect(latest.year == 2025)
+        #expect(latest.revenue == bil(1659))
+        #expect(latest.shareholderEquity == bil(16196) - bil(9000))
+        #expect(latest.currentAssets == Decimal(DisplayNumber.parseScaledDecimal("8,688 B")!))
+        #expect(latest.currentLiabilities == Decimal(DisplayNumber.parseScaledDecimal("3,981 B")!))
+        #expect(latest.receivables == Decimal(DisplayNumber.parseScaledDecimal("223 B")!))
+
+        // Shares stamped on the latest annual only (§1.4); earlier years stay 0 (NCAV reads `.last`).
+        #expect(s.sharesOutstanding == expectedShares)
+        #expect(latest.sharesOutstanding == expectedShares)
+        #expect(s.financials.first?.sharesOutstanding == 0)
+
+        // Broker accumulation signal (§1.6): value-weighted Σnet/Σ(buy+sell) = 10/110.
+        #expect(abs(s.brokerAccumulationSignal - 10.0 / 110.0) < 1e-9)
+
+        // Index legs present (§1.5 sector map → IDXTECHNO; market → IHSG).
+        #expect(!s.sectorIndexBars.isEmpty)
+        #expect(!s.marketIndexBars.isEmpty)
+    }
+
+    @Test func cachesSecurityDataPerSymbol() async throws {
+        let keystats = StubKeystats(happyFields)
+        let provider = makeProvider(keystats: keystats)
+        _ = try await provider.data(for: "WIFI")
+        _ = try await provider.data(for: "WIFI")
+        #expect(await keystats.fieldsCallCount == 1)   // second call served from cache
+    }
+}
+
+// MARK: - data(for:) degradation vs. propagation
+
+@Suite struct StockbitDataProviderDegradationTests {
+
+    @Test func degradesBestEffortLegsWithoutAbortingTheRun() async throws {
+        let provider = makeProvider(
+            statements: StubStatements(statement: nil),                       // balance-sheet overlay fails
+            emitten: StubEmitten(infoResult: happyInfo, profileResult: nil),  // profile (free float) fails
+            priceFeed: StubPriceFeed(barsBySymbol: ["WIFI": wifiBars],
+                                     defaultBars: indexBars,
+                                     throwingSymbols: ["IDXTECHNO", "IHSG"]),  // index bars fail
+            broker: StubBroker(records: nil))                                 // broker signal fails
+
+        let s = try await provider.data(for: "WIFI")
+
+        #expect(s.price == 120)                       // essential legs still produced a valuation
+        #expect(s.freeFloatPct == 0)                  // unverifiable float → conservative 0
+        #expect(s.brokerAccumulationSignal == 0)      // no activity → no tilt
+        #expect(s.sectorIndexBars.isEmpty)
+        #expect(s.marketIndexBars.isEmpty)
+        #expect(s.financials.last?.currentAssets == 0)   // overlay skipped → tree fields stay 0
+    }
+
+    @Test func propagatesWhenAnEssentialFieldIsMissing() async throws {
+        var incomplete = happyFields
+        incomplete["1498"] = nil   // drop Current Ratio — an industrial-required field
+        let provider = makeProvider(keystats: StubKeystats(incomplete))
+
+        await #expect(throws: SelectionFundamentals.AdapterError.self) {
+            _ = try await provider.data(for: "WIFI")
+        }
+    }
+}
+
+// MARK: - marketContext()
+
+@Suite struct StockbitDataProviderMarketContextTests {
+
+    @Test func mapsTheRegimeFanOutIntoMarketContext() async throws {
+        let c = try await makeProvider().marketContext()
+        #expect(c.indexValuationPercentile == 0.42)
+        #expect(c.biRateRising == true)
+        #expect(c.marketForeignFlowNet < 0)
+        #expect(c.idrWeakeningTrend == true)             // USD/IDR +0.35%
+        #expect(c.breadthAbove200dma == 0.75)            // 30 / 40
+        #expect(c.indexAbove200dma == false)             // chart stub throws → distance absent
+    }
+
+    @Test func throwsWhenEveryRegimeInputIsAbsent() async throws {
+        let provider = makeProvider(
+            snapshot: StubSnapshot(value: nil),
+            flow: StubAggFlow(value: nil),
+            commodity: StubCommodity(value: nil),
+            breadth: StubBreadth(result: BreadthReading(above: 0, measured: 0)))   // fraction nil
+        await #expect(throws: SelectionProviderError.noRegimeInputs) {
+            _ = try await provider.marketContext()
+        }
+    }
+}
+
+// MARK: - Throttle
+
+@Suite struct StockbitDataProviderThrottleTests {
+
+    @Test func pacesThePerTickerFanOutThroughTheSharedThrottle() async throws {
+        let recorder = DelayRecorder()
+        let provider = makeProvider(sleeper: { await recorder.record($0) })
+        _ = try await provider.data(for: "WIFI")
+        // Many paced calls (keystats + 3× fundachart + info + bars + statements + profile + 2 index
+        // + broker): the first is free, every later one sleeps — so several delays were requested.
+        #expect(await recorder.delays.count >= 5)
+    }
+}

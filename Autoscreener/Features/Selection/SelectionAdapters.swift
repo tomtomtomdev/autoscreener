@@ -10,18 +10,20 @@ import Foundation
 
 extension HistoricalSummaryBar {
     /// This bar as the engine's input type. `value` carries the true traded rupiah (ADV input).
-    var ohlcv: OHLCV {
+    /// `nonisolated`: a pure value transform with no actor state, so the (non-Main) engine
+    /// `StockbitDataProvider` actor can call it (the module defaults declarations to `@MainActor`).
+    nonisolated var ohlcv: OHLCV {
         OHLCV(date: date, open: open, high: high, low: low, close: close, volume: volume, value: value)
     }
 }
 
 extension Sequence where Element == HistoricalSummaryBar {
     /// Engine-ready OHLCV bars, ascending by date (oldest→newest).
-    var ohlcvSeries: [OHLCV] {
+    nonisolated var ohlcvSeries: [OHLCV] {
         sorted { $0.date < $1.date }.map(\.ohlcv)
     }
     /// Per-day net foreign flow, ascending by date — the engine's `foreignNetFlow` window input (§1.6).
-    var foreignNetFlowSeries: [Rupiah] {
+    nonisolated var foreignNetFlowSeries: [Rupiah] {
         sorted { $0.date < $1.date }.map(\.netForeign)
     }
 }
