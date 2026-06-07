@@ -82,15 +82,39 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   `AutoscreenerTests/FundachartServiceTests.swift` (real WIFI bodies), all green. Full
   `AutoscreenerTests` bundle: **TEST SUCCEEDED**.
 
-**Next action:** continue **§8 Phase 1** from **1.5** (sector→IDX-index static map for
-`sectorIndexBars` — author the ~11-row Indonesian-name → index-symbol table; WIFI's `info.indexes`
-already lists `IDXTECHNO`, and `info.sector`="Teknologi" is now available from `EmittenService`).
-Then **1.6** (broker accumulation signal from `/order-trade/broker/activity/historical`; the foreign
-series is already free from 0.2), **1.7** (`marketContext()` from `RegimeFactorBuilder`, §3), **1.8**
-(assemble `StockbitDataProvider: DataProvider` — fetch + throttle/cache/paywall; compose the adapters:
-keystats→TTM, fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`,
-ohlcvSeries, foreignNetFlowSeries, `freeFloat`/`sector` from `EmittenService`). **All Phase-1 adapters
-now live in `SelectionAdapters.swift`; the only un-built unit data-source is the broker signal (1.6).**
+- **Phase 1.5 ✅ (2026-06-07)** — **sector → IDX sector-index static map**. Pure adapters in
+  `SelectionFundamentals` (`SelectionAdapters.swift`): `sectorIndexBySector` (11-row IDX-IC
+  Indonesian-name → index-symbol table, normalized lowercase keys), `sectorIndexSymbols` (the 11
+  symbols), `sectorIndexSymbol(forSector:)` (case/whitespace-insensitive name lookup) and
+  `sectorIndexSymbol(for: EmittenInfo)` (name map **primary**, falls back to the one sector index in
+  `info.indexes` — always present — when the name isn't mapped; nil ⇒ 1.8 leaves `sectorIndexBars`
+  empty and the engine's timing modifier already guards on `count`). "Teknologi"→IDXTECHNO and
+  "Keuangan"→IDXFINANCE are capture-verified; all 11 index symbols confirmed present in the captures
+  (`emitten/company/catalog.pchange_info` lists them). 1.8 fetches the sector bars via the **same**
+  historical-summary feed as the stock (`dailyBars(symbol: <sectorIndex>,…).ohlcvSeries`). Tests:
+  `AutoscreenerTests/SectorIndexMapTests.swift`, all green.
+- **Phase 1.6 ✅ (2026-06-07)** — **broker accumulation signal** (the foreign series was already free
+  from 0.2 — `foreignNetFlowSeries`). New `Autoscreener/Features/MarketActivity/BrokerActivityService.swift`
+  (`BrokerActivityServicing`) reads `GET order-trade/broker/activity/historical` (pinned
+  `interval=INTERVAL_DAILY`, `transaction_type=TRANSACTION_TYPE_NET`, `investor_type=INVESTOR_TYPE_ALL`,
+  `market_board=BOARD_TYPE_REGULAR`, `period`, `pagination.limit/page`, optional `broker_codes` CSV).
+  Neutral `BrokerActivityRecord{date,netValue,buyValue,sellValue}` (values JSON numbers → `Decimal`
+  exact; uses `Decimal` not `Rupiah` to stay engine-independent; same error-mapping shape as the other
+  exodus services). Pure adapter `SelectionFundamentals.brokerAccumulationSignal(from:window:)` =
+  value-weighted **Σnet / Σ(buy+sell)** over the most-recent `window` records, clamped [-1,1], 0 on no
+  activity. **CAVEAT (audit-trailed by the engine):** with no `broker_codes` the endpoint returns the
+  *default broker's* net — a true all-broker net is identically zero, so a per-broker series is the
+  only meaningful unit; `brokerCodes` is exposed so 1.8 can later track a curated "smart-money" group
+  (signal math unchanged). Tests: `AutoscreenerTests/BrokerActivityServiceTests.swift`. **Full
+  `AutoscreenerTests` bundle: TEST EXECUTE SUCCEEDED.**
+
+**Next action:** continue **§8 Phase 1** from **1.7** (`marketContext()` from `RegimeFactorBuilder`
+inputs, §3 — near-free re-pack of the seven regime inputs the app already computes). Then **1.8**
+(assemble `StockbitDataProvider: DataProvider` — fetch + throttle/cache/paywall; compose the now-complete
+adapter set: keystats→TTM, fundachart→annuals, `merging(_:balanceSheet:)`, `assigning(sharesOutstanding:…)`,
+`ohlcvSeries` for the stock **and** the `sectorIndexSymbol(for:)` bars, `foreignNetFlowSeries`,
+`brokerAccumulationSignal`, `freeFloat`/`sector` from `EmittenService`). **Every Phase-1 unit
+data-source + adapter is now built; 1.7 + 1.8 are pure assembly/wiring.**
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -312,11 +336,15 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     ("40.00%"→0.40); `sharesOutstanding(fromKeystats:)` = NetIncome `1555` ÷ EPS `13200`, loss-maker
     fallback Common Equity `15883` ÷ BVPS `15718` (§13-A3); `assigning(sharesOutstanding:toLatestOf:)`
     stamps the latest annual (NCAV reads `financials.last`).
-1.5 **Sector → IDX-index static map** (§13-B4) for `sectorIndexBars`; enumerate the exact Indonesian
-    sector names from `/emitten/company/catalog`.
-1.6 **Flow & broker (now real series, §11):** `foreignNetFlow` per-day from historical-summary
-    `net_foreign`; `brokerAccumulationSignal` computed from `/order-trade/broker/activity/historical`
-    (daily net value + buy/sell lot %). No "degrade".
+1.5 ✅ **Sector → IDX-index static map** (§13-B4) for `sectorIndexBars`: 11-row IDX-IC name→symbol
+    table in `SelectionFundamentals` ("Teknologi"→IDXTECHNO / "Keuangan"→IDXFINANCE verified; all 11
+    symbols confirmed in `emitten/company/catalog.pchange_info`). `sectorIndexSymbol(for:)` falls back
+    to the sector index inside `info.indexes` when the name isn't mapped; nil ⇒ engine omits sector leg.
+1.6 ✅ **Flow & broker (real series, §11):** `foreignNetFlow` per-day already free from 0.2
+    (`foreignNetFlowSeries`). New `BrokerActivityService` (`order-trade/broker/activity/historical`,
+    daily NET) + `SelectionFundamentals.brokerAccumulationSignal` = value-weighted Σnet/Σ(buy+sell)
+    over a window, clamped [-1,1]. No "degrade". CAVEAT: unfiltered = default-broker net (per-broker is
+    the only meaningful unit; all-broker net is identically 0); `brokerCodes` exposed for later.
 1.7 **`marketContext()`** from `RegimeFactorBuilder` inputs (§3) — near-free.
 1.8 **Assemble `StockbitDataProvider: DataProvider`** + shared throttle / per-symbol cache / paywall
     pre-check (§7, §13-B6) — now ~8 calls/ticker.

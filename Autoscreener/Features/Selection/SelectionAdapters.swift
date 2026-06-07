@@ -297,4 +297,79 @@ enum SelectionFundamentals {
             sharesOutstanding: shares)
         return out
     }
+
+    // MARK: - Sector → IDX sector-index symbol (Phase 1.5, §11 / §13-B4)
+    //
+    // The engine's `sectorIndexBars` (the `Modifiers.timing` sector leg) needs the company's IDX
+    // sector index. IDX-IC classifies every listed company into exactly one of 11 sectors, each with a
+    // tradable index whose daily bars come from the SAME historical-summary feed (Phase 0.2) as the
+    // stock's own bars — so 1.8 fetches `dailyBars(symbol: <sectorIndex>, …).ohlcvSeries`. The map keys
+    // are the Indonesian sector display names from `EmittenInfo.sector`: "Teknologi"→IDXTECHNO and
+    // "Keuangan"→IDXFINANCE are capture-verified (WIFI, BBCA); the other nine are the standard IDX-IC
+    // names and the 11 index symbols are all confirmed present in the captures. Because the name match
+    // is the only fragile part, `sectorIndexSymbol(for:)` falls back to the sector index inside
+    // `EmittenInfo.indexes`, which always lists the company's one sector index (verified on both names).
+
+    /// IDX-IC sector display name (normalized: lowercased + trimmed) → IDX sector-index symbol.
+    static let sectorIndexBySector: [String: String] = [
+        "energi": "IDXENERGY",
+        "barang baku": "IDXBASIC",
+        "perindustrian": "IDXINDUST",
+        "barang konsumen primer": "IDXNONCYC",       // Consumer Non-Cyclicals
+        "barang konsumen non-primer": "IDXCYCLIC",   // Consumer Cyclicals
+        "kesehatan": "IDXHEALTH",
+        "keuangan": "IDXFINANCE",                    // verified (BBCA)
+        "properti & real estat": "IDXPROPERT",
+        "teknologi": "IDXTECHNO",                    // verified (WIFI)
+        "infrastruktur": "IDXINFRA",
+        "transportasi & logistik": "IDXTRANS",
+    ]
+
+    /// The 11 IDX-IC sector-index symbols — used to recognise the sector index inside `info.indexes`.
+    static let sectorIndexSymbols: Set<String> = Set(sectorIndexBySector.values)
+
+    /// The IDX sector-index symbol for a company. Primary: the sector-name map. Fallback (when the
+    /// name isn't mapped — e.g. a spelling drift): the one sector index present in `info.indexes`.
+    /// nil when neither resolves; 1.8 then leaves `sectorIndexBars` empty and the engine's timing
+    /// modifier omits the sector leg (it already guards on `sectorIndexBars.count`).
+    static func sectorIndexSymbol(for info: EmittenInfo) -> String? {
+        if let mapped = sectorIndexSymbol(forSector: info.sector) { return mapped }
+        return info.indexes.first(where: sectorIndexSymbols.contains)
+    }
+
+    /// Name-only lookup: the IDX sector-index symbol for an `EmittenInfo.sector` display name
+    /// (case-/whitespace-insensitive), or nil if the name isn't one of the 11 IDX-IC sectors.
+    static func sectorIndexSymbol(forSector sector: String) -> String? {
+        sectorIndexBySector[sector.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)]
+    }
+
+    // MARK: - Broker accumulation signal (Phase 1.6, §6 / §11)
+    //
+    // The engine's `brokerAccumulationSignal` is a single [-1,1] scalar (the flow modifier averages it
+    // with the foreign-flow sign). We compute it from the daily broker-activity series (BrokerActivity-
+    // Service) as a VALUE-WEIGHTED net-accumulation ratio over a recent window:
+    //
+    //     signal = Σ netValue / Σ (buyValue + sellValue)        (clamped to [-1,1])
+    //
+    // |net| = |buy − sell| ≤ buy + sell, so the ratio is already in [-1,1]; the clamp is defensive.
+    // Value-weighting lets high-activity days dominate and stops a thin day swinging the signal.
+    // Records arrive newest-first, so the window is simply the first `window` records.
+    //
+    // The per-day foreign-flow series the flow modifier also consumes is already free from Phase 0.2
+    // (`Sequence<HistoricalSummaryBar>.foreignNetFlowSeries`), so 1.6 only needs this broker scalar.
+
+    /// Value-weighted net-accumulation signal in [-1,1] over the most recent `window` daily records.
+    /// 0 when there are no records or no traded value in the window (no information → no tilt). 1.8 may
+    /// pass `config.flow.foreignWindow` for symmetry with the foreign leg; the default is a trading month.
+    static func brokerAccumulationSignal(from records: [BrokerActivityRecord], window: Int = 20) -> Double {
+        let recent = records.prefix(window)
+        var net = Decimal(0), gross = Decimal(0)
+        for r in recent {
+            net += r.netValue
+            gross += r.buyValue + r.sellValue
+        }
+        guard gross > 0 else { return 0 }
+        let signal = (net as NSDecimalNumber).doubleValue / (gross as NSDecimalNumber).doubleValue
+        return max(-1, min(1, signal))
+    }
 }
