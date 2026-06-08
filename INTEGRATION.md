@@ -171,22 +171,57 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     scorers drive the audit; injected valuator drives the reported IV). **Full `AutoscreenerTests`
     bundle: TEST SUCCEEDED, 0 failures.**
 
-**Next action:** **Phase 1 is complete** — `StockSelectionEngine(provider: StockbitDataProvider(
-universe: …, <services>))` can now run Tier-A live. Two follow-ups, neither blocking:
-(a) **Wire-up** — add the new services (`CompanyPriceFeedService`, `FundachartService`,
-`EmittenService`, `BrokerActivityService`) to `AppDependencies` + a thin entry point (screen/command)
-that builds the provider and calls `engine.run()`; settle the §10 universe source
-(screener/watchlist/sector) and the default preset.
-(b) **§8 Phase 3** — implement the financial (bank) `SelectionProfile` on the seam Phase 2 built:
-capital-strength gate (Common Equity ÷ Total Assets), justified-P/B valuator (IV = ((ROE−g)/(r−g))×
-BVPS), bank value/quality/earnings-quality scorers, then flip `defaultProfile(for:config:)`'s
-`.financial` case from `.industrial(config)` to `.financial(config)` (§14, §8 Phase 3.1–3.5).
-**Recommended: Phase 3.** NOTE — the engine seam is done, but banks still **fail upstream** inside
-`StockbitDataProvider.data(for:)`: keystats essential fields (`currentRatio`/`D/E`/etc.) are `"-"`
-for banks, so the §1.1 adapter throws `missingField` *before a SecurityData is ever built* — the
-archetype can't be classified for a name that never constructs. So Phase 3 also needs the provider to
-build a **bank-shaped `SecurityData`** (don't throw on the null industrial fields; populate the bank
-block) for `sector == "Keuangan"`. Read this Status header to resume.
+- **Phase 3.0 ✅ (2026-06-08)** — **universal `payoutRatio` / `returnOnAssets` TTM fields.** Added to
+  `TTMFinancials` (with `= 0` defaults, so the synthesized memberwise init stays source-compatible at
+  every existing call site, and the industrial path — which ignores them — keeps the golden master
+  byte-for-byte). `SelectionFundamentals.ttm(fromKeystats:)` parses payout `2916` and ROA `1460` as
+  **ratios** (÷100, like ROE). Unlike the six industrial-essential fields they are **NOT required** (a
+  non-dividend payer reports payout `"-"`), so an absent value **degrades to 0**. Pinned against
+  verbatim WIFI values (payout 1.61%, ROA 3.03%) in `SelectionFundamentalsAdapterTests`. Commit `97ad2e1`.
+- **Phase 3.1–3.4 ✅ (2026-06-08) — FINANCIAL (BANK) `SelectionProfile` (engine half complete).**
+  Entirely inside `StockSelectionEngine.swift` (working copy; `Reference/` pristine); additive — the
+  locked `SelectionEngineCharacterizationTests` golden master is **still byte-for-byte unchanged**.
+  Commit `9ed12f4`. Pieces:
+  - **`SelectionConfig.BankParams`** block (capital floor, Rf/ERP/β, bank scorer sub-weights) added to
+    config + `.balanced`. Rates/β are placeholders to sweep (like the industrial betas, §13-A2);
+    defaults **Rf 6.5% / ERP 7% / β 1.1** reproduce §14's BBCA worked check.
+  - **3.1 `CapitalStrengthGate`** — the CAR proxy: Common Equity (reconstructed as BVPS × shares) ÷
+    Total Assets ≥ `minEquityToAssets`. Replaces `SolvencyGate` for banks (current ratio / D/E are
+    `"-"`). Audit-trailed as a proxy, never a true CAR.
+  - **3.2 `JustifiedPBValuator` + shared pure `BankValuation.justifiedPriceToBook`** — Damodaran
+    financial-firm valuation (confirmed against the `damodaran-valuation` skill): g = (1−payout)·ROE
+    **capped ≤ Rf** (terminal discipline), Ke = Rf + β·ERP, justified P/B = (ROE−g)/(Ke−g),
+    IV = justified P/B × BVPS. Guards loss-makers / non-positive BV / degenerate Ke ≤ g → IV 0 (MoS
+    gate then screens them). Reproduces BBCA justified ≈ 2.07 vs actual 2.41 (~14–17% rich → negative MoS).
+  - **3.3 bank scorers** — `BankValueScorer` (P/B discount vs the ROE-justified P/B — Damodaran's
+    P/B↔ROE companion), `BankQualityScorer` (ROE + ROA; efficiency/cost-to-income skipped v1, §14),
+    `BankEarningsQualityScorer` (NI-growth stability via `consistency` + payout sustainability). New
+    `ScorerID`s (`bankValue`/`bankQuality`/`bankEarningsQuality`) reuse the matching base weight via
+    `Weights.base` (honest audit labels; no new weight knobs).
+  - **3.4 `SelectionProfile.financial(config)` + flipped `defaultProfile`** — `"Keuangan"` now routes
+    to `[DataIntegrity, Liquidity, CapitalStrength]` + bank scorers + `JustifiedPBValuator` (Lynch
+    growth reused, de-emphasised). Flow/timing/regime/sizing layers unchanged (archetype-agnostic).
+  - **Tests:** new `AutoscreenerTests/BankProfileTests.swift` (gate, valuator incl. the BBCA worked
+    example, scorers, profile composition, and end-to-end engine `run()` — a cheap bank is recommended
+    & audited as a financial; rich BBCA is screened out by the MoS gate). The Phase 2
+    `DefaultProfileRoutingTests` case that pinned the transitional industrial-fallback was updated to
+    assert the flip (it anticipated "Phase 3 swaps this"). **Full `AutoscreenerTests` bundle: TEST SUCCEEDED.**
+
+**Next action:** **§8 Phase 3.6 — the provider half (the last Phase 3 step).** The engine bank profile
+is done and unit-green on stub data, but a **live** bank still **fails upstream** inside
+`StockbitDataProvider.data(for:)`: `ttm(fromKeystats:)` requires `currentRatio` `1498` / `debtToEquity`
+`1508`, which are `"-"` for banks, so it throws `missingField` *before a SecurityData is ever built* —
+the engine never gets to classify the name. Fix: make the provider **classify by sector first** (it
+already fetches `/emitten/info` → `info.sector`) and, for `CompanyArchetype.classify(sector:) ==
+.financial`, build the TTM via an **archetype-aware** `ttm(fromKeystats:archetype:)` that requires only
+`{eps, bvps, roe}` (the bank valuator/scorers' inputs — all present for BBCA: EPS 471.10, BVPS 2102.07,
+ROE 22.41%, payout 63.17%, ROA 3.54%) and lets `currentRatio` / `debtToEquity` / `epsGrowth` **degrade
+to 0** (the bank profile never runs `SolvencyGate` and reuses Lynch growth, which guards g). Keep the
+industrial path's required-set exactly as today (default `archetype: .industrial`). Then a
+BBCA-shaped stub (currentRatio/D-E `"-"`) should construct a `.financial`-classified `SecurityData`
+instead of throwing — add that test to `StockbitDataProviderTests`. **Then** wire the 4 services into
+`AppDependencies` + a thin entry point and settle §10 universe/preset (non-blocking). Read this Status
+header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -453,7 +488,12 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     exists). Proven byte-for-byte by the unchanged `SelectionEngineCharacterizationTests` golden
     master; seam exercised by `CompanyArchetypeProfileTests`. Full bundle green.
 
-### Phase 3 — Financial (bank) profile (§14)
+### Phase 3 — Financial (bank) profile (§14) — ENGINE HALF (3.1–3.5) ✅ DONE 2026-06-08; provider half (3.6) remains
+
+> 3.1–3.4 landed in commit `9ed12f4` and `payoutRatio`/`returnOnAssets` in `97ad2e1` (the 3.5
+> `BankParams` block shipped inside .balanced as part of 3.1). What's left is **3.6**: make
+> `StockbitDataProvider` build a bank-shaped `SecurityData` (archetype-aware `ttm`) — see the Status
+> header's "Next action". The sub-steps below are the original plan, kept for reference.
 
 3.1 Gates: **Capital-strength** (Common Equity `15883` ÷ Total Assets `1559` ≥ floor — the
     available CAR proxy); drop current-ratio / receivables / accruals. Audit-trail the proxy so it's
