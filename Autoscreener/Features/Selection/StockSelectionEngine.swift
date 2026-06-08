@@ -125,12 +125,18 @@ struct SelectionConfig: Sendable, Codable {
     }
     struct TimingParams: Sendable, Codable {
         var cap: Double
-        var marketBeta: Double              // placeholder betas — replace w/ measured
+        // FALLBACK betas (§13-A2): used only when the per-name rolling regression can't be run
+        // (insufficient or degenerate bars). When it can, `Modifiers.timing` uses the MEASURED betas
+        // from `FactorRegression` instead, and the audit trail records which was used.
+        var marketBeta: Double
         var sectorBeta: Double
         var returnWindow: Int
         var maPeriod: Int
         var healthyExtensionMax: Double     // up to this above MA = constructive
         var chasingExtensionMin: Double     // beyond this = penalise (spike chasing)
+        // Rolling-regression lookback: how many of the most-recent daily returns the measured betas
+        // are estimated over (one trading year ≈ 252). Defaulted so existing call sites are unchanged.
+        var betaLookback: Int = 252
     }
     struct Sizing: Sendable, Codable {
         var portfolioValue: Double
@@ -632,16 +638,24 @@ enum Modifiers {
         guard s.dailyBars.count > t.returnWindow, s.marketIndexBars.count > t.returnWindow,
               s.sectorIndexBars.count > t.returnWindow, let last = s.dailyBars.last
         else { return (0, "insufficient bars") }
+        // §13-A2: measure the name's own betas by rolling regression; fall back to the configured
+        // placeholders only when the bars are insufficient/degenerate. Surface which was used so the
+        // audit trail is honest about whether the timing read is calibrated or approximate.
+        let measured = FactorRegression.betas(stock: s.dailyBars, market: s.marketIndexBars,
+                                              sector: s.sectorIndexBars, lookback: t.betaLookback)
+        let bm = measured?.market ?? t.marketBeta
+        let bs = measured?.sector ?? t.sectorBeta
         let stockR = ret(s.dailyBars, t.returnWindow)
         let mktR = ret(s.marketIndexBars, t.returnWindow)
         let secR = ret(s.sectorIndexBars, t.returnWindow)
-        let idio = stockR - t.marketBeta * mktR - t.sectorBeta * (secR - mktR)
+        let idio = stockR - bm * mktR - bs * (secR - mktR)
         let ma = sma(s.dailyBars, t.maPeriod); let ext = (nsDouble(last.close) - ma) / ma
         var d = 0.0
         if idio > 0 { d += t.cap * 0.5 }
         if ext > 0, ext < t.healthyExtensionMax { d += t.cap * 0.5 }
         if ext > t.chasingExtensionMin { d -= t.cap }
-        return (max(-t.cap, min(t.cap, d)), "idio \(pct(idio)) · ext \(pct(ext))")
+        let betaSrc = "β \(round2(bm))/\(round2(bs)) \(measured != nil ? "measured" : "default")"
+        return (max(-t.cap, min(t.cap, d)), "idio \(pct(idio)) · ext \(pct(ext)) · \(betaSrc)")
     }
 }
 
@@ -840,4 +854,53 @@ private func ret(_ bars: [OHLCV], _ n: Int) -> Double {
     guard bars.count > n else { return 0 }
     let a = nsDouble(bars[bars.count - 1 - n].close), b = nsDouble(bars.last!.close)
     return a == 0 ? 0 : (b - a) / a
+}
+
+// MARK: - 11b. Factor regression — measured betas (§13-A2)
+
+/// Two-factor market-model betas, estimated by a no-intercept OLS over the most-recent `lookback`
+/// daily close-to-close returns:
+///
+///     stockReturn ≈ βmarket · marketReturn + βsector · (sectorReturn − marketReturn)
+///
+/// This is exactly the factor decomposition `Modifiers.timing` applies to form its `idio` residual,
+/// so the regression is fit through the origin (no alpha term — the residual return *is* what timing
+/// keeps) to stay self-consistent with how the betas are then used. Replaces the hardcoded placeholder
+/// betas with a value measured from each name's own price history (§13-A2).
+///
+/// Returns nil — caller falls back to the configured placeholder betas — when the data is insufficient
+/// (fewer than `minObservations` overlapping returns) or degenerate: a factor with no variance (flat
+/// prices) or two collinear factors (the sector index equals the market index) make the normal-
+/// equations determinant vanish, leaving the betas unidentifiable.
+enum FactorRegression {
+    static func betas(stock: [OHLCV], market: [OHLCV], sector: [OHLCV],
+                      lookback: Int, minObservations: Int = 30) -> (market: Double, sector: Double)? {
+        let y = dailyReturns(stock), m = dailyReturns(market), s = dailyReturns(sector)
+        let n = min(y.count, m.count, s.count, max(lookback, 0))
+        guard n >= minObservations else { return nil }
+        // Newest-aligned window: the most-recent `n` overlapping returns from each series.
+        let yy = Array(y.suffix(n)), mm = Array(m.suffix(n)), ss = Array(s.suffix(n))
+        var s11 = 0.0, s22 = 0.0, s12 = 0.0, s1y = 0.0, s2y = 0.0
+        for i in 0..<n {
+            let x1 = mm[i]                 // market factor
+            let x2 = ss[i] - mm[i]         // sector-excess factor
+            s11 += x1 * x1; s22 += x2 * x2; s12 += x1 * x2
+            s1y += x1 * yy[i]; s2y += x2 * yy[i]
+        }
+        let det = s11 * s22 - s12 * s12
+        // Degenerate if either factor is ~flat or the two are collinear (det → 0 by Cauchy–Schwarz).
+        guard s11 > 1e-12, s22 > 1e-12, det > 1e-12 * s11 * s22 else { return nil }
+        let bm = (s1y * s22 - s2y * s12) / det
+        let bs = (s2y * s11 - s1y * s12) / det
+        guard bm.isFinite, bs.isFinite else { return nil }
+        return (bm, bs)
+    }
+
+    /// Close-to-close simple returns, oldest→newest. A non-positive prior close yields a 0 return (no
+    /// valid percentage change) rather than an infinity/NaN that would poison the regression.
+    private static func dailyReturns(_ bars: [OHLCV]) -> [Double] {
+        guard bars.count > 1 else { return [] }
+        let closes = bars.map { nsDouble($0.close) }
+        return zip(closes, closes.dropFirst()).map { prev, cur in prev > 0 ? (cur - prev) / prev : 0 }
+    }
 }

@@ -254,16 +254,52 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     `AutoscreenerTests` bundle: TEST SUCCEEDED** — golden master (`SelectionEngineCharacterizationTests`)
     unchanged.
 
-**Next action:** **Phase 4 calibration (§13-A2, A3) + (optional) the "Today's Picks" UI.** Tier-A is
-now feature-complete for both archetypes, fully unit-green, **and reachable** (`AppDependencies
-.selectionRunner.run()` ranks the Watchlist universe under `.balanced`). Remaining, in order:
-(1) **Phase 4 calibration:** replace placeholder betas (`marketBeta`/`sectorBeta`) and bank `Rf/ERP/β`
-with measured values; run a null/loss-maker robustness sweep across both profiles' gates/scorers;
-then a live end-to-end run of `selectionRunner.run()` verifying the full audit trail for one industrial
-(WIFI) **and** one bank (BBCA) from the live feed. (2) **Optional UI (deferred):** surface a "Today's
-Picks" `SidebarItem` + ViewModel + view over `Recommendation`s (with the audit trail) once calibration
-is trusted. Phase 5 (Tier-B backtest) stays blocked on persistence (§9). Read this Status header to
-resume.
+- **Phase 4 ✅ (2026-06-08) — CALIBRATION & END-TO-END (§13-A2/A3).** Three additive pieces inside
+  `StockSelectionEngine.swift` (working copy; `Reference/` pristine). The locked
+  `SelectionEngineCharacterizationTests` golden master stays green — its single timing audit line was
+  intentionally updated (documented in-test); every other pinned number is byte-for-byte unchanged.
+  - **4.1 Measured betas (§13-A2):** `Modifiers.timing` no longer applies the global placeholder betas
+    to every name. New pure `FactorRegression.betas(stock:market:sector:lookback:)` — a no-intercept
+    two-factor OLS over the most-recent `betaLookback` (252, new defaulted `TimingParams` field) daily
+    returns, `stockR ≈ βm·mktR + βs·(secR−mktR)` (origin-fit to match `idio`'s residual definition) —
+    measures each name's OWN betas from its bars. `TimingParams.marketBeta`/`sectorBeta` are now the
+    FALLBACK, used only when the regression is degenerate (flat/collinear factors) or short (< 30 obs).
+    The timing audit line now reports the betas used and whether they were `measured` or `default`.
+    Golden-master flat bars are degenerate → fallback → `idio` unchanged (+0.000); only the audit STRING
+    changed (one line). Tests: `FactorRegressionTests` (recovers known βs; nil on flat/collinear/
+    insufficient; recency-trims to `lookback`) + `TimingModifierBetaTests` (timing uses + labels the
+    measured βs, falls back on flat bars).
+  - **4.2 Robustness sweep (§13-A3):** new parameterized `EngineRobustnessSweep` feeds 8 realistic
+    pathological shapes (loss-maker eps/ROE/NI < 0, zero book value, empty financials, zero shares, and
+    degraded / loss-maker / zero-asset / zero-BVPS banks) through BOTH archetype profiles' gates,
+    scorers, valuators, and full `run()`. Invariants pinned: no crash; every scorer finite in [0,1];
+    every IV finite ≥ 0; every recommendation finite with weight ≤ `maxPositionPct`. **All pass with no
+    production change** — the engine was already null-safe (Phase 1 adapter discipline + the engine's
+    existing guards); the sweep is now the standing proof. (`price` is essential — the provider throws
+    `noPriceData` rather than emit 0 — so a zero-price "free stock" is unreachable and not exercised.)
+  - **4.3 End-to-end (deterministic half):** new `EndToEndAuditTrailTests` runs the WHOLE pipeline on
+    bars WITH variance (the golden master / BankProfile run on FLAT bars, so their timing always took
+    the fallback) for a WIFI-shaped industrial and the captured-value BBCA bank. Verifies the full audit
+    trail in order for each profile AND that 4.1's regression engages end-to-end — the timing line
+    reports `measured β 1.10/0.30` (the stock bars are an exact 1.1·mkt + 0.3·secExcess combination).
+    Industrial recommended via the Graham path (IV ≈ 6,364); cheap BBCA recommended via the bank path
+    (IV ≈ 4,343, JustifiedPB); BBCA at its captured price (P/B 2.41) screened out by the MoS gate.
+  - **Scope note (deliberate):** the bank valuation rates (`BankParams.riskFreeRate` /
+    `equityRiskPremium` / `beta` = Rf 6.5% / ERP 7% / β 1.1) remain COMPILED calibration constants. Rf
+    and ERP are macro/dataset inputs (Indo 10y yield, Damodaran ERP) not derivable from price bars; the
+    bank CAPM β is a distinct single-factor choice from the two-factor timing β — kept as a config knob
+    to sweep, NOT wired to the regression (wiring it would move the BBCA worked example). **Full
+    `AutoscreenerTests` bundle: 458 passed, 0 failures** — golden master unchanged.
+
+**Next action:** **Tier-A is feature-complete and calibrated.** Remaining, in order:
+(1) **LIVE audit (manual — needs the authenticated feed):** run `AppDependencies.selectionRunner
+.run(config: .balanced)` against a live Stockbit session and eyeball the audit trail for a real
+industrial + a real bank. This couldn't be done in-session (no auth/network); the deterministic
+end-to-end (4.3) is the offline stand-in. (2) **Optional "Today's Picks" UI (deferred):** a
+`SidebarItem` + ViewModel + view over `Recommendation`s (with the audit trail). (3) **Optional bank-rate
+calibration:** source live Rf/ERP and decide single-factor CAPM β vs the two-factor timing β for the
+bank valuator (see Phase 4 scope note). Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
+Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -551,13 +587,18 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
 3.5 Add `bank: BankParams` + bank presets to `SelectionConfig`. Leave registry open for
     `insurer`/`reit` (YAGNI).
 
-### Phase 4 — Calibration & end-to-end (§13-A2, A3)
+### Phase 4 — Calibration & end-to-end (§13-A2, A3) — ✅ DONE 2026-06-08 (live audit = manual step)
 
-4.1 Replace placeholder betas (`marketBeta`/`sectorBeta`) with measured ones (rolling regression over
-    historical bars — data now available).
-4.2 Null/loss-maker robustness sweep across all gates/scorers (both profiles).
-4.3 Run `.balanced` (industrial) **and** a bank preset over a small candidate universe; verify the
-    full audit trail end-to-end for one industrial name (e.g. WIFI) **and** one bank (BBCA).
+4.1 ✅ Replaced placeholder timing betas with MEASURED ones: `FactorRegression.betas` (no-intercept
+    two-factor OLS over the name's own daily returns, `lookback` 252) feeds `Modifiers.timing`;
+    `marketBeta`/`sectorBeta` become the fallback for degenerate/short series. Audit reports which.
+4.2 ✅ Null/loss-maker robustness sweep (`EngineRobustnessSweep`, 8 shapes × both profiles): no crash,
+    scorers finite in [0,1], IV finite ≥0, recommendations finite & bounded. No production change —
+    the engine was already null-safe; the sweep is the proof.
+4.3 ✅ (deterministic half) `EndToEndAuditTrailTests` runs the full pipeline on VARYING bars for a
+    WIFI-shaped industrial and the captured-value BBCA bank; verifies the complete audit trail and that
+    the 4.1 regression engages end-to-end (`measured β 1.10/0.30`). The truly-LIVE run against the
+    authenticated feed (`selectionRunner.run()`) remains a manual step — no auth/network in-session.
 
 ### Phase 5 — Tier B backtest (separate project — §9, §12, §13-C)
 
