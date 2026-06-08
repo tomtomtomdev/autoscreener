@@ -254,8 +254,8 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     `AutoscreenerTests` bundle: TEST SUCCEEDED** — golden master (`SelectionEngineCharacterizationTests`)
     unchanged.
 
-- **Phase 4 ✅ (2026-06-08) — CALIBRATION & END-TO-END (§13-A2/A3).** Three additive pieces inside
-  `StockSelectionEngine.swift` (working copy; `Reference/` pristine). The locked
+- **Phase 4 ✅ (2026-06-08, commit `1f38760`) — CALIBRATION & END-TO-END (§13-A2/A3).** Three additive
+  pieces inside `StockSelectionEngine.swift` (working copy; `Reference/` pristine). The locked
   `SelectionEngineCharacterizationTests` golden master stays green — its single timing audit line was
   intentionally updated (documented in-test); every other pinned number is byte-for-byte unchanged.
   - **4.1 Measured betas (§13-A2):** `Modifiers.timing` no longer applies the global placeholder betas
@@ -587,7 +587,7 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
 3.5 Add `bank: BankParams` + bank presets to `SelectionConfig`. Leave registry open for
     `insurer`/`reit` (YAGNI).
 
-### Phase 4 — Calibration & end-to-end (§13-A2, A3) — ✅ DONE 2026-06-08 (live audit = manual step)
+### Phase 4 — Calibration & end-to-end (§13-A2, A3) — ✅ DONE 2026-06-08 (commit `1f38760`; live audit = manual step)
 
 4.1 ✅ Replaced placeholder timing betas with MEASURED ones: `FactorRegression.betas` (no-intercept
     two-factor OLS over the name's own daily returns, `lookback` 252) feeds `Modifiers.timing`;
