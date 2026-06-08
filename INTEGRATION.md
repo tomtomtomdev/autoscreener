@@ -228,8 +228,8 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     industrial required-set. **Full `AutoscreenerTests` bundle: 429 passed, 0 failures** — golden master
     (`SelectionEngineCharacterizationTests`) unchanged.
 
-- **App wiring ✅ (2026-06-08) — HEADLESS TIER-A ENTRY POINT.** The engine is now reachable from the
-  composition root. Decisions taken (§10): **universe = the composite Watchlist** (the ranked union
+- **App wiring ✅ (2026-06-08, commit `ee7d0ea`) — HEADLESS TIER-A ENTRY POINT.** The engine is now
+  reachable from the composition root. Decisions taken (§10): **universe = the composite Watchlist** (the ranked union
   of the 20 screeners), **preset = `.balanced` compiled**, **surface = headless factory** (no UI tab
   yet — that's the deferred "Today's Picks" screen). Pieces:
   - **`AppDependencies`** gained the four per-ticker selection legs it was missing —
