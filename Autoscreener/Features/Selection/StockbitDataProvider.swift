@@ -12,12 +12,15 @@ import Foundation
 //     proven CONCURRENT fan-out verbatim (a one-shot, five-call market read), so it is not throttled.
 //   • Per-symbol result cache. `data(for:)` memoises its `SecurityData`, and the market/sector index
 //     bars (shared across tickers) are cached by symbol, so a universe run fetches each index once.
-//   • Graceful degradation. ESSENTIAL legs (keystats→TTM, fundachart annuals, the daily bars, the
-//     sector from `/emitten/info`) propagate their errors — a name that can't be valued as an
-//     industrial is surfaced, not silently mis-scored (banks throw `missingField` until Phase 2/3
-//     adds the archetype routing). BEST-EFFORT legs (balance-sheet overlay, profile free-float,
-//     sector-index bars, broker signal) degrade to their no-evidence value on paywall/failure rather
-//     than aborting the whole run.
+//   • Archetype-first classification. `/emitten/info` (an ESSENTIAL leg) is read FIRST so the sector
+//     classifies the company before the TTM is built: a bank's keystats omits current ratio / D-E
+//     ("-"), so the adapter is told `archetype: .financial` and relaxes those required fields rather
+//     than throwing `missingField` (§14 / Phase 3.6). Industrials keep the full required set.
+//   • Graceful degradation. ESSENTIAL legs (the sector from `/emitten/info`, keystats→TTM, fundachart
+//     annuals, the daily bars) propagate their errors — a name that can't be valued is surfaced, not
+//     silently mis-scored. BEST-EFFORT legs (balance-sheet overlay, profile free-float, sector-index
+//     bars, broker signal) degrade to their no-evidence value on paywall/failure rather than aborting
+//     the whole run.
 //
 // Universe source (§10) is deliberately left to the caller: 1.8 takes an explicit candidate list,
 // matching "run Tier-A v1 against a small candidate universe" — picking screener vs. watchlist vs.
@@ -132,8 +135,16 @@ actor StockbitDataProvider: DataProvider {
         let to = now()
 
         // --- Essential legs: a failure here means the name can't be valued (propagates). ---
+
+        // Classify by sector FIRST. A bank's keystats omits current ratio / D-E ("-"), so the TTM
+        // adapter must know the archetype to relax the right required fields (§14 / Phase 3.6):
+        // otherwise it throws `missingField` and the name never reaches the engine to be routed to
+        // the financial profile. `/emitten/info` was always fetched essential — only its order moves.
+        let info = try await paced { try await self.emitten.info(symbol: t) }
+        let archetype = CompanyArchetype.classify(sector: info.sector)
+
         let fields = try await paced { try await self.keystats.fields(symbol: t) }
-        let ttm = try SelectionFundamentals.ttm(fromKeystats: fields)
+        let ttm = try SelectionFundamentals.ttm(fromKeystats: fields, archetype: archetype)
 
         let income = try await paced {
             try await self.fundachart.financials(symbol: t, dataset: .incomeStatement, report: .annual)
@@ -145,8 +156,6 @@ actor StockbitDataProvider: DataProvider {
             try await self.fundachart.financials(symbol: t, dataset: .cashFlow, report: .annual)
         }
         var annuals = SelectionFundamentals.annualFinancials(income: income, balance: balance, cashFlow: cashFlow)
-
-        let info = try await paced { try await self.emitten.info(symbol: t) }
 
         let stockBars = try await paced { try await self.priceFeed.dailyBars(symbol: t, from: from, to: to) }
         let dailyBars = stockBars.ohlcvSeries

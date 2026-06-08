@@ -207,21 +207,37 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     `DefaultProfileRoutingTests` case that pinned the transitional industrial-fallback was updated to
     assert the flip (it anticipated "Phase 3 swaps this"). **Full `AutoscreenerTests` bundle: TEST SUCCEEDED.**
 
-**Next action:** **§8 Phase 3.6 — the provider half (the last Phase 3 step).** The engine bank profile
-is done and unit-green on stub data, but a **live** bank still **fails upstream** inside
-`StockbitDataProvider.data(for:)`: `ttm(fromKeystats:)` requires `currentRatio` `1498` / `debtToEquity`
-`1508`, which are `"-"` for banks, so it throws `missingField` *before a SecurityData is ever built* —
-the engine never gets to classify the name. Fix: make the provider **classify by sector first** (it
-already fetches `/emitten/info` → `info.sector`) and, for `CompanyArchetype.classify(sector:) ==
-.financial`, build the TTM via an **archetype-aware** `ttm(fromKeystats:archetype:)` that requires only
-`{eps, bvps, roe}` (the bank valuator/scorers' inputs — all present for BBCA: EPS 471.10, BVPS 2102.07,
-ROE 22.41%, payout 63.17%, ROA 3.54%) and lets `currentRatio` / `debtToEquity` / `epsGrowth` **degrade
-to 0** (the bank profile never runs `SolvencyGate` and reuses Lynch growth, which guards g). Keep the
-industrial path's required-set exactly as today (default `archetype: .industrial`). Then a
-BBCA-shaped stub (currentRatio/D-E `"-"`) should construct a `.financial`-classified `SecurityData`
-instead of throwing — add that test to `StockbitDataProviderTests`. **Then** wire the 4 services into
-`AppDependencies` + a thin entry point and settle §10 universe/preset (non-blocking). Read this Status
-header to resume.
+- **Phase 3.6 ✅ (2026-06-08) — PROVIDER HALF COMPLETE; PHASE 3 DONE.** A **live** bank no longer fails
+  upstream: `StockbitDataProvider.data(for:)` now **classifies by sector FIRST** (reads `/emitten/info`
+  before building the TTM — an essential leg whose *order* moved, not its status) and passes the
+  archetype into an **archetype-aware** `SelectionFundamentals.ttm(fromKeystats:archetype:)`.
+  - **Adapter (`SelectionAdapters.swift`):** the required set is now archetype-dependent. `eps`, `bvps`,
+    `returnOnEquity` are required on **every** path (both valuators read them). `currentRatio` /
+    `debtToEquity` / `epsGrowthPct` stay required for `.industrial` but **degrade to 0 for `.financial`**
+    (banks report `"-"`; `SolvencyGate` is replaced by `CapitalStrengthGate` and Lynch growth guards
+    `g`). New `archetype:` param **defaults to `.industrial`**, so the industrial required-set and every
+    existing call site are byte-for-byte unchanged.
+  - **Provider:** `fetchSecurity` reads `info` → `CompanyArchetype.classify(sector:)` → `ttm(…,
+    archetype:)`; the duplicate later `info` fetch was removed; the file's header doc comment now
+    documents archetype-first classification.
+  - **Tests:** new `KeystatsTTMArchetypeTests` (financial degrades the 3 `"-"` fields to 0 incl. the
+    BBCA payout/ROA ratios; financial still requires `{eps,bvps,roe}`; the same bank map throws on the
+    default industrial path — the contrast that motivates the param) + `StockbitDataProviderArchetypeTests`
+    (a BBCA-shaped stub builds a `.financial`-classified `SecurityData` instead of throwing). The
+    existing `propagatesWhenAnEssentialFieldIsMissing` (Teknologi→industrial) still guards the unchanged
+    industrial required-set. **Full `AutoscreenerTests` bundle: 429 passed, 0 failures** — golden master
+    (`SelectionEngineCharacterizationTests`) unchanged.
+
+**Next action:** **wire it into the app (post-Phase-3 integration) + Phase 4 (§13-A2, A3).** The engine
++ provider are now feature-complete for both archetypes and fully unit-green. Remaining, in order:
+(1) **App wiring (non-blocking):** construct `StockbitDataProvider` in `AppDependencies` from the 4
+already-built services (+ the regime fan-out), add a thin entry point to run `StockSelectionEngine`,
+and settle the §10 universe/preset decision (screener vs. watchlist vs. sector list). (2) **Phase 4
+calibration:** replace placeholder betas (`marketBeta`/`sectorBeta`) and bank `Rf/ERP/β` with measured
+values; run a null/loss-maker robustness sweep across both profiles' gates/scorers; then a live
+end-to-end run of `.balanced` over a small universe verifying the full audit trail for one industrial
+(WIFI) **and** one bank (BBCA). Phase 5 (Tier-B backtest) stays blocked on persistence (§9). Read this
+Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -488,12 +504,13 @@ Per ticker the engine fans out **5–6 calls**: 3× financials + keystats + char
     exists). Proven byte-for-byte by the unchanged `SelectionEngineCharacterizationTests` golden
     master; seam exercised by `CompanyArchetypeProfileTests`. Full bundle green.
 
-### Phase 3 — Financial (bank) profile (§14) — ENGINE HALF (3.1–3.5) ✅ DONE 2026-06-08; provider half (3.6) remains
+### Phase 3 — Financial (bank) profile (§14) — ✅ COMPLETE 2026-06-08 (engine half 3.1–3.5 + provider half 3.6)
 
 > 3.1–3.4 landed in commit `9ed12f4` and `payoutRatio`/`returnOnAssets` in `97ad2e1` (the 3.5
-> `BankParams` block shipped inside .balanced as part of 3.1). What's left is **3.6**: make
-> `StockbitDataProvider` build a bank-shaped `SecurityData` (archetype-aware `ttm`) — see the Status
-> header's "Next action". The sub-steps below are the original plan, kept for reference.
+> `BankParams` block shipped inside .balanced as part of 3.1). **3.6** (provider half) is now done:
+> `StockbitDataProvider` classifies by sector first and builds a bank-shaped `SecurityData` via the
+> archetype-aware `ttm(fromKeystats:archetype:)` — see the Status-header "Done" entry. The sub-steps
+> below are the original plan, kept for reference.
 
 3.1 Gates: **Capital-strength** (Common Equity `15883` ÷ Total Assets `1559` ≥ floor — the
     available CAR proxy); drop current-ratio / receivables / accruals. Audit-trail the proxy so it's

@@ -346,6 +346,45 @@ private func makeProvider(
     }
 }
 
+// MARK: - data(for:) archetype routing (Phase 3.6)
+
+@Suite struct StockbitDataProviderArchetypeTests {
+
+    /// A BBCA-shaped keystats map: per-share + ROE present, but current ratio / D-E / EPS-growth are
+    /// "-" (banks don't report them). On the industrial path `ttm(fromKeystats:)` throws `missingField`
+    /// *before* a `SecurityData` is built — classifying by sector first lets the provider build it as
+    /// a financial instead. Anchored to the BBCA capture (EPS 471.10, BVPS 2,102.07, ROE 22.41%).
+    private static let bankFields: [String: String] = [
+        "13200": "471.10", "15718": "2,102.07",
+        "1498": "-", "1508": "-",          // banks report "-" for current ratio / D-E
+        "1461": "22.41%", "1471": "-",     // ROE present; EPS-growth "-"
+        "1555": "58,075 B", "1559": "1,640,831 B", "15883": "259,132 B",
+        "2916": "63.17%", "1460": "3.54%",
+    ]
+    private static let bankInfo = EmittenInfo(
+        symbol: "BBCA", name: "Bank Central Asia", sector: "Keuangan",
+        subSector: "Bank", indexes: ["IDXFINANCE", "LQ45"])
+
+    @Test func buildsAFinancialClassifiedSecurityDataForABank() async throws {
+        let provider = makeProvider(
+            keystats: StubKeystats(Self.bankFields),
+            emitten: StubEmitten(infoResult: Self.bankInfo, profileResult: happyProfile),
+            priceFeed: StubPriceFeed(barsBySymbol: ["BBCA": wifiBars], defaultBars: indexBars))
+
+        // The whole point of 3.6: this no longer throws `missingField` upstream.
+        let s = try await provider.data(for: "BBCA")
+
+        #expect(s.sector == "Keuangan")
+        #expect(CompanyArchetype.classify(sector: s.sector) == .financial)
+        // The "-" solvency/growth fields degraded to 0 (no throw); the bank's own inputs survived.
+        #expect(s.ttm.currentRatio == 0)
+        #expect(s.ttm.debtToEquity == 0)
+        #expect(s.ttm.epsGrowthPct == 0)
+        #expect(abs(s.ttm.returnOnEquity - 0.2241) < 1e-9)
+        #expect(s.price == 120)   // essential price leg still produced a valuation
+    }
+}
+
 // MARK: - marketContext()
 
 @Suite struct StockbitDataProviderMarketContextTests {

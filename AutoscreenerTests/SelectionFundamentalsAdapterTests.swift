@@ -133,3 +133,60 @@ private let wifiKeystatsFields: [String: String] = [
         #expect(nsd(ttm.netIncome) == 490_000_000_000)
     }
 }
+
+// Phase 3.6 (§14): the financial-archetype path. A bank legitimately reports "-" for current ratio /
+// D-E / EPS-growth, so on the industrial path `ttm(fromKeystats:)` throws `missingField` before a
+// SecurityData is ever built. The archetype-aware overload relaxes the required set to {eps, bvps,
+// roe} — the bank valuator/scorers' inputs — and degrades the three "-" fields to 0 (SolvencyGate is
+// replaced by CapitalStrengthGate; Lynch growth is reused but guards g). Anchored to the BBCA capture.
+private let bbcaKeystatsFields: [String: String] = [
+    "13200": "471.10",       // EPS (TTM)
+    "15718": "2,102.07",     // Book Value Per Share
+    "1498": "-",             // Current Ratio — banks report "-"
+    "1508": "-",             // Debt/Equity — banks report "-"
+    "1461": "22.41%",        // ROE (TTM)
+    "1471": "-",             // EPS Annual YoY Growth — banks report "-"
+    "1555": "58,075 B",      // Net Income (TTM)
+    "1559": "1,640,831 B",   // Total Assets (Quarter)
+    "15883": "259,132 B",    // Common Equity
+    "2916": "63.17%",        // Payout Ratio
+    "1460": "3.54%",         // Return on Assets (TTM)
+]
+
+@Suite struct KeystatsTTMArchetypeTests {
+
+    @Test func financialArchetypeDegradesSolvencyAndGrowthFieldsToZero() throws {
+        let ttm = try SelectionFundamentals.ttm(fromKeystats: bbcaKeystatsFields, archetype: .financial)
+        // The bank's required inputs are present…
+        #expect(abs(nsd(ttm.eps) - 471.10) < 1e-6)
+        #expect(abs(nsd(ttm.bookValuePerShare) - 2102.07) < 1e-6)
+        #expect(abs(ttm.returnOnEquity - 0.2241) < 1e-9)
+        // …and the three fields banks report as "-" degrade to 0 rather than throwing.
+        #expect(ttm.currentRatio == 0)
+        #expect(ttm.debtToEquity == 0)
+        #expect(ttm.epsGrowthPct == 0)
+        // The universal financial fields still parse as ratios (§3.0).
+        #expect(abs(ttm.payoutRatio - 0.6317) < 1e-9)
+        #expect(abs(ttm.returnOnAssets - 0.0354) < 1e-9)
+    }
+
+    @Test func financialArchetypeStillRequiresPerShareAndROE() {
+        // Relaxing the solvency/growth fields does NOT relax the bank's own inputs: a name with no
+        // EPS / book value / ROE can't be valued by the P/B-vs-ROE model, so it still throws.
+        for id in ["13200", "15718", "1461"] {
+            var fields = bbcaKeystatsFields
+            fields[id] = "-"
+            #expect(throws: SelectionFundamentals.AdapterError.self) {
+                _ = try SelectionFundamentals.ttm(fromKeystats: fields, archetype: .financial)
+            }
+        }
+    }
+
+    @Test func bankShapedMapIsUnscoreableOnTheDefaultIndustrialPath() {
+        // The contrast that motivates the archetype parameter: the same BBCA map that builds fine as a
+        // financial throws on the default (industrial) path, because "-" current ratio / D-E are required.
+        #expect(throws: SelectionFundamentals.AdapterError.self) {
+            _ = try SelectionFundamentals.ttm(fromKeystats: bbcaKeystatsFields)   // default = .industrial
+        }
+    }
+}

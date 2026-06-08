@@ -75,11 +75,17 @@ enum SelectionFundamentals {
     /// - `epsGrowthPct` is a **percent-number** (engine PEG does `pe / g` with g≈15), so "-11.46%" → −11.46.
     /// - Net Income / CFO / Total Assets are absolute rupiah with `B`/`T` suffixes → `parseScaledDecimal`.
     ///
-    /// The six fields the industrial gates/scorers actually read (`eps`, `bvps`, `currentRatio`,
-    /// `debtToEquity`, `returnOnEquity`, `epsGrowthPct`) are **required**: absent ("-") ⇒ `missingField`,
-    /// never coerced to 0 (§13-A3). The three absolute fields are unread by today's gates/scorers and
-    /// only feed `sharesOutstanding` derivation (§1.4), so a missing one degrades to 0.
-    static func ttm(fromKeystats fields: [String: String]) throws -> TTMFinancials {
+    /// The required set is **archetype-dependent** (§14 / Phase 3.6). `eps`, `bvps` and
+    /// `returnOnEquity` are required on **every** path — both the industrial Graham valuator and the
+    /// bank P/B-vs-ROE valuator/scorers read them, and absent ("-") ⇒ `missingField`, never coerced to
+    /// 0 (§13-A3). `currentRatio` / `debtToEquity` / `epsGrowthPct` are required for `.industrial`
+    /// (`SolvencyGate` + Lynch PEG read them) but **degrade to 0 for `.financial`**: banks report "-"
+    /// for current ratio / D-E (their `SolvencyGate` is replaced by `CapitalStrengthGate`, and Lynch
+    /// growth is reused but guards `g`), so coercing those three to 0 lets a bank build instead of
+    /// throwing upstream before it can be classified. The three absolute fields are unread by today's
+    /// gates/scorers and only feed `sharesOutstanding` derivation (§1.4), so a missing one degrades to 0.
+    static func ttm(fromKeystats fields: [String: String],
+                    archetype: CompanyArchetype = .industrial) throws -> TTMFinancials {
         func plain(_ id: String) -> Double? { fields[id].flatMap(DisplayNumber.parseDecimal) }
         func scaled(_ id: String) -> Double? { fields[id].flatMap(DisplayNumber.parseScaledDecimal) }
         func require(_ id: String) throws -> Double {
@@ -89,10 +95,21 @@ enum SelectionFundamentals {
 
         let eps = try require(Field.eps)
         let bvps = try require(Field.bookValuePerShare)
-        let currentRatio = try require(Field.currentRatio)
-        let debtToEquity = try require(Field.debtToEquity)
         let roe = try require(Field.returnOnEquity) / 100.0      // percent → ratio
-        let epsGrowthPct = try require(Field.epsGrowthAnnual)    // percent-number, kept verbatim
+
+        // Solvency / growth: required for industrials, degraded to 0 for banks (see doc comment).
+        let currentRatio: Double, debtToEquity: Double, epsGrowthPct: Double
+        switch archetype {
+        case .industrial:
+            currentRatio = try require(Field.currentRatio)
+            debtToEquity = try require(Field.debtToEquity)
+            epsGrowthPct = try require(Field.epsGrowthAnnual)    // percent-number, kept verbatim
+        case .financial:
+            currentRatio = plain(Field.currentRatio) ?? 0
+            debtToEquity = plain(Field.debtToEquity) ?? 0
+            epsGrowthPct = plain(Field.epsGrowthAnnual) ?? 0     // percent-number, kept verbatim
+        }
+
         // Payout / ROA are universal but NOT required — a non-dividend payer reports payout "-", so
         // an absent value degrades to 0 (a ratio, like ROE). Read only by the financial profile.
         let payoutRatio = (plain(Field.payoutRatio) ?? 0) / 100.0
