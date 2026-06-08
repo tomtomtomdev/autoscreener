@@ -107,16 +107,16 @@ private struct FixedValuator: Valuator {
     }
 }
 
-// MARK: - Default profile routing (Phase 2 fallback)
+// MARK: - Default profile routing (Phase 3: each archetype routes to its own profile)
 
 @Suite struct DefaultProfileRoutingTests {
-    /// A bank classifies as `.financial`, but Phase 2 has no financial profile yet, so the default
-    /// selector still hands it the industrial profile — no behaviour change. Phase 3 swaps this.
-    @Test func bankClassifiesFinancialButStillGetsIndustrialProfileInPhase2() {
+    /// Phase 3 flipped the Phase 2 fallback: a "Keuangan" name now resolves to the financial profile
+    /// (the bank pipeline is exercised end-to-end in BankProfileTests). The classifier is unchanged.
+    @Test func bankRoutesToTheFinancialProfile() {
         let bank = seamSecurity(sector: "Keuangan")
         #expect(CompanyArchetype.classify(sector: bank.sector) == .financial)
         let profile = StockSelectionEngine.defaultProfile(for: bank, config: .balanced)
-        #expect(profile.archetype == .industrial)
+        #expect(profile.archetype == .financial)
     }
     @Test func industrialNameGetsIndustrialProfile() {
         let profile = StockSelectionEngine.defaultProfile(for: seamSecurity(), config: .balanced)

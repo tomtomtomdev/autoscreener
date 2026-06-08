@@ -38,6 +38,11 @@ enum ScorerID: String, Sendable, Codable {
     case quality = "Quality"
     case growthLynch = "GrowthLynch"
     case earningsQuality = "EarningsQuality"
+    // Financial-archetype scorers (§14). Distinct ids so the audit trail is honest about which model
+    // ran; they reuse the matching base weight (value/quality/earnings) via `Weights.base`.
+    case bankValue = "BankValue"
+    case bankQuality = "BankQuality"
+    case bankEarningsQuality = "BankEarningsQuality"
 }
 
 enum Verdict: Sendable { case pass, fail(reason: String) }
@@ -83,10 +88,10 @@ struct SelectionConfig: Sendable, Codable {
         var earningsQuality: Double
         func base(_ id: ScorerID) -> Double {
             switch id {
-            case .grahamValue: return grahamValue
-            case .quality: return quality
+            case .grahamValue, .bankValue: return grahamValue
+            case .quality, .bankQuality: return quality
             case .growthLynch: return growthLynch
-            case .earningsQuality: return earningsQuality
+            case .earningsQuality, .bankEarningsQuality: return earningsQuality
             }
         }
     }
@@ -134,6 +139,27 @@ struct SelectionConfig: Sendable, Codable {
         var advWindow: Int
         var minWeightFloor: Ratio           // ignore positions smaller than this
     }
+    /// Financial-archetype (bank) calibration surface (§14). Read only by the `.financial`
+    /// SelectionProfile; the industrial path never touches it. The valuation rates and beta are
+    /// placeholders to sweep against paper-trading, exactly like the industrial `TimingParams` betas.
+    struct BankParams: Sendable, Codable {
+        // Capital-strength gate — the available CAR proxy: Common Equity ÷ Total Assets ≥ floor.
+        var minEquityToAssets: Ratio
+        // Justified-P/B valuation: Ke = riskFreeRate + beta·equityRiskPremium; g = (1−payout)·ROE capped ≤ Rf.
+        var riskFreeRate: Double            // IDR 10y ≈ 0.065
+        var equityRiskPremium: Double       // Damodaran Indonesia ERP ≈ 0.07
+        var beta: Double                    // placeholder bank beta ≈ 1.0–1.2 (§13-A2)
+        // Bank value scorer: how far actual P/B sits below the ROE-justified P/B earns full credit at…
+        var pbDiscountFullCreditAt: Double
+        // Bank quality scorer: ROE + ROA (efficiency/cost-to-income skipped in v1 — not structured, §14).
+        var roeFloor: Double, roeSpan: Double, roeSubWeight: Double
+        var roaFloor: Double, roaSpan: Double, roaSubWeight: Double
+        // Bank earnings-quality scorer: net-income-growth stability + payout sustainability.
+        var earningsYears: Int
+        var stabilitySubWeight: Double
+        var payoutCeiling: Double           // payout above this is treated as less sustainable
+        var payoutSubWeight: Double
+    }
     struct RegimeParams: Sendable, Codable {
         struct RiskWeights: Sendable, Codable {
             var valuationPercentile: Double // multiplied by 0..1 percentile
@@ -166,6 +192,7 @@ struct SelectionConfig: Sendable, Codable {
     var timing: TimingParams
     var sizing: Sizing
     var regime: RegimeParams
+    var bank: BankParams
 }
 
 /// What the regime is ALLOWED to set — never which stock to buy. Now Codable so
@@ -214,7 +241,13 @@ extension SelectionConfig {
                                  maxPositionPct: 0.10, maxSectorPct: 0.25, maxNames: 10, weightTilt: [:]),
             riskOffPolicy: .init(regime: .riskOff, minMarginOfSafety: 0.45, maxTotalExposure: 0.35,
                                  maxPositionPct: 0.07, maxSectorPct: 0.20, maxNames: 6,
-                                 weightTilt: ["Quality": 1.4, "EarningsQuality": 1.4, "GrowthLynch": 0.7])))
+                                 weightTilt: ["Quality": 1.4, "EarningsQuality": 1.4, "GrowthLynch": 0.7])),
+        bank: .init(minEquityToAssets: 0.06,
+                    riskFreeRate: 0.065, equityRiskPremium: 0.07, beta: 1.1,
+                    pbDiscountFullCreditAt: 0.5,
+                    roeFloor: 0.10, roeSpan: 0.15, roeSubWeight: 0.5,
+                    roaFloor: 0.005, roaSpan: 0.02, roaSubWeight: 0.3,
+                    earningsYears: 5, stabilitySubWeight: 0.5, payoutCeiling: 0.8, payoutSubWeight: 0.5))
 
     /// Stricter on quality/trust, lower exposure, fewer names.
     static var defensive: SelectionConfig {
@@ -389,6 +422,21 @@ struct SolvencyGate: Gate {
         return .pass
     }
 }
+/// Capital-strength gate for financials (§14): the available CAR proxy — Common Equity ÷ Total Assets
+/// ≥ a floor. Common Equity is reconstructed as BVPS × shares outstanding, so no extra field is
+/// needed. Replaces `SolvencyGate` on the financial profile (a bank's current ratio / D/E are "-");
+/// audit-trailed as a proxy so it is never mistaken for a true regulatory CAR.
+struct CapitalStrengthGate: Gate {
+    let name = "CapitalStrength"
+    func evaluate(_ s: SecurityData, config: SelectionConfig, policy: RegimePolicy) -> Verdict {
+        let assets = nsDouble(s.ttm.totalAssets)
+        guard assets > 0 else { return .fail(reason: "no asset base") }
+        let equity = nsDouble(s.ttm.bookValuePerShare * s.sharesOutstanding)
+        let ratio = equity / assets
+        if ratio < config.bank.minEquityToAssets { return .fail(reason: "thin capital \(pct(ratio))") }
+        return .pass
+    }
+}
 
 // MARK: - 6. Scorers
 
@@ -447,6 +495,60 @@ struct EarningsQualityScorer: Scorer {
     }
 }
 
+// MARK: - 6b. Financial-archetype scorers (§14)
+
+/// Bank "value": cheapness *given ROE* — how far the actual P/B sits below the ROE-justified P/B
+/// (Damodaran's P/B↔ROE companion-variable framing). 0 when fairly/richly priced or unscoreable.
+struct BankValueScorer: Scorer {
+    let id = ScorerID.bankValue
+    func score(_ s: SecurityData, config: SelectionConfig) -> ScoreComponent {
+        let bvps = nsDouble(s.ttm.bookValuePerShare)
+        guard bvps > 0, s.ttm.returnOnEquity > 0,
+              let justified = BankValuation.justifiedPriceToBook(roe: s.ttm.returnOnEquity,
+                                                                 payout: s.ttm.payoutRatio,
+                                                                 bank: config.bank),
+              justified > 0
+        else { return .init(id: id, value: 0, rationale: "P/B not scoreable") }
+        let actual = nsDouble(s.price) / bvps
+        let discount = (justified - actual) / justified
+        let v = clamp01(discount / config.bank.pbDiscountFullCreditAt)
+        return .init(id: id, value: v, rationale: "P/B \(round2(actual)) vs justified \(round2(justified))")
+    }
+}
+
+/// Bank "quality": return on equity + return on assets (efficiency / cost-to-income skipped in v1 —
+/// not available as structured data, §14). The two sub-scores are weighted and clamped.
+struct BankQualityScorer: Scorer {
+    let id = ScorerID.bankQuality
+    func score(_ s: SecurityData, config: SelectionConfig) -> ScoreComponent {
+        let b = config.bank
+        var v: Score = 0
+        v += clamp01((s.ttm.returnOnEquity - b.roeFloor) / b.roeSpan) * b.roeSubWeight
+        v += clamp01((s.ttm.returnOnAssets - b.roaFloor) / b.roaSpan) * b.roaSubWeight
+        return .init(id: id, value: clamp01(v),
+                     rationale: "ROE \(pct(s.ttm.returnOnEquity)) · ROA \(pct(s.ttm.returnOnAssets))")
+    }
+}
+
+/// Bank "earnings quality": net-income-growth stability + payout sustainability (CFO/NI is noisy for
+/// banks, §14). Stability is the consistency of the year-over-year net-income growth rates; payout is
+/// sustainable up to a ceiling, fading to 0 as it approaches paying out every rupiah of earnings.
+struct BankEarningsQualityScorer: Scorer {
+    let id = ScorerID.bankEarningsQuality
+    func score(_ s: SecurityData, config: SelectionConfig) -> ScoreComponent {
+        let b = config.bank
+        let nis = s.financials.suffix(b.earningsYears).map { nsDouble($0.netIncome) }
+        let growths = zip(nis, nis.dropFirst()).map { $0 == 0 ? 0 : ($1 - $0) / $0 }
+        let stability = consistency(growths)
+        let payout = s.ttm.payoutRatio
+        let payoutCredit = payout <= b.payoutCeiling
+            ? 1.0
+            : clamp01((1 - payout) / max(1 - b.payoutCeiling, 1e-9))
+        let v = clamp01(b.stabilitySubWeight * stability + b.payoutSubWeight * payoutCredit)
+        return .init(id: id, value: v, rationale: "NI-growth stable · payout \(pct(payout))")
+    }
+}
+
 // MARK: - 7. Valuation & margin of safety
 
 /// Computes per-share intrinsic value and the margin of safety against price. Behind a protocol
@@ -480,6 +582,38 @@ struct GrahamValuator: Valuator {
             if ncav > 0 { candidates.append(ncav) }
         }
         return candidates.min() ?? 0
+    }
+}
+
+/// Pure ROE-justified price-to-book math (§14), shared by the bank valuator and the bank value scorer
+/// (DRY). P/B's companion variable is ROE (Damodaran): a bank is cheap only relative to the multiple
+/// its return on equity justifies.
+enum BankValuation {
+    /// Stable-growth justified P/B = (ROE − g) / (Ke − g), or nil when the inputs degenerate (Ke ≤ g).
+    /// g = (1 − payout) · ROE capped at ≤ Rf (terminal discipline); Ke = Rf + β·ERP (cost of equity).
+    /// Callers guard ROE > 0 and BVPS > 0.
+    static func justifiedPriceToBook(roe: Double, payout: Double, bank: SelectionConfig.BankParams) -> Double? {
+        let retention = 1 - max(0, min(1, payout))
+        let g = min(retention * roe, bank.riskFreeRate)
+        let ke = bank.riskFreeRate + bank.beta * bank.equityRiskPremium
+        guard ke > g else { return nil }
+        return (roe - g) / (ke - g)
+    }
+}
+
+/// Financial-firm intrinsic value (§14): value equity directly off the ROE-justified P/B multiple
+/// (IV = justified P/B × BVPS), not Graham/NCAV — a bank has no meaningful current/non-current split
+/// and WACC is meaningless for it. MoS reuses the protocol default. Returns 0 (no value, so the MoS
+/// gate screens it out) for a loss-maker, a non-positive book value, or a degenerate Ke ≤ g.
+struct JustifiedPBValuator: Valuator {
+    func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double {
+        let bvps = nsDouble(s.ttm.bookValuePerShare)
+        guard s.ttm.returnOnEquity > 0, bvps > 0,
+              let pb = BankValuation.justifiedPriceToBook(roe: s.ttm.returnOnEquity,
+                                                          payout: s.ttm.payoutRatio,
+                                                          bank: config.bank)
+        else { return 0 }
+        return pb * bvps
     }
 }
 
@@ -548,6 +682,19 @@ extension SelectionProfile {
             scorers: [GrahamValueScorer(), QualityScorer(), GrowthLynchScorer(), EarningsQualityScorer()],
             valuator: GrahamValuator())
     }
+
+    /// The financial (bank) path (§14): SolvencyGate → CapitalStrengthGate (current ratio / D/E are
+    /// "-" for banks); Forensic dropped (receivables/accruals meaningless); Graham value/MoS → the
+    /// P/B-vs-ROE bank scorers and `JustifiedPBValuator`. Growth (Lynch PEG) is reused but
+    /// de-emphasised via the bank weighting. DataIntegrity, Liquidity, and the flow/timing/regime/
+    /// sizing layers are archetype-agnostic and shared with the industrial path.
+    static func financial(_ config: SelectionConfig) -> SelectionProfile {
+        SelectionProfile(
+            archetype: .financial,
+            gates: [DataIntegrityGate(), LiquidityGate(), CapitalStrengthGate()],
+            scorers: [BankValueScorer(), BankQualityScorer(), GrowthLynchScorer(), BankEarningsQualityScorer()],
+            valuator: JustifiedPBValuator())
+    }
 }
 
 // MARK: - 9. Output
@@ -583,12 +730,12 @@ struct StockSelectionEngine: Sendable {
         self.profileSelector = profileSelector ?? { Self.defaultProfile(for: $0, config: config) }
     }
 
-    /// Default DIP wiring: classify the security, then pick its profile. Phase 2 ships only the
-    /// industrial profile, so both archetypes resolve to it (banks are still screened by the
-    /// industrial rules exactly as before); Phase 3 swaps `.financial` in here.
+    /// Default DIP wiring: classify the security, then pick its profile. Each archetype routes to its
+    /// own profile — industrials to the Graham path, financials to the P/B-vs-ROE bank path (§14).
     static func defaultProfile(for s: SecurityData, config: SelectionConfig) -> SelectionProfile {
         switch CompanyArchetype.classify(sector: s.sector) {
-        case .industrial, .financial: return .industrial(config)
+        case .industrial: return .industrial(config)
+        case .financial: return .financial(config)
         }
     }
 
