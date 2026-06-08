@@ -288,6 +288,10 @@ struct TTMFinancials: Sendable {
     let eps, bookValuePerShare: Decimal
     let netIncome, operatingCashFlow, totalAssets: Rupiah
     let epsGrowthPct, currentRatio, debtToEquity, returnOnEquity: Double
+    // Universal fundamentals the financial profile consumes (industrial path ignores them):
+    // payout drives the bank valuator's growth g = (1−payout)·ROE; ROA feeds the bank quality scorer.
+    var payoutRatio: Double = 0
+    var returnOnAssets: Double = 0
 }
 struct OHLCV: Sendable {
     let date: Date

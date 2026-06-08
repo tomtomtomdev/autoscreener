@@ -18,6 +18,8 @@ private let wifiKeystatsFields: [String: String] = [
     "1555": "490 B",         // Net Income (TTM) — scaled
     "2545": "(1,899 B)",     // Cash From Operations (TTM) — negative + scaled
     "1559": "16,196 B",      // Total Assets (Quarter) — scaled
+    "2916": "1.61%",         // Payout Ratio — a PERCENT → ratio
+    "1460": "3.03%",         // Return on Assets (TTM) — a PERCENT → ratio
 ]
 
 @Suite struct KeystatsTTMAdapterTests {
@@ -36,6 +38,25 @@ private let wifiKeystatsFields: [String: String] = [
         let ttm = try SelectionFundamentals.ttm(fromKeystats: wifiKeystatsFields)
         #expect(abs(ttm.returnOnEquity - 0.0657) < 1e-9)
         #expect(abs(ttm.epsGrowthPct - (-11.46)) < 1e-9)
+    }
+
+    @Test func parsesPayoutAndReturnOnAssetsAsRatios() throws {
+        // Phase 3.0: two universal TTM fields the financial profile consumes (g = (1−payout)·ROE; the
+        // bank quality scorer reads ROA). Stored as RATIOS like ROE — "1.61%" → 0.0161, "3.03%" → 0.0303.
+        let ttm = try SelectionFundamentals.ttm(fromKeystats: wifiKeystatsFields)
+        #expect(abs(ttm.payoutRatio - 0.0161) < 1e-9)
+        #expect(abs(ttm.returnOnAssets - 0.0303) < 1e-9)
+    }
+
+    @Test func degradesPayoutAndReturnOnAssetsToZeroWhenMissing() throws {
+        // Unlike the six industrial-essential fields, payout / ROA are NOT required: a non-dividend
+        // payer legitimately reports payout "-", so an absent value degrades to 0 (no throw).
+        var fields = wifiKeystatsFields
+        fields["2916"] = "-"
+        fields["1460"] = nil
+        let ttm = try SelectionFundamentals.ttm(fromKeystats: fields)
+        #expect(ttm.payoutRatio == 0)
+        #expect(ttm.returnOnAssets == 0)
     }
 
     @Test func scalesAbsoluteRupiahFieldsWithMagnitudeSuffixes() throws {

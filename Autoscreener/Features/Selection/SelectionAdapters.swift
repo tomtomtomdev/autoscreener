@@ -58,6 +58,8 @@ enum SelectionFundamentals {
         static let operatingCashFlow = "2545"   // Cash From Operations (TTM), scaled ("(1,899 B)")
         static let totalAssets = "1559"         // Total Assets (Quarter), scaled ("16,196 B")
         static let commonEquity = "15883"       // Common Equity, scaled ("7,464 B") — shares fallback
+        static let payoutRatio = "2916"         // Payout Ratio, a PERCENT → ratio (financial profile)
+        static let returnOnAssets = "1460"      // Return on Assets (TTM), a PERCENT → ratio (bank quality)
 
         static let names: [String: String] = [
             eps: "EPS (TTM)", bookValuePerShare: "Book Value Per Share",
@@ -91,6 +93,10 @@ enum SelectionFundamentals {
         let debtToEquity = try require(Field.debtToEquity)
         let roe = try require(Field.returnOnEquity) / 100.0      // percent → ratio
         let epsGrowthPct = try require(Field.epsGrowthAnnual)    // percent-number, kept verbatim
+        // Payout / ROA are universal but NOT required — a non-dividend payer reports payout "-", so
+        // an absent value degrades to 0 (a ratio, like ROE). Read only by the financial profile.
+        let payoutRatio = (plain(Field.payoutRatio) ?? 0) / 100.0
+        let returnOnAssets = (plain(Field.returnOnAssets) ?? 0) / 100.0
 
         return TTMFinancials(
             eps: Decimal(eps),
@@ -101,7 +107,9 @@ enum SelectionFundamentals {
             epsGrowthPct: epsGrowthPct,
             currentRatio: currentRatio,
             debtToEquity: debtToEquity,
-            returnOnEquity: roe)
+            returnOnEquity: roe,
+            payoutRatio: payoutRatio,
+            returnOnAssets: returnOnAssets)
     }
 
     /// Legends within the annual fundachart datasets the engine consumes (verified on WIFI, §11).
