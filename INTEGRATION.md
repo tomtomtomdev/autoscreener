@@ -228,16 +228,42 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     industrial required-set. **Full `AutoscreenerTests` bundle: 429 passed, 0 failures** — golden master
     (`SelectionEngineCharacterizationTests`) unchanged.
 
-**Next action:** **wire it into the app (post-Phase-3 integration) + Phase 4 (§13-A2, A3).** The engine
-+ provider are now feature-complete for both archetypes and fully unit-green. Remaining, in order:
-(1) **App wiring (non-blocking):** construct `StockbitDataProvider` in `AppDependencies` from the 4
-already-built services (+ the regime fan-out), add a thin entry point to run `StockSelectionEngine`,
-and settle the §10 universe/preset decision (screener vs. watchlist vs. sector list). (2) **Phase 4
-calibration:** replace placeholder betas (`marketBeta`/`sectorBeta`) and bank `Rf/ERP/β` with measured
-values; run a null/loss-maker robustness sweep across both profiles' gates/scorers; then a live
-end-to-end run of `.balanced` over a small universe verifying the full audit trail for one industrial
-(WIFI) **and** one bank (BBCA). Phase 5 (Tier-B backtest) stays blocked on persistence (§9). Read this
-Status header to resume.
+- **App wiring ✅ (2026-06-08) — HEADLESS TIER-A ENTRY POINT.** The engine is now reachable from the
+  composition root. Decisions taken (§10): **universe = the composite Watchlist** (the ranked union
+  of the 20 screeners), **preset = `.balanced` compiled**, **surface = headless factory** (no UI tab
+  yet — that's the deferred "Today's Picks" screen). Pieces:
+  - **`AppDependencies`** gained the four per-ticker selection legs it was missing —
+    `fundachartService`, `emittenService`, `companyPriceFeedService`, `brokerActivityService`
+    (`useFixtures ? Stub… : …Service(apiClient:)`, matching the existing pattern). The other six
+    legs (keystats, statements, regime snapshot, aggregate flow, chart, commodity, breadth) were
+    already present. Four benign-empty fixture stubs added to `UITestSupport.swift` (no screen drives
+    the engine under fixtures, so they just hold the "every leaf service stubbed under fixtures"
+    invariant — no accidental network).
+  - **`Autoscreener/Features/Selection/SelectionRunner.swift`** (NEW): `@MainActor struct
+    SelectionRunner` — closure-injected (`universeSource` + `makeEngine`) so the source→engine
+    pipeline is unit-testable in isolation; `run(config:)` sources the universe, short-circuits an
+    empty one (no market fetch / no `noRegimeInputs` throw), else runs the engine over it. Plus an
+    `AppDependencies` extension wiring the live closures: `makeSelectionEngine(universe:config:)`
+    (pure composition of `StockbitDataProvider` + `StockSelectionEngine` from the 10 services),
+    `watchlistUniverse()` (drives a fresh `WatchlistViewModel` — the same fan-out the user sees — and
+    returns its de-duplicated ranked symbols), and the `selectionRunner` computed property.
+  - **Tests:** new `AutoscreenerTests/SelectionRunnerTests.swift` (2 cases: sources the universe and
+    runs the engine over **exactly** that universe via an `EchoProvider`/spy; empty universe
+    short-circuits without building an engine). The composition root itself (the `AppDependencies`
+    extension) is glue, verified by compile + the provider/engine/Watchlist suites. **Full
+    `AutoscreenerTests` bundle: TEST SUCCEEDED** — golden master (`SelectionEngineCharacterizationTests`)
+    unchanged.
+
+**Next action:** **Phase 4 calibration (§13-A2, A3) + (optional) the "Today's Picks" UI.** Tier-A is
+now feature-complete for both archetypes, fully unit-green, **and reachable** (`AppDependencies
+.selectionRunner.run()` ranks the Watchlist universe under `.balanced`). Remaining, in order:
+(1) **Phase 4 calibration:** replace placeholder betas (`marketBeta`/`sectorBeta`) and bank `Rf/ERP/β`
+with measured values; run a null/loss-maker robustness sweep across both profiles' gates/scorers;
+then a live end-to-end run of `selectionRunner.run()` verifying the full audit trail for one industrial
+(WIFI) **and** one bank (BBCA) from the live feed. (2) **Optional UI (deferred):** surface a "Today's
+Picks" `SidebarItem` + ViewModel + view over `Recommendation`s (with the audit trail) once calibration
+is trusted. Phase 5 (Tier-B backtest) stays blocked on persistence (§9). Read this Status header to
+resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in
@@ -570,10 +596,11 @@ sourcing a historical IDX dataset with as-of/announcement dates (the spec's own 
   `sharesOutstanding` derived from keystats (NetIncome `1555` ÷ EPS `13200`).
 - ~~ADV source~~ — **answered (§11):** `/company-price-feed/historical/summary/{SYM}` returns
   per-day `value` (traded rupiah) directly; no keystats-MA workaround needed.
-- Tier A v1 universe: screener result, watchlist, or a fixed candidate list? (Now also possible via
-  `/emitten/company/catalog`, `/emitten/v3/sector/{ID}/subsector/{ID}/company`,
-  `/order-trade/market-mover`.)
-- Which preset is the default (`.balanced`) and is config loaded from JSON/backend or compiled?
+- ~~Tier A v1 universe: screener result, watchlist, or a fixed candidate list?~~ — **decided
+  (2026-06-08):** the **composite Watchlist** (the ranked union of the 20 screeners). Wired in
+  `AppDependencies.watchlistUniverse()` (drives a fresh `WatchlistViewModel`, returns `rows.map(\.symbol)`).
+- ~~Which preset is the default (`.balanced`) and is config loaded from JSON/backend or compiled?~~ —
+  **decided (2026-06-08):** default `.balanced`, **compiled** (no JSON/backend config layer in v1).
 - **New:** still parse the `/findata-view` display-string tree for the 3 balance-sheet items §11
   leaves open, or accept the degradation (disable NCAV + skip the receivables forensic check)?
 

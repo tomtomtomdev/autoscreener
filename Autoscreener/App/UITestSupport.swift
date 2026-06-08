@@ -95,6 +95,38 @@ nonisolated struct StubBreadthService: BreadthServicing {
     }
 }
 
+// The four services the headless selection engine consumes. No screen drives the engine under UI
+// fixtures yet, so these return benign empties rather than canned data — they exist only to keep
+// AppDependencies' "every leaf service stubbed under fixtures" invariant (no accidental network).
+
+nonisolated struct StubFundachartService: FundachartServicing {
+    func financials(symbol: String, dataset: FundachartDataset,
+                    report: FundachartReport) async throws -> FundachartFinancials {
+        FundachartFinancials(periods: [], series: [])
+    }
+}
+
+nonisolated struct StubEmittenService: EmittenServicing {
+    func info(symbol: String) async throws -> EmittenInfo {
+        EmittenInfo(symbol: symbol, name: symbol, sector: "", subSector: "", indexes: [])
+    }
+    func profile(symbol: String) async throws -> EmittenProfile {
+        EmittenProfile(freeFloatDisplay: "", sharesDisplay: "")
+    }
+}
+
+nonisolated struct StubCompanyPriceFeedService: CompanyPriceFeedServicing {
+    func historicalSummary(symbol: String, period: HistoricalSummaryPeriod, startDate: Date,
+                           endDate: Date, limit: Int, page: Int) async throws -> HistoricalSummaryPage {
+        HistoricalSummaryPage(bars: [], nextPage: nil)
+    }
+}
+
+nonisolated struct StubBrokerActivityService: BrokerActivityServicing {
+    func dailyActivity(symbol: String, period: BrokerActivityPeriod, brokerCodes: [String],
+                       limit: Int, page: Int) async throws -> [BrokerActivityRecord] { [] }
+}
+
 enum UITestFixtures {
     static let screenerRows: [ScreenerRow] = [
         ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),

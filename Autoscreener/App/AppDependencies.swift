@@ -33,6 +33,11 @@ final class AppDependencies {
     let commodityPriceService: any CommodityPriceServicing
     let regimeSnapshotService: any RegimeSnapshotProviding
     let breadthService: any BreadthServicing
+    // Per-ticker legs the Tier-A selection engine consumes (StockbitDataProvider, §8).
+    let fundachartService: any FundachartServicing
+    let emittenService: any EmittenServicing
+    let companyPriceFeedService: any CompanyPriceFeedServicing
+    let brokerActivityService: any BrokerActivityServicing
     let authState = AuthState()
 
     static let shared = AppDependencies()
@@ -67,6 +72,12 @@ final class AppDependencies {
         // Breadth fans out per-constituent chart calls, so it wraps whichever chart
         // service we resolved (real or the deterministic stub under UI fixtures).
         self.breadthService = useFixtures ? StubBreadthService() : BreadthService(chartService: self.chartService)
+        // Tier-A selection legs (§8). No screen drives the engine under UI fixtures, so the stubs
+        // return benign empties — present only so nothing in this init touches the network there.
+        self.fundachartService = useFixtures ? StubFundachartService() : FundachartService(apiClient: client)
+        self.emittenService = useFixtures ? StubEmittenService() : EmittenService(apiClient: client)
+        self.companyPriceFeedService = useFixtures ? StubCompanyPriceFeedService() : CompanyPriceFeedService(apiClient: client)
+        self.brokerActivityService = useFixtures ? StubBrokerActivityService() : BrokerActivityService(apiClient: client)
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).
