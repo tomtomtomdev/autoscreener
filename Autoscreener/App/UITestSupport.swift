@@ -262,4 +262,40 @@ enum UITestFixtures {
             netDomestic: m(360_701_021_000, "360.70 B"),
             value: value, volume: volume, frequency: frequency)
     }
+
+    /// Canned Tier-A recommendations for the "Today's Picks" screen under UI tests. Two ranked picks
+    /// — an industrial (Graham path) and a bank (justified-P/B path) — each carrying an audit trail
+    /// shaped like the engine's real output, so the screen's rows and expandable rationale render
+    /// deterministically offline. No engine fan-out runs under fixtures (the per-ticker leaf services
+    /// are empty stubs); this is the stand-in the screen reads via `AppDependencies.todaysPicks`.
+    static let recommendations: [Recommendation] = [
+        Recommendation(
+            ticker: "WIFI", compositeScore: 0.74, intrinsicValue: 6_364,
+            marginOfSafety: 0.31, conviction: 0.74, suggestedWeight: 0.089,
+            audit: [
+                "regime=Neutral",
+                "✓ DataIntegrity",
+                "✓ Solvency",
+                "✓ Liquidity",
+                "MoS 31% vs req 25%",
+                "value 0.81 — Graham discount",
+                "quality 0.66 — ROE 18%",
+                "flow +0.020 [foreign accumulating]",
+                "timing +0.010 [measured β 1.10/0.30]",
+                "→ conviction 0.74 weight 9%",
+            ]),
+        Recommendation(
+            ticker: "BBNI", compositeScore: 0.58, intrinsicValue: 5_980,
+            marginOfSafety: 0.27, conviction: 0.58, suggestedWeight: 0.058,
+            audit: [
+                "regime=Neutral",
+                "✓ DataIntegrity",
+                "✓ Liquidity",
+                "✓ CapitalStrength (proxy: equity/assets)",
+                "MoS 27% vs req 25%",
+                "bankValue 0.62 — P/B below ROE-justified",
+                "bankQuality 0.55 — ROE 14%, ROA 2%",
+                "→ conviction 0.58 weight 6%",
+            ]),
+    ]
 }

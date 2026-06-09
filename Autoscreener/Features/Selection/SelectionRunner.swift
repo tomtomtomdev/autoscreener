@@ -64,4 +64,14 @@ extension AppDependencies {
             universeSource: { await self.watchlistUniverse() },
             makeEngine: { self.makeSelectionEngine(universe: $0, config: $1) })
     }
+
+    /// The "Today's Picks" screen source: the ranked, audited recommendations for the
+    /// composite-Watchlist universe under `config`. Under `-UITestFixtures` it returns canned picks
+    /// so the screen renders deterministically offline (the per-ticker leaf services are empty stubs
+    /// under fixtures, so the live engine fan-out isn't exercised there); live, it runs the headless
+    /// `selectionRunner`. `TodaysPicksViewModel` injects this as its default source.
+    func todaysPicks(config: SelectionConfig = .balanced) async throws -> [Recommendation] {
+        if ProcessInfo.processInfo.isUITestFixtures { return UITestFixtures.recommendations }
+        return try await selectionRunner.run(config: config)
+    }
 }

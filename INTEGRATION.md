@@ -291,15 +291,46 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     to sweep, NOT wired to the regression (wiring it would move the BBCA worked example). **Full
     `AutoscreenerTests` bundle: 458 passed, 0 failures** — golden master unchanged.
 
-**Next action:** **Tier-A is feature-complete and calibrated.** Remaining, in order:
-(1) **LIVE audit (manual — needs the authenticated feed):** run `AppDependencies.selectionRunner
-.run(config: .balanced)` against a live Stockbit session and eyeball the audit trail for a real
-industrial + a real bank. This couldn't be done in-session (no auth/network); the deterministic
-end-to-end (4.3) is the offline stand-in. (2) **Optional "Today's Picks" UI (deferred):** a
-`SidebarItem` + ViewModel + view over `Recommendation`s (with the audit trail). (3) **Optional bank-rate
-calibration:** source live Rf/ERP and decide single-factor CAPM β vs the two-factor timing β for the
-bank valuator (see Phase 4 scope note). Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
-Read this Status header to resume.
+- **Today's Picks UI ✅ (2026-06-09) — TIER-A IS NOW USER-VISIBLE.** The headless engine output is
+  wired to a sidebar screen (the deferred "Today's Picks" item). MVVM-lite per `swiftui-architecture`
+  (thin `@Observable` wrapper, not a reducer — the screen is read-only). Pieces:
+  - **`TodaysPicksViewModel`** (`Features/Selection/TodaysPicksViewModel.swift`) — `@MainActor
+    @Observable`. Closure-injected `source: (SelectionConfig) async throws -> [Recommendation]`
+    (defaults to `AppDependencies.shared.todaysPicks`), `load(force:)` with a `hasLoaded` cache. An
+    empty result is a **successful** "no picks" state; a failed load is left uncached so the next
+    appearance retries (mirrors `RegimeViewModel`). Tests: `TodaysPicksViewModelTests` (6 cases:
+    populate, error-surfacing, isLoading toggle, empty-is-success, cache, failed-not-cached).
+  - **`TodaysPicksView`** — NavigationStack; loading / loaded / empty / error states; ranked pick
+    cards (rank, ticker, suggested weight, conviction, MoS, IV) with the engine's full audit trail
+    behind a per-pick `DisclosureGroup`. Accessibility ids: `TodaysPicksView`, `todayspicks.summary`,
+    `todayspicks.row.<TICKER>`, `todayspicks.why.<TICKER>`, `todayspicks.audit.<TICKER>`,
+    `todayspicks.empty`. Formatting helpers (pct, grouped amount) kept in the view; engine models stay
+    UI-free.
+  - **Source wiring:** `AppDependencies.todaysPicks(config:)` (in `SelectionRunner.swift`) returns
+    `UITestFixtures.recommendations` under `-UITestFixtures` (deterministic offline — no engine
+    fan-out, since the per-ticker leaf stubs are empty), else runs `selectionRunner.run(config:)`. New
+    canned `UITestFixtures.recommendations` (WIFI industrial + BBNI bank, audit-shaped) + benign fixture.
+  - **Sidebar:** new `SidebarItem.todaysPicks` ("Today's Picks", `list.star`, `templateID` nil) in a
+    new top **"Today"** `Section`; detail routes to `TodaysPicksView()`. Default landing left unchanged
+    (`.bandarAccumulating`).
+  - **Verification:** full `AutoscreenerTests` bundle **TEST SUCCEEDED** (golden master unchanged); the
+    6 new VM tests pass. New `AutoscreenerUITests/TodaysPicksUITests.swift` **compiles** and is the
+    committed proof (launch `-UITestFixtures`, multi-display guard, assert sidebar nav → `TodaysPicksView`
+    → summary "2 picks" → WIFI/BBNI row cards → rationale disclosure). On THIS dev machine the XCUITest
+    runner can't start ("Timed out while enabling automation mode") — the **same environmental** failure
+    the pre-existing `RegimeUITests`/`MarketsUITests` hit right now (verified in-session), NOT a
+    test-logic failure. Per the standing note, trust the unit suite.
+
+**Next action:** **Tier-A is feature-complete, calibrated, and now user-visible** (Today's Picks UI,
+above). Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
+feed):** open the **Today's Picks** screen (or call `AppDependencies.selectionRunner.run(config:
+.balanced)`) against a live Stockbit session and eyeball the audit trail for a real industrial + a
+real bank. This couldn't be done in-session (no auth/network); the deterministic end-to-end (4.3) is
+the offline stand-in. (2) **Optional bank-rate calibration:** source live Rf/ERP and decide
+single-factor CAPM β vs the two-factor timing β for the bank valuator (see Phase 4 scope note). (3)
+**Optional polish:** run the `TodaysPicksUITests` on a single-display / CI box (it's blocked only by
+this machine's XCUITest automation-mode timeout); add a config/preset picker to the screen. Phase 5
+(Tier-B backtest) stays blocked on persistence (§9). Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in

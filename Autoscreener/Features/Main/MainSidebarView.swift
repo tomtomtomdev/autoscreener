@@ -1,6 +1,7 @@
 import SwiftUI
 
 nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
+    case todaysPicks
     case bandarAccumulating
     case bandarAboveMA20
     case bandarShiftToday
@@ -29,6 +30,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     var id: Self { self }
     var title: String {
         switch self {
+        case .todaysPicks:        return "Today's Picks"
         case .bandarAccumulating: return "Bandar Accumulating"
         case .bandarAboveMA20:    return "Bandar Above MA20"
         case .bandarShiftToday:   return "Bandar Shift Today"
@@ -57,6 +59,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     }
     var systemImage: String {
         switch self {
+        case .todaysPicks:        return "list.star"
         case .bandarAccumulating: return "chart.bar.doc.horizontal"
         case .bandarAboveMA20:    return "chart.line.uptrend.xyaxis"
         case .bandarShiftToday:   return "arrow.left.arrow.right.circle"
@@ -85,6 +88,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     }
     var templateID: String? {
         switch self {
+        case .todaysPicks:        return nil
         case .bandarAccumulating: return "6676213"
         case .bandarAboveMA20:    return "6676217"
         case .bandarShiftToday:   return "6676221"
@@ -272,6 +276,11 @@ struct MainSidebarView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
+                Section("Today") {
+                    Label(SidebarItem.todaysPicks.title,
+                          systemImage: SidebarItem.todaysPicks.systemImage)
+                        .tag(SidebarItem.todaysPicks)
+                }
                 Section("Screeners") {
                     ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
@@ -306,6 +315,9 @@ struct MainSidebarView: View {
     @ViewBuilder
     private var detail: some View {
         switch selection {
+        case .todaysPicks:
+            TodaysPicksView()
+                .id(SidebarItem.todaysPicks)
         case .bandarAccumulating:
             ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
                 .id(SidebarItem.bandarAccumulating)
