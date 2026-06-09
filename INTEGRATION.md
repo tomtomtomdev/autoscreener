@@ -291,7 +291,7 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     to sweep, NOT wired to the regression (wiring it would move the BBCA worked example). **Full
     `AutoscreenerTests` bundle: 458 passed, 0 failures** — golden master unchanged.
 
-- **Today's Picks UI ✅ (2026-06-09) — TIER-A IS NOW USER-VISIBLE.** The headless engine output is
+- **Today's Picks UI ✅ (2026-06-09, commit `99386fc`) — TIER-A IS NOW USER-VISIBLE.** The headless engine output is
   wired to a sidebar screen (the deferred "Today's Picks" item). MVVM-lite per `swiftui-architecture`
   (thin `@Observable` wrapper, not a reducer — the screen is read-only). Pieces:
   - **`TodaysPicksViewModel`** (`Features/Selection/TodaysPicksViewModel.swift`) — `@MainActor
