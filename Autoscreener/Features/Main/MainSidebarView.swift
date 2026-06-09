@@ -118,7 +118,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
 }
 
 struct MainSidebarView: View {
-    @State private var selection: SidebarItem? = .bandarAccumulating
+    @State private var selection: SidebarItem? = .todaysPicks
 
     // Hold one ViewModel per screener so switching tabs preserves their loaded rows
     // and doesn't fire a fresh paywall counter on every back-and-forth.
