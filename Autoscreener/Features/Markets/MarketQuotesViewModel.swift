@@ -1,57 +1,32 @@
 import Foundation
 import Observation
 
-/// Loads price snapshots for every Markets row — the composite, indices, IDX-IC
-/// sectors, commodities, and currencies. Stockbit's `emitten/{symbol}/info`
-/// returns the same price-snapshot shape for indices and stocks as it does for
-/// commodities, so one fan-out covers the whole list. Tolerates per-symbol
-/// failure: a symbol that errors (e.g. paywalled, or an index that doesn't
-/// resolve) is simply absent from `quotes` rather than failing the whole screen.
-/// A top-level `error` is surfaced only when *every* symbol fails.
+/// Thin projection over the shared `MarketDataStore` for the Markets price list. It no
+/// longer fetches — the `DataSweepCoordinator` is the single fetch path that prices
+/// every Markets row (composite, indices, sectors, commodities, currencies) through
+/// the shared throttle and writes them here. Mirrors `ScreenerViewModel`: the cached
+/// quotes render immediately (incl. from the disk cache on a cold launch), and a live
+/// sweep refreshes them.
 @MainActor
 @Observable
 final class MarketQuotesViewModel {
-    let symbols: [MarketSymbol]
-    private(set) var quotes: [String: CommodityQuote] = [:]
-    var isLoading = false
-    var error: String?
+    private let store: MarketDataStore
+    private let coordinator: DataSweepCoordinator
 
-    private let service: any CommodityPriceServicing
-    private var hasLoaded = false
-
-    init(symbols: [MarketSymbol] = MarketCatalog.all,
-         service: any CommodityPriceServicing = AppDependencies.shared.commodityPriceService) {
-        self.symbols = symbols
-        self.service = service
+    init(store: MarketDataStore = AppDependencies.shared.marketDataStore,
+         coordinator: DataSweepCoordinator = AppDependencies.shared.dataSweepCoordinator) {
+        self.store = store
+        self.coordinator = coordinator
     }
 
+    /// Latest price snapshot per symbol, keyed by ticker.
+    var quotes: [String: CommodityQuote] { store.quotes }
+
+    /// Spinner only before the first quotes land; once the store has data the rows render.
+    var isLoading: Bool { coordinator.isSweeping && store.quotes.isEmpty }
+
+    /// Ensures the sweep is running (idempotent). A forced call pulls a fresh sweep now.
     func load(force: Bool = false) async {
-        if !force, hasLoaded { return }
-        guard !symbols.isEmpty else { return }
-        isLoading = true
-        error = nil
-        defer { isLoading = false }
-
-        let service = self.service
-        let fetched = await withTaskGroup(of: (String, CommodityQuote?).self) { group in
-            for item in symbols {
-                group.addTask { (item.symbol, try? await service.quote(symbol: item.symbol)) }
-            }
-            var acc: [String: CommodityQuote] = [:]
-            for await (symbol, quote) in group where quote != nil {
-                acc[symbol] = quote
-            }
-            return acc
-        }
-
-        if fetched.isEmpty {
-            // Total failure — keep any previously loaded quotes, surface an error,
-            // and leave `hasLoaded` false so the next appearance retries.
-            error = "Couldn't load market prices."
-        } else {
-            // Merge so a symbol that failed this round keeps its prior value.
-            for (symbol, quote) in fetched { quotes[symbol] = quote }
-            hasLoaded = true
-        }
+        if force { await coordinator.refreshNow() } else { coordinator.start() }
     }
 }

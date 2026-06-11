@@ -72,9 +72,9 @@ struct MarketsView: View {
     // MARK: - Regime banner
 
     /// Compact regime summary at the top of the list. When a read exists it's a
-    /// `NavigationLink` to the full breakdown; while the (slow) inputs load it
-    /// shows a small spinner, and on total failure a quiet note — either way the
-    /// markets list below stays usable and pull-to-refresh retries.
+    /// `NavigationLink` to the full breakdown; before the first read lands it shows a
+    /// small spinner. Either way the markets list below stays usable and pull-to-refresh
+    /// recomputes the read.
     @ViewBuilder
     private var regimeBanner: some View {
         if let read = regime.read {
@@ -90,10 +90,6 @@ struct MarketsView: View {
                 Text("Reading the market…")
                     .foregroundStyle(.secondary)
             }
-        } else if let error = regime.error {
-            Text(error)
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
     }
 

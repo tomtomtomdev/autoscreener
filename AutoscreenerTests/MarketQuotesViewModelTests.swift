@@ -2,114 +2,38 @@ import Foundation
 import Testing
 @testable import Autoscreener
 
-final class FakeCommodityPriceService: CommodityPriceServicing, @unchecked Sendable {
-    var failingSymbols: Set<String> = []
-    var failAll = false
-
-    private let lock = NSLock()
-    private var _calls: [String] = []
-    var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
-
-    func quote(symbol: String) async throws -> CommodityQuote {
-        lock.lock(); _calls.append(symbol); lock.unlock()
-        if failAll || failingSymbols.contains(symbol) {
-            throw CommodityPriceError.network("boom")
-        }
-        return CommodityQuote(
-            symbol: symbol, name: symbol, price: 100, previousClose: 99,
-            change: 1, changePercent: 1.0, volume: 10, formattedPrice: "100", asOf: "now")
-    }
-}
-
-private func symbol(_ s: String) -> MarketSymbol {
-    MarketSymbol(symbol: s, name: s, group: .commodity)
-}
-
-private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
-
+/// `MarketQuotesViewModel` is now a thin projection over the shared `MarketDataStore`
+/// (the `DataSweepCoordinator` is the single fetch path — its fan-out is covered by
+/// `DataSweepCoordinatorMarketTests`). These tests pin the projection contract.
 @MainActor
 @Suite struct MarketQuotesViewModelTests {
-    @Test func loadPopulatesQuotesForEverySymbol() async {
-        let svc = FakeCommodityPriceService()
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
-
-        await vm.load()
-
-        #expect(vm.quotes.count == 3)
-        #expect(vm.error == nil)
-        #expect(Set(svc.calls) == ["OIL", "XAU", "CPO"])
+    private func quote(_ symbol: String) -> CommodityQuote {
+        CommodityQuote(symbol: symbol, name: symbol, price: 100, previousClose: 99,
+                       change: 1, changePercent: 1.0, volume: 10, formattedPrice: "100", asOf: "now")
     }
 
-    /// The default catalog covers the chartable groups (composite/indices/sectors),
-    /// not just commodities + currencies — that's what puts a price + % change on
-    /// the IHSG, index, and sector rows. `emitten/{symbol}/info` serves them all.
-    @Test func defaultCatalogQuotesChartableGroupsToo() async {
-        let svc = FakeCommodityPriceService()
-        let vm = MarketQuotesViewModel(service: svc)   // default symbols = MarketCatalog.all
-
-        await vm.load()
-
-        let called = Set(svc.calls)
-        #expect(called.contains("IHSG"))        // composite
-        #expect(called.contains("LQ45"))        // an index
-        #expect(called.contains("IDXENERGY"))   // a sector
-        #expect(vm.quotes["IHSG"] != nil)
+    private func vm(_ store: MarketDataStore) -> MarketQuotesViewModel {
+        MarketQuotesViewModel(
+            store: store,
+            coordinator: SweepTestKit.coordinator(store: SweepTestKit.store(), marketStore: store))
     }
 
-    @Test func partialFailureKeepsOtherQuotes() async {
-        let svc = FakeCommodityPriceService()
-        svc.failingSymbols = ["OIL"]
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
+    @Test func quotesProjectTheStore() {
+        let store = SweepTestKit.marketStore()
+        store.applyQuotes(["OIL": quote("OIL"), "XAU": quote("XAU")])
 
-        await vm.load()
-
-        #expect(vm.quotes["OIL"] == nil)
-        #expect(vm.quotes["XAU"] != nil)
-        #expect(vm.quotes["CPO"] != nil)
-        #expect(vm.error == nil)            // partial failure isn't a screen-level error
+        let model = vm(store)
+        #expect(model.quotes.count == 2)
+        #expect(model.quotes["OIL"]?.price == 100)
     }
 
-    @Test func totalFailureSetsError() async {
-        let svc = FakeCommodityPriceService()
-        svc.failAll = true
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
-
-        await vm.load()
-
-        #expect(vm.quotes.isEmpty)
-        #expect(vm.error != nil)
+    @Test func emptyStoreProjectsNoQuotes() {
+        #expect(vm(SweepTestKit.marketStore()).quotes.isEmpty)
     }
 
-    @Test func reloadIsSkippedWhenAlreadyLoadedAndNotForced() async {
-        let svc = FakeCommodityPriceService()
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
-
-        await vm.load()
-        await vm.load()                     // no force, already loaded
-
-        #expect(svc.calls.count == 3)       // one round only
-    }
-
-    @Test func forceReloadRefetches() async {
-        let svc = FakeCommodityPriceService()
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
-
-        await vm.load()
-        await vm.load(force: true)
-
-        #expect(svc.calls.count == 6)       // two rounds
-    }
-
-    @Test func totalFailureThenRetryOnNextLoad() async {
-        let svc = FakeCommodityPriceService()
-        svc.failAll = true
-        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
-
-        await vm.load()                     // total failure leaves hasLoaded false
-        svc.failAll = false
-        await vm.load()                     // non-forced retry should re-run
-
-        #expect(vm.error == nil)
-        #expect(vm.quotes.count == 3)
+    @Test func notLoadingOnceQuotesHaveLanded() {
+        let store = SweepTestKit.marketStore()
+        store.applyQuotes(["OIL": quote("OIL")])
+        #expect(vm(store).isLoading == false)   // store non-empty → no spinner regardless of sweep state
     }
 }

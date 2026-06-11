@@ -205,7 +205,7 @@ struct ScreenerView: View {
     return ScreenerView(
         vm: ScreenerViewModel(
             store: deps.screenerStore,
-            coordinator: deps.screenerSweepCoordinator,
+            coordinator: deps.dataSweepCoordinator,
             kind: .accumulating
         ),
         title: "Preview"

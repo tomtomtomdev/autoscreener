@@ -2,8 +2,9 @@ import Foundation
 
 /// Pure, value-type IDX (Indonesia Stock Exchange) trading-session clock. No app
 /// state — it answers two questions for a given instant: is the regular session
-/// open, and when does the next session open. Used by `ScreenerSweepCoordinator`
-/// to decide whether to keep fetching (open) or idle on the cache (closed).
+/// open, and when does the next session open. Used by `DataSweepCoordinator` to
+/// decide the sweep cadence and whether the IDX-session legs run (open) or stay
+/// frozen on the cache (closed).
 ///
 /// Sessions are IDX regular trading hours in Asia/Jakarta, weekdays only:
 ///   - Session 1: 09:00–12:00

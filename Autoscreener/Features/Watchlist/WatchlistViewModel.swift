@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Thin projection over the shared `ScreenerStore`: it composes the cached
 /// per-screener snapshots into the ranked, veto-filtered composite Watchlist. It no
-/// longer fetches — the `ScreenerSweepCoordinator` is the single fetch path, and the
+/// longer fetches — the `DataSweepCoordinator` is the single fetch path, and the
 /// store is the single source of truth (read live during open hours, from the disk
 /// cache when closed). The compose result is memoised against the store's `version`
 /// so it isn't recomputed on every SwiftUI render.
@@ -16,14 +16,14 @@ final class WatchlistViewModel {
     var searchText: String = ""
 
     private let store: ScreenerStore
-    private let coordinator: ScreenerSweepCoordinator
+    private let coordinator: DataSweepCoordinator
 
     // Memoised composite — recomputed only when the store's write counter changes.
     @ObservationIgnored private var cacheVersion: Int = -1
     @ObservationIgnored private var cachedRows: [WatchlistRow] = []
     @ObservationIgnored private var cachedNotice: String?
 
-    init(store: ScreenerStore, coordinator: ScreenerSweepCoordinator) {
+    init(store: ScreenerStore, coordinator: DataSweepCoordinator) {
         self.store = store
         self.coordinator = coordinator
     }

@@ -8,8 +8,9 @@ import AppKit
 /// atop the Markets screen; tapping it pushes the full factor breakdown. Under
 /// fixtures the read is deterministic: a mid-range valuation (neutral) + a BI-rate
 /// cut (risk-on) + net foreign selling (risk-off) + a weakening rupiah (risk-off)
-/// + broad LQ45 breadth (risk-on) net to a **Neutral** stance, with the
-/// transparent factor breakdown rendered. No auth, network, or Keychain involved.
+/// + LQ45 breadth derived from the stub `.above200MA` screener (risk-off) net to a
+/// **Neutral** stance, with the transparent factor breakdown rendered. No auth,
+/// network, or Keychain involved.
 final class RegimeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false

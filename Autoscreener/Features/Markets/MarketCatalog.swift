@@ -18,6 +18,18 @@ nonisolated enum MarketGroup: String, CaseIterable, Sendable {
         case .commodity, .currency: false
         }
     }
+
+    /// Whether this group only trades during the IDX cash session. IDX instruments
+    /// (composite, headline indices, sectors) freeze after the close, so the unified
+    /// sweep refreshes them only while the market is open and reuses the last snapshot
+    /// otherwise. Global indices, commodities, and FX keep moving around the clock, so
+    /// they're refreshed on every sweep regardless of the IDX session.
+    var isIDXSession: Bool {
+        switch self {
+        case .composite, .index, .sector: true
+        case .global, .commodity, .currency: false
+        }
+    }
 }
 
 /// One market symbol — the composite, an index, an IDX-IC sector, a commodity,

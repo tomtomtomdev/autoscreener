@@ -38,11 +38,13 @@ final class AppDependencies {
     let emittenService: any EmittenServicing
     let companyPriceFeedService: any CompanyPriceFeedServicing
     let brokerActivityService: any BrokerActivityServicing
-    // Single source of truth for screener data + the continuous market-hours sweep
-    // that fills it. Every screener tab and the composite Watchlist read the store.
+    // Single source of truth for screener + markets data, filled by the continuous
+    // market-hours sweep. Every screener tab and the composite Watchlist read the
+    // screener store; the Markets screen reads the market store. Nothing else fetches.
     let screenerStore: ScreenerStore
+    let marketDataStore: MarketDataStore
     let marketClock: MarketClock
-    let screenerSweepCoordinator: ScreenerSweepCoordinator
+    let dataSweepCoordinator: DataSweepCoordinator
     let authState = AuthState()
 
     static let shared = AppDependencies()
@@ -90,14 +92,20 @@ final class AppDependencies {
         // so the UI renders deterministically without fetching on a timer.
         let headless = useFixtures || ProcessInfo.processInfo.isRunningTests
         let cacheStore = ScreenerStore(loadFromDisk: !headless)
+        let marketStore = MarketDataStore(loadFromDisk: !headless)
         let clock = MarketClock()
         self.screenerStore = cacheStore
+        self.marketDataStore = marketStore
         self.marketClock = clock
-        self.screenerSweepCoordinator = ScreenerSweepCoordinator(
-            store: cacheStore, clock: clock,
+        self.dataSweepCoordinator = DataSweepCoordinator(
+            store: cacheStore, marketStore: marketStore, clock: clock,
             paywall: self.paywallService,
             templates: self.screenerTemplateService,
             screener: self.screenerService,
+            commodity: self.commodityPriceService,
+            chart: self.chartService,
+            flow: self.aggregateForeignFlowService,
+            snapshotProvider: self.regimeSnapshotService,
             runsContinuousLoop: !headless,
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).

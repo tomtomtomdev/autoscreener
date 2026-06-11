@@ -6,7 +6,7 @@ import Foundation
 /// "read" `idx-investing-research.md` §3 asks for. Deliberately a *posture*, not
 /// a forecast: per Howard Marks you can gauge where the pendulum is, never
 /// predict where it swings next ("You can't predict. You can prepare.").
-nonisolated enum RegimeStance: String, Sendable, CaseIterable {
+nonisolated enum RegimeStance: String, Sendable, CaseIterable, Codable {
     case riskOn = "Risk-on"
     case neutral = "Neutral"
     case riskOff = "Risk-off"
@@ -26,7 +26,7 @@ nonisolated enum RegimeStance: String, Sendable, CaseIterable {
 
 /// One factor's contribution. The numeric `vote` (+1 / 0 / −1) is what the
 /// synthesiser sums; the case carries the meaning.
-nonisolated enum RegimeSignal: String, Sendable {
+nonisolated enum RegimeSignal: String, Sendable, Codable {
     case riskOn = "Risk-on"
     case neutral = "Neutral"
     case riskOff = "Risk-off"
@@ -42,7 +42,7 @@ nonisolated enum RegimeSignal: String, Sendable {
 
 /// A single named input to the read: its signal plus a one-line rationale. Kept
 /// transparent on purpose — second-level thinking is explainable, not a black box.
-nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable {
+nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable, Codable {
     let kind: Kind
     let signal: RegimeSignal
     /// Human rationale with the figure that drove the signal, e.g.
@@ -50,7 +50,7 @@ nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable {
     let detail: String
     var id: String { kind.rawValue }
 
-    nonisolated enum Kind: String, Sendable, CaseIterable {
+    nonisolated enum Kind: String, Sendable, CaseIterable, Codable {
         case valuation = "Valuation"           // index P/E·P/B percentile — dominant driver
         case policyRate = "BI rate"
         case usRates = "US 10y yield"          // global discount-rate / EM-flow anchor
@@ -70,7 +70,7 @@ nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable {
 /// The synthesised regime read: an overall stance, the normalised score that
 /// produced it, and the transparent factor breakdown. `asOf` is the freshest
 /// dated input that fed it (the server snapshot's date when present).
-nonisolated struct RegimeRead: Sendable, Equatable {
+nonisolated struct RegimeRead: Sendable, Equatable, Codable {
     let stance: RegimeStance
     /// Normalised weighted vote ∈ [−1, +1]; positive = risk-on.
     let score: Double

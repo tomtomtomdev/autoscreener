@@ -142,16 +142,16 @@ struct MainSidebarView: View {
     @State private var intradayLiquidityVM: ScreenerViewModel
     @State private var watchlistVM: WatchlistViewModel
     // Markets bundles the top-down regime read (banner) over the instrument list.
-    // Held here, like the screeners above, so switching tabs preserves the loaded
-    // data and doesn't re-fire the expensive regime fetch (a chart request per
-    // LQ45 constituent for breadth) on every visit.
+    // Both are thin projections over the shared MarketDataStore that the unified
+    // DataSweepCoordinator fills — held here, like the screeners above, so switching
+    // tabs preserves the binding (the data itself lives in the store, not the VM).
     @State private var regimeVM: RegimeViewModel
     @State private var marketQuotesVM: MarketQuotesViewModel
 
     init() {
         let deps = AppDependencies.shared
         let store = deps.screenerStore
-        let coordinator = deps.screenerSweepCoordinator
+        let coordinator = deps.dataSweepCoordinator
         func screener(_ kind: BandarScreenerKind) -> ScreenerViewModel {
             ScreenerViewModel(store: store, coordinator: coordinator, kind: kind)
         }

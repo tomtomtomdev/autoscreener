@@ -23,10 +23,10 @@ struct ContentView: View {
             if auth.phase == .unknown {
                 auth.phase = await AppDependencies.shared.tokens.load() != nil ? .signedIn : .signedOut
             }
-            // Once signed in, start the continuous market-hours screener sweep that
-            // fills the shared cache. Idempotent — safe to call on every appearance.
+            // Once signed in, start the continuous market-hours data sweep that fills
+            // the shared screener + market caches. Idempotent — safe on every appearance.
             if auth.phase == .signedIn {
-                AppDependencies.shared.screenerSweepCoordinator.start()
+                AppDependencies.shared.dataSweepCoordinator.start()
             }
         }
     }

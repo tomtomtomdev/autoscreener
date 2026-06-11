@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Thin projection over the shared `ScreenerStore` for a single screener tab. It
 /// renders the cached snapshot for its `kind`; it no longer fetches or paginates —
-/// the `ScreenerSweepCoordinator` is the single fetch path and each snapshot already
+/// the `DataSweepCoordinator` is the single fetch path and each snapshot already
 /// holds the screener's full result set. Sorting and stock-code search are applied
 /// client-side over the cached rows.
 @MainActor
@@ -17,9 +17,9 @@ final class ScreenerViewModel {
 
     let kind: BandarScreenerKind
     private let store: ScreenerStore
-    private let coordinator: ScreenerSweepCoordinator
+    private let coordinator: DataSweepCoordinator
 
-    init(store: ScreenerStore, coordinator: ScreenerSweepCoordinator, kind: BandarScreenerKind) {
+    init(store: ScreenerStore, coordinator: DataSweepCoordinator, kind: BandarScreenerKind) {
         self.store = store
         self.coordinator = coordinator
         self.kind = kind

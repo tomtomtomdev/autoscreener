@@ -13,7 +13,7 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **New-device MFA**: detect `multi_factor` envelope, walk `/mfa/verification/v1/challenge/{start,otp/send,otp/verify}` then `/login/v6/new-device/verify` — sequential email → phone OTPs, auto-sent on the server's `default_channel`.
 - [x] **Screener run**: fifteen canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow, Foreign Buy Streak ≥5, Fresh Foreign Buy, Frequency Spike, Volume Spike, Above 50MA, Above 200MA, Liquidity Floor, Intraday Liquidity) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
 - [x] **Watchlist (composite)**: union of all twenty screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc. The two liquidity rules are *veto gates*: stocks missing from either evaluable gate are **excluded** from the composite entirely (hard-AND), not tagged.
-- [x] **Continuous market-hours sweep + disk cache** (§15): while the IDX market is open, a single coordinator sweeps all twenty screeners (bandar-accum → intraday-liquidity, 1–1.5 s throttle between each) then waits a random 5–10 min and repeats, writing each result into a disk-persisted `ScreenerStore`. Every screener tab and the Watchlist read from that cache — when the market is closed (or on a cold relaunch), they render the last persisted snapshot with no network. Refresh forces an immediate sweep regardless of session.
+- [x] **Continuous market-hours sweep + disk cache** (§15): a single `DataSweepCoordinator` is the whole app's only fetch path. One throttled sweep (1–1.5 s between every request) fills two disk-backed stores — `ScreenerStore` (the 20 screeners) and `MarketDataStore` (Markets quotes + the regime read, §17). Open → full refresh every 5–10 min; closed → only the around-the-clock legs (global/commodity/FX) refresh every 20–30 min while the IDX-session legs stay frozen. Every screener tab, the Watchlist, and the Markets screen read from these caches — on a closed market or cold relaunch they render the last persisted snapshot with no network. Refresh forces an immediate full sweep regardless of session.
 - [ ] **Today's Picks**: the Tier-A selection screen is **hidden from the sidebar for now** (feature code retained; the app lands on the Watchlist).
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
@@ -321,7 +321,7 @@ The `Last` / `Δ%` columns from the original sketch were removed — Stockbit's 
 
 ### 7.1 No view-side pagination (superseded by the sweep cache)
 
-Screener tabs no longer paginate at the view layer. The sweep coordinator already walks every page per screener (page 1 via `GET`, pages 2+ via `POST`, terminating on empty / partial-page / total / a 20-page safety cap) and stores the **full result set** as one `ScreenerSnapshot`. A tab renders all rows from that snapshot at once; there is no `loadMore`/`rowDidAppear`. Pagination end-of-list detection now lives in `ScreenerSweepCoordinator.fetchAll` (see §15).
+Screener tabs no longer paginate at the view layer. The sweep coordinator already walks every page per screener (page 1 via `GET`, pages 2+ via `POST`, terminating on empty / partial-page / total / a 20-page safety cap) and stores the **full result set** as one `ScreenerSnapshot`. A tab renders all rows from that snapshot at once; there is no `loadMore`/`rowDidAppear`. Pagination end-of-list detection now lives in `DataSweepCoordinator.fetchAll` (see §15).
 
 ### 7.2 Toolbar + status bar
 
@@ -381,7 +381,11 @@ Since every snapshot holds the screener's full result set (the sweep walks all p
 - `ScreenerSearchTests` — `visibleRows` tracks `searchText`; `loadAllForSearch()` exhausts every remaining page and leaves `hasMore == false`
 - `WatchlistSearchTests` — `visibleRows` filters by symbol (blank passthrough, case-insensitive, symbol-not-name)
 - `CommodityPriceServiceTests` — `emitten/{symbol}/info` endpoint shape; parse of live OIL/XAU/CPO captures (string vs JSON-number fields, signed `change`, comma-grouped `formatted_price`, integer-string price, `"NA"` value/average tolerance); non-numeric-price + malformed-JSON throws; error mapping through a real `APIClient` + `StubSession` (unauthorized / paywall 403 / malformed / happy path)
-- `MarketQuotesViewModelTests` — fan-out populates all quotes; **default catalog covers the chartable groups too** (composite/indices/sectors, not just commodities/currencies); **partial failure** keeps the other rows; **total failure** sets a screen error; reload-skip when loaded; force-reload refetches; retry after total failure
+- `MarketQuotesViewModelTests` / `RegimeViewModelTests` — thin store projections: `quotes`/`read` mirror the `MarketDataStore`; empty store → empty/nil; no spinner once data has landed
+- `MarketDataStoreTests` — `applyQuotes` merge-keeps-prior + version bump, empty-apply no-op, `apply(regimeRead:)`, quotes + regime read round-trip to `market-cache.json`, corrupt file loads empty
+- `LQ45BreadthTests` — LQ45 ∩ `.above200MA` snapshot over the fixed-45 denominator; nil without a snapshot / without constituents; zero-above case
+- `RegimeComposerTests` — composes a read from available inputs (valuation/breadth/foreign-flow factors present, trend absent without a series); nil when no factor is produced; degrades without the snapshot; breadth factor absent without a screener snapshot
+- `DataSweepCoordinatorTests` — **screener path** (paywall-once, 20 in order, pagination/safety-cap, throttle count, mid-sweep cancel, partial-failure error, fixture seed/veto, open-sweeps/closed-skips loop, closed cadence gap); **market path** (`openSweepPricesEveryCatalogSymbol`, `closedSweepPricesAroundTheClockGroupsOnly`, failed-symbol keeps prior, serial throttle); **regime path** (open composes + writes the read incl. derived breadth, closed leaves the read frozen)
 - `MarketCatalogTests` — declaration order (`.global` first, then `.composite`…`.currency`), all 11 global indices present + chartable, all 18 commodity/currency symbols present, all 11 IDX-IC sectors, all 5 currency pairs (USD/IDR, SGD/IDR, EUR/IDR, AUD/IDR, CNY/IDR)
 
 **UI verification.** Confirm UI changes with XCUITest under `-UITestFixtures`, never via the Accessibility API or screenshot scripts (flaky on multi-display macOS). `AutoscreenerUITests`:
@@ -442,21 +446,24 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 
 **Markets — Global indices section (2026-06-11).** Added a **Global** section of 11 world indices (S&P 500, Dow Jones, Nasdaq, FTSE 100, DAX, CAC 40, Nikkei 225, Hang Seng, KOSPI, Shanghai, Straits Times) directly below the regime banner — surfacing the global context the regime's global-equities leg already reads. Pure data change: a `MarketGroup.global` case (declared first → renders below the banner) plus the symbols in `MarketCatalog`; pricing (`MarketQuotesViewModel` fan-out over `MarketCatalog.all`) and chart navigation (`.hasChart`) are already generic, so no service/view-model edits. Stockbit serves world indices on the same `emitten/{symbol}/info` + `charts/{symbol}/daily` paths as IDX symbols. Tests: `MarketCatalogTests` order assertion updated + `coversAllGlobalIndices`/`globalIndicesAreChartable` added; `MarketsUITests` gains a Global-header + SP500 priced-row check. Symbols from a request capture, pending live confirmation (§17.4). Build + full unit suite green; UI tests skip on multi-display (run on single-display/CI). See §17.
 
+**Markets + Regime folded into the unified sweep (2026-06-11).** The Markets price list and the regime read now flow through the **same throttled, disk-backed, market-clock-driven fetch path as the screeners** — previously they fired ~100 un-throttled concurrent requests on every screen appearance. `ScreenerSweepCoordinator` → **`DataSweepCoordinator`**: one `runSweep(includeIDX:)` prices `MarketCatalog.all` and synthesises the regime read through the **same anti-burst throttle** as the screeners, writing a new disk-backed **`MarketDataStore`** (`market-cache.json`: quotes + `RegimeRead`). `MarketQuotesViewModel`/`RegimeViewModel` became thin store projections (no fetching). **Cadence** keys off `MarketGroup.isIDXSession`: open → full sweep every 5–10 min; closed → only global/commodity/FX legs refresh every 20–30 min while IDX-session legs (screeners, composite/index/sector quotes, regime) freeze. **Breadth is now derived** from the `.above200MA` screener snapshot via `LQ45Breadth` (zero extra chart calls; the old 45-per-constituent fan-out is gone); `RegimeComposer` is the pure synthesis the coordinator calls. `BreadthService` kept (the §8 selection engine still uses it). `CommodityQuote`/`RegimeRead` made `Codable` for persistence. Tests: new `MarketDataStoreTests`, `LQ45BreadthTests`, `RegimeComposerTests`, `DataSweepCoordinator{Market,Regime}Tests`; VM suites rewritten as projections; all pre-existing screener tests unchanged. Build + full unit suite green; UI tests require automation-mode permission (run on a configured single-display machine/CI). See §15, §17.
+
 ---
 
 ## 15. Continuous market-hours sweep + disk cache
 
-There is **one fetch path**: a `ScreenerSweepCoordinator` that fills a disk-backed `ScreenerStore`. Every screener tab and the composite Watchlist are thin read-only projections over that store — they never fetch themselves. The store survives app restarts, so a relaunch (even with the market closed) renders the last captured snapshot immediately.
+There is **one fetch path** for the whole app: a single `DataSweepCoordinator` that fills two disk-backed stores — `ScreenerStore` (the 20 bandar screeners) and `MarketDataStore` (the Markets price quotes + the synthesised regime read, §17). Every screener tab, the composite Watchlist, and the Markets screen are thin read-only projections over those stores — they never fetch themselves. Each store survives app restarts, so a relaunch (even with the market closed) renders the last captured snapshot immediately. Crucially, **every** outgoing Stockbit request — screener page, market quote, or regime input — passes through the **same anti-burst throttle**, so the app issues one request at a time and Stockbit never sees a parallel burst.
 
 ```
-ScreenerSweepCoordinator (@MainActor, @Observable)
-   └─ MarketClock.isOpen → run full fan-out (throttle 1–1.5 s/screener)
-        └─ writes each kind's ScreenerSnapshot into ScreenerStore as it lands
-        └─ persists the store to disk after the sweep
-        └─ sleep random 5–10 min → repeat;  closed → sleep until next open
-ScreenerStore (@MainActor, @Observable, disk-backed)  ← single source of truth
-   ├─ ScreenerViewModel (per tab)  → renders snapshots[kind]
-   └─ WatchlistViewModel           → WatchlistComposer over all snapshots (veto-excluded)
+DataSweepCoordinator (@MainActor, @Observable)   ← one throttle for the whole sweep
+   └─ runSweep(includeIDX:)
+        ├─ screeners      (IDX-session) → ScreenerStore  (snapshot per kind, as it lands)
+        ├─ market quotes  (catalog)     → MarketDataStore (24h groups always; IDX groups when open)
+        └─ regime          (IDX-session) → MarketDataStore (RegimeComposer; breadth derived, §17)
+   └─ open → sleep 5–10 min;  closed → sleep 20–30 min;  repeat
+ScreenerStore (disk-backed)            MarketDataStore (disk-backed)
+   ├─ ScreenerViewModel (per tab)        ├─ MarketQuotesViewModel → store.quotes
+   └─ WatchlistViewModel (composite)     └─ RegimeViewModel       → store.regimeRead
 ```
 
 ### 15.1 Market clock (`Core/Market/MarketClock.swift`)
@@ -465,11 +472,14 @@ Pure value type. IDX regular sessions in **Asia/Jakarta, weekdays only**: Sessio
 
 ### 15.2 Sweep loop & cadence
 
-`start()` is idempotent (called from `ContentView` once signed in). The loop: **open** → `runSweep()` then sleep a random **5–10 min**; **closed** → sleep until `nextOpen` (capped at 15 min so it re-checks). `runSweep()` does one paywall increment, then fetches the twenty screeners in `fanOutOrder` (bandar-accum → intraday-liquidity), each request preceded by a randomised **1000–1500 ms** throttle (first request free), walking every page per screener up to a 20-page safety cap. Each screener's `ScreenerSnapshot{config, rows, fetchedAt}` is written to the store **as it lands**, so all surfaces fill in progressively. `refreshNow()` runs one sweep immediately regardless of session (wired to every Refresh button). Mid-sweep cancellation is treated as internal noise (partial snapshots kept, no error banner).
+`start()` is idempotent (called from `ContentView` once signed in). The loop **always sweeps**, then sleeps a randomised gap: **open** → 5–10 min (full refresh); **closed** → 20–30 min (only the around-the-clock legs). `runSweep(includeIDX:)` gates the **IDX-session legs** (the 20 screeners, composite/index/sector quotes, and the regime read) on `clock.isOpen()`; the **around-the-clock legs** (global indices, commodities, FX quotes — classified by `MarketGroup.isIDXSession`) run every sweep, since those instruments keep moving after the IDX close. When closed, the IDX legs are left frozen on their last snapshot. Each request is preceded by a randomised **1000–1500 ms** throttle (first request of the sweep free); the screener leg walks every page per screener up to a 20-page safety cap and writes each `ScreenerSnapshot{config, rows, fetchedAt}` **as it lands**. `refreshNow()` forces a full sweep (IDX legs included) regardless of session, wired to every Refresh button. Mid-sweep cancellation is internal noise (partial snapshots kept, no error banner).
 
-### 15.3 Store & persistence (`Features/Screener/ScreenerStore.swift`)
+### 15.3 Stores & persistence
 
-`snapshots: [BandarScreenerKind: ScreenerSnapshot]` plus `lastSweepAt` and a `version` write-counter (lets the Watchlist memoise its composite instead of recomputing per render). Persisted as JSON at `Application Support/Autoscreener/screener-cache.json`, keyed by `kind.rawValue` so adding/removing a kind never invalidates the file (unknown keys dropped, missing kinds self-heal next sweep). A corrupt/missing file loads as empty.
+- **`Features/Screener/ScreenerStore.swift`** — `snapshots: [BandarScreenerKind: ScreenerSnapshot]` plus `lastSweepAt` and a `version` write-counter (lets the Watchlist memoise its composite). JSON at `Application Support/Autoscreener/screener-cache.json`, keyed by `kind.rawValue` so adding/removing a kind never invalidates the file (unknown keys dropped, missing kinds self-heal next sweep).
+- **`Features/Markets/MarketDataStore.swift`** — `quotes: [String: CommodityQuote]` (merged so a symbol that failed a round keeps its prior value) plus `regimeRead: RegimeRead?`, `lastSweepAt`, and a `version` counter. JSON at `Application Support/Autoscreener/market-cache.json`. `CommodityQuote` and the `RegimeRead` factor types are `Codable` for this.
+
+Both: a corrupt/missing file loads as empty.
 
 ### 15.4 Composite + veto exclusion (`Features/Watchlist/WatchlistComposer.swift`)
 
@@ -477,7 +487,7 @@ Pure value type. IDX regular sessions in **Asia/Jakarta, weekdays only**: Sessio
 
 ### 15.5 Headless mode (tests / `-UITestFixtures`)
 
-Under UI fixtures and unit tests the coordinator does **not** run the continuous loop and the store starts empty (no real user file is read). `start()` instead seeds the store with a single sweep over the stub services (with a no-op throttle), so the UI renders deterministically and offline.
+Under UI fixtures and unit tests the coordinator does **not** run the continuous loop and the stores start empty (no real user file is read). `start()` instead seeds the stores with a single **full** sweep (`includeIDX: true`, regardless of the real clock) over the stub services with a no-op throttle, so the screener, market, and regime surfaces render deterministically and offline.
 
 ---
 
@@ -500,9 +510,11 @@ Pick from the ranked list — none are in-flight.
 
 The Markets sidebar screen (`Features/Markets/`) opens with the **Market Regime banner** (the top-down risk-on / neutral / risk-off read — `idx-investing-research.md` §3) sitting atop the instrument list it's derived from. The banner shows the synthesised stance + a one-line posture; tapping it pushes `RegimeBreakdownView`, the transparent factor breakdown (valuation, BI rate, US rates/dollar, global equities, foreign flow, IHSG trend, rupiah, LQ45 breadth) with the late-cycle valuation guard note. Directly below the banner sits a **Global** section of world indices (11 symbols, §17.4) — the global context the regime's *global-equities* leg is partly derived from — followed by **every** other row: the composite (IHSG), indices, IDX-IC sectors, **Commodities** (13 symbols) and **Currencies** (5: USD/IDR, SGD/IDR, EUR/IDR, AUD/IDR, CNY/IDR), each carrying a live last-price + signed % change. Tapping a chartable row (global/composite/index/sector) opens the shared `OHLCVChartView`; commodities/currencies have no `charts/{symbol}/daily` history, so only they don't navigate.
 
-Price + % change on the composite/index/sector rows shipped after the original merge (2026-06-11) — they were previously plain `symbol + name` rows. The snapshot uses the same `GET /emitten/{symbol}/info` path already serving commodities (§17.1): it returns the identical price-header shape for indices and stocks, so one fan-out covers the whole list (~35 concurrent requests, in line with the regime breadth fan-out).
+Price + % change on the composite/index/sector rows shipped after the original merge (2026-06-11) — they were previously plain `symbol + name` rows. The snapshot uses the same `GET /emitten/{symbol}/info` path already serving commodities (§17.1): it returns the identical price-header shape for indices and stocks, so the one sweep leg covers the whole list.
 
-The regime read and the markets list were **merged into this one screen** (2026-06-11) — previously two separate sidebar entries under "Markets". `RegimeViewModel` and `MarketQuotesViewModel` are now held in `MainSidebarView` (like the screener VMs) so switching tabs preserves loaded data and doesn't re-fire the expensive regime fetch (a `charts/{symbol}/daily` request per LQ45 constituent for breadth) on every visit; both load concurrently on appear and force-refresh together on pull-to-refresh.
+**Both the quotes and the regime read are filled by the unified sweep (§15), not by the screen.** `MarketQuotesViewModel` (`store.quotes`) and `RegimeViewModel` (`store.regimeRead`) are now thin projections over the shared `MarketDataStore`, held in `MainSidebarView` (like the screener VMs) so switching tabs preserves the binding. They no longer fetch: the `DataSweepCoordinator` prices every catalog symbol and synthesises the regime read through the shared throttle, so the Markets screen never bursts the API. On appear they just ensure the sweep is running; pull-to-refresh calls `coordinator.refreshNow()`.
+
+**Regime breadth is derived, not fetched.** `LQ45Breadth.reading(aboveSnapshot:)` intersects `LQ45Constituents` with the `.above200MA` screener snapshot the same sweep already collects (denominator = the fixed 45), replacing the old per-constituent `charts/{symbol}/daily` fan-out. `RegimeComposer.compose(...)` is the pure synthesis the coordinator calls (lifted out of `RegimeViewModel`); it feeds `RegimeFactorBuilder` + `RegimeSynthesizer` unchanged. (`BreadthService` still exists — the Tier-A selection engine, §8, still uses it; only the regime path switched to the derived reading.) USD/IDR is read from the currency quote priced this sweep rather than re-requested.
 
 ### 17.1 Price source — `GET /emitten/{symbol}/info`
 
@@ -521,17 +533,21 @@ The detail-header price snapshot lives in `data` of `emitten/{symbol}/info`, **n
 
 ```
 Features/Markets/
-├── MarketCatalog.swift          // global/composite/index/sector/commodity/currency MarketGroup cases (Global declared first → renders below the banner); all symbols; `grouped()`
-├── CommodityModels.swift        // CommodityQuote (domain) + EmittenInfoResponseDTO + toDomain()
+├── MarketCatalog.swift          // global/composite/index/sector/commodity/currency MarketGroup cases (Global declared first → renders below the banner); `hasChart`; `isIDXSession` (sweep cadence, §15.2); all symbols; `grouped()`
+├── CommodityModels.swift        // CommodityQuote (domain, Codable) + EmittenInfoResponseDTO + toDomain()
 ├── CommodityPriceService.swift  // CommodityPriceServicing; static makeEndpoint/parse; APIError→CommodityPriceError mapping (mirrors ChartService)
-├── MarketQuotesViewModel.swift  // @MainActor @Observable; concurrent withTaskGroup fan-out over MarketCatalog.all; per-symbol failure tolerance
-└── MarketsView.swift            // regime banner (→ RegimeBreakdownView push) + priced rows for every group; .hasChart rows wrapped in NavigationLink; concurrent regime+quotes load on .task / .refreshable
+├── MarketDataStore.swift        // @MainActor @Observable, disk-backed (market-cache.json); quotes + regimeRead; merge-keeps-prior; written only by DataSweepCoordinator (§15.3)
+├── MarketQuotesViewModel.swift  // thin projection → store.quotes; load(force:) delegates to coordinator
+└── MarketsView.swift            // regime banner (→ RegimeBreakdownView push) + priced rows for every group; .hasChart rows wrapped in NavigationLink; .task ensures sweep started, .refreshable forces a sweep
 
 Features/Regime/
+├── RegimeViewModel.swift        // thin projection → store.regimeRead; load(force:) delegates to coordinator
+├── RegimeComposer.swift         // pure: gathered inputs → RegimeRead (RegimeFactorBuilder + RegimeSynthesizer); called by the coordinator
+├── LQ45Breadth.swift            // derives BreadthReading from the .above200MA screener snapshot (no chart fan-out)
 └── RegimeBreakdownView.swift    // full factor breakdown (pushed from the banner) + RegimeColors stance/signal→Color (UI-layer; models stay UI-free)
 ```
 
-DI: `AppDependencies.commodityPriceService` (`StubCommodityPriceService` under `-UITestFixtures`). The VM merges per-symbol results so a refresh that fails one symbol keeps its prior value; a screen-level error surfaces only when **every** symbol fails (leaving `hasLoaded` false so the next appearance retries). No auto-polling — refresh is on-appear + pull-to-refresh.
+DI: the coordinator gets `commodityPriceService`, `chartService`, `aggregateForeignFlowService`, `regimeSnapshotService` (all `Stub*` under `-UITestFixtures`) and writes the `MarketDataStore`. The store merges per-symbol results so a sweep that fails one symbol keeps its prior value; a missing quote renders as "—" and a missing regime read just hides the banner (graceful, no screen-level error). No view-side polling — the sweep refreshes on its cadence (§15.2) and on pull-to-refresh.
 
 ### 17.3 Commodity symbols
 
@@ -539,4 +555,4 @@ OIL (Crude Oil), BRENT (Brent Oil), GAS (Natural Gas), COAL-NEWCASTLE (Newcastle
 
 ### 17.4 Global index symbols
 
-SP500 (S&P 500), DOW30 (Dow Jones), NASDAQ (Nasdaq Composite), FTSE (FTSE 100), DAX, CAC40 (CAC 40), NIKKEI (Nikkei 225), HANGSENG (Hang Seng), KOSPI, SHANGHAI (Shanghai Composite), STI (Straits Times). Stockbit serves world indices on the same `emitten/{symbol}/info` (snapshot) and `charts/{symbol}/daily` (history) paths as IDX symbols, so they price and chart with zero new wiring. Symbols are from the Stockbit request capture (proxseer), pending live `charts/{symbol}/daily` confirmation — unlike the IDX rows verified live 2026-06-04. SP500 also backs the regime's global-equities factor (`RegimeViewModel`).
+SP500 (S&P 500), DOW30 (Dow Jones), NASDAQ (Nasdaq Composite), FTSE (FTSE 100), DAX, CAC40 (CAC 40), NIKKEI (Nikkei 225), HANGSENG (Hang Seng), KOSPI, SHANGHAI (Shanghai Composite), STI (Straits Times). Stockbit serves world indices on the same `emitten/{symbol}/info` (snapshot) and `charts/{symbol}/daily` (history) paths as IDX symbols, so they price and chart with zero new wiring. Symbols are from the Stockbit request capture (proxseer), pending live `charts/{symbol}/daily` confirmation — unlike the IDX rows verified live 2026-06-04. SP500 also backs the regime's global-equities factor (fetched in the sweep's regime leg, §15.2).

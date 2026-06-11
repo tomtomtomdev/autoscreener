@@ -10,7 +10,7 @@ import Foundation
 /// server's display string (already grouped with thousands separators, e.g.
 /// "4,493"). `change` is the absolute move vs. `previousClose`; `changePercent`
 /// is the same move as a percentage.
-nonisolated struct CommodityQuote: Sendable, Equatable {
+nonisolated struct CommodityQuote: Sendable, Equatable, Codable {
     let symbol: String
     let name: String
     let price: Double
