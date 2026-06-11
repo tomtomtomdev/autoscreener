@@ -99,8 +99,13 @@ nonisolated enum MarketCatalog {
         MarketSymbol(symbol: "ZINC-COMMODITIES", name: "Zinc", group: .commodity),
         MarketSymbol(symbol: "RUBBER", name: "Rubber", group: .commodity),
 
-        // Currencies
+        // Currencies — same `emitten/{symbol}/info` snapshot path as USDIDR
+        // (confirmed live 2026-06-11). Price-only, no chart history.
         MarketSymbol(symbol: "USDIDR", name: "US Dollar / Rupiah", group: .currency),
+        MarketSymbol(symbol: "SGDIDR", name: "Singapore Dollar / Rupiah", group: .currency),
+        MarketSymbol(symbol: "EURIDR", name: "Euro / Rupiah", group: .currency),
+        MarketSymbol(symbol: "AUDIDR", name: "Australian Dollar / Rupiah", group: .currency),
+        MarketSymbol(symbol: "CNYIDR", name: "Yuan Renminbi / Rupiah", group: .currency),
     ]
 
     /// Symbols grouped in `MarketGroup` declaration order, for sectioned lists.

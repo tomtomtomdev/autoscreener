@@ -53,13 +53,13 @@ import Testing
         let expected: Set<String> = [
             "OIL", "BRENT", "GAS", "COAL-NEWCASTLE", "CPO", "XAU", "SILVER",
             "NICKEL", "COPPER", "ALUMINIUM", "TIN", "ZINC-COMMODITIES", "RUBBER",
-            "USDIDR",
+            "USDIDR", "SGDIDR", "EURIDR", "AUDIDR", "CNYIDR",
         ]
         #expect(commoditiesAndFX == expected)
     }
 
-    @Test func usdIdrIsTheOnlyCurrency() {
-        let currencies = MarketCatalog.all.filter { $0.group == .currency }.map(\.symbol)
-        #expect(currencies == ["USDIDR"])
+    @Test func coversAllCurrencyPairs() {
+        let currencies = Set(MarketCatalog.all.filter { $0.group == .currency }.map(\.symbol))
+        #expect(currencies == ["USDIDR", "SGDIDR", "EURIDR", "AUDIDR", "CNYIDR"])
     }
 }
