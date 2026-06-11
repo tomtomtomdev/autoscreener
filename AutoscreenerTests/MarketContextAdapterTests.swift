@@ -17,7 +17,7 @@ import Testing
             pe: nil, pb: nil, pePctile: valuationPercentile, pbPctile: nil)
         let biRate = rate.map { RegimeSnapshot.BIRate(value: 5.75, direction: $0, asOf: "2026-06-01") }
         return RegimeSnapshot(
-            asOf: "2026-06-01", biRate: biRate,
+            asOf: "2026-06-01", biRate: biRate, macro: nil,
             indices: [RegimeSnapshot.compositeKey: composite])
     }
 

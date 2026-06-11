@@ -20,7 +20,7 @@ live, and the plan for the server-side **regime job** that closes the top-down (
 | **L2 Who** — foreign flow (per-stock) | ✅ Have | `ForeignFlowService` `/foreign-domestic/.../{sym}` |
 | **L3 When** — charts (OHLCV) | ✅ Have | `ChartService` (stocks/indices/sectors, multi-timeframe) |
 | **L4 Regime** — instruments | ✅ Have | `MarketCatalog` (IHSG, LQ45, IDX30/80, 11 sectors, commodities, USD/IDR) |
-| **L4 Regime** — *synthesis / read* | ✅ Have | `RegimeSynthesizer` + `RegimeViewModel`/`RegimeView` (Market Regime screen): weighted risk-on/neutral/risk-off read across all six factors, with the Howard-Marks late-cycle valuation guard (an expensive market can't read risk-on). Breadth built (see below); valuation percentile + BI rate consumed from the `regime.json` contract (`RegimeSnapshotService`) — **real** values await the §6 scraper, read degrades to live factors until then. |
+| **L4 Regime** — *synthesis / read* | ✅ Have | `RegimeSynthesizer` + `RegimeViewModel`/`RegimeView` (Market Regime screen): weighted risk-on/neutral/risk-off read across all nine factors (valuation, BI rate, **US 10y**, **broad USD**, **S&P 500 trend**, foreign flow, IHSG trend, rupiah, breadth), with the Howard-Marks late-cycle valuation guard (an expensive market can't read risk-on). Breadth built (see below); valuation percentile + BI rate + the **`macro` intermarket anchors** (US fed funds/10y/broad dollar) consumed from the `regime.json` contract (`RegimeSnapshotService`); S&P 500 is a live `ChartService` leg — **real** snapshot values await the §6 scraper, read degrades to live factors until then. |
 | **§3** LQ45 breadth (% > 200dma) | ✅ Have | `BreadthService` over `LQ45Constituents` + `ChartService` (`MovingAverage`) |
 | **§4** liquidity floor | ✅ Have | screener veto gates 5B/10B IDR |
 | **§4** Graham Number / valuation ratios | ✅ Have | `KeystatsRatioService` (keystats/ratio) + `GrahamNumber` calc |
@@ -30,11 +30,14 @@ live, and the plan for the server-side **regime job** that closes the top-down (
 
 **Key point (now closed):** the app has both the L4 *instruments* and the L4 *regime read* — the
 synthesis the doc is actually about (how aggressive to be). The read combines valuation percentile
-(weighted 2× as the dominant driver of future risk), BI-rate direction, aggregate foreign flow,
-IHSG trend vs. 200dma, the rupiah, and LQ45 breadth into a single posture, and is framed as cycle
-position, not a forecast. The one remaining dependency is **data**: the valuation percentile and BI
-rate come from `regime.json`, which the §6 server-side scraper (still unbuilt) must publish; until
-then the read runs on its live factors alone.
+(weighted 2× as the dominant driver of future risk), BI-rate direction, the **intermarket macro
+anchors** (US fed funds/10y yield & the broad trade-weighted dollar — rising = EM headwind = risk-off,
+Murphy intermarket chain), the **S&P 500 200-day trend** (live global risk appetite), aggregate
+foreign flow, IHSG trend vs. 200dma, the rupiah, and LQ45 breadth into a single posture, and is
+framed as cycle position, not a forecast. The remaining dependency is **data**: the valuation
+percentile, BI rate, and macro anchors come from `regime.json`, which the §6 server-side scraper must
+publish; until then the read runs on its live factors (foreign flow / IHSG trend / rupiah / breadth /
+S&P 500) alone.
 
 ---
 
@@ -72,16 +75,33 @@ paper-trading *state* (positions/journal/performance — local by design).
 
 ---
 
-## 3. Macro — BI policy rate
+## 3. Macro — BI policy rate + global intermarket anchors
 
 | Source | Verdict |
 |---|---|
 | **Yahoo Finance** | ❌ has FX (`IDR=X`) and US yields (`^TNX`), **no BI rate, no ID bond-yield ticker** |
 | **bi.go.id** `…/statistik/indikator/BI-Rate.aspx` | ✅ **best** — 200, server-rendered HTML with an **inline history table** (date + rate), no Cloudflare. Source-of-truth, free. HTML scrape (no JSON API). |
-| **FRED** `fredgraph.csv?id=IRSTCB01IDM156N` | ✅ fallback/cross-check — monthly, CSV, no key, lagged |
+| **FRED** `fredgraph.csv?id=IRSTCB01IDM156N` | ✅ fallback/cross-check for BI rate — monthly, CSV, no key, lagged |
 
 BI sets the rate on RDG board-meeting days (~monthly) → scrape BI **weekly** if you want it
 announcement-fresh; FRED is monthly.
+
+### 3a. Global intermarket anchors (left end of the chain → EM flows → IDR → IHSG)
+
+The same free FRED CSV path (`fredgraph.csv?id=<SERIES>`, no key) supplies the global anchors. The
+scraper folds these into a `macro` block on `regime.json` (§6); each is read **directionally**
+(`trend`: up/down/flat over a ~1-month window) rather than as a discrete policy move.
+
+| Series | FRED id | Role in the read |
+|---|---|---|
+| US fed funds | `DFF` | policy-rate context behind the 10y (rides in the factor *detail*, not the vote, to avoid double-counting the US leg) |
+| US 10y yield | `DGS10` | the global discount-rate / EM-flow anchor — **rising = risk-off** |
+| Broad trade-weighted USD | `DTWEXBGS` | rupiah/flow pressure — **rising = risk-off**. Chosen over ICE **DXY** (which is **not** a Stockbit symbol and is EUR-heavy); the broad index is the EM/rupiah-relevant gauge |
+| **S&P 500 (live, not scraped)** | — | global **risk appetite**: Stockbit serves `SP500` on the same `charts/{symbol}/daily` path as IHSG, so the app reads its **200-day trend** live (above = risk-on), no scraper dependency |
+
+Permissive value parsing matters: the BI/`parse_rate` path bounds values < 50 (a policy-rate
+plausibility check), which would wrongly reject the dollar index (~121) — so the macro series use
+their own magnitude-agnostic `parse_fred_value` (`regime_scraper/macro.py`).
 
 ---
 
@@ -160,6 +180,7 @@ the app a clean static JSON. Decisions locked: **static `regime.json` committed 
 1. IDX `LINK_FINANCIAL_DATA_RATIO` → cap-weighted index P/E·P/B (Composite + sectors; LQ45/IDX30 via constituents config).
 2. bi.go.id BI-Rate table → level + direction (hike/hold/cut).
 3. (cross-check) FRED `IRSTCB01IDM156N`.
+4. FRED `DFF` / `DGS10` / `DTWEXBGS` → the `macro` block (US fed funds / US 10y / broad dollar), each `{value, trend, asOf}` (§3a). `--no-macro` skips it; one failed series is omitted, not fatal.
 
 **Architecture:** Python + `curl_cffi`, run by a **GitHub Actions** monthly cron
 (`workflow_dispatch` too). Writes `regime.json` (snapshot) + `regime-history.json` (the monthly
@@ -171,11 +192,19 @@ Cloudflare logic on-device.**
 ```json
 { "asOf": "2026-01-31",
   "biRate": { "value": 4.75, "direction": "cut", "asOf": "2026-01-15" },
+  "macro": {
+    "usFedFunds":  { "value": 4.33,  "trend": "down", "asOf": "2026-01-31" },
+    "us10y":       { "value": 4.10,  "trend": "down", "asOf": "2026-01-31" },
+    "broadDollar": { "value": 119.0, "trend": "flat", "asOf": "2026-01-31" }
+  },
   "indices": {
     "COMPOSITE": { "pe": 13.2, "pb": 2.1, "pePctile": 0.42, "pbPctile": 0.55 },
     "LQ45":      { "pe": 12.1, "pb": 1.9, "pePctile": 0.38, "pbPctile": 0.49 }
   } }
 ```
+`macro` (and any individual series) is **optional** — `null`/absent for a pre-macro snapshot or a
+skipped/failed fetch, decoding to `macro == nil` on the app side (`RegimeSnapshot.MacroBlock` /
+`MacroSeries`), so the read degrades to its IDX-side factors exactly like a missing `biRate`.
 
 **Verification:** pytest on parse/aggregation against a saved real fixture; Swift decode +
 percentile test under `-UITestFixtures`.
@@ -183,10 +212,11 @@ percentile test under `-UITestFixtures`.
 > **On-device consumer status (built):** the contract above is implemented as `RegimeSnapshot`
 > (`Decodable`) and fetched read-only by `RegimeSnapshotService` (plain `URLSession`, no auth, no
 > Cloudflare on-device) from the `data`-branch raw URL. `RegimeSynthesizer` turns it (plus the live
-> flow / trend / rupiah / breadth factors) into the risk-on/neutral/risk-off read. **The server-side
-> job is now built** (`tools/idx-regime-scraper/`, 19 pytest cases green); only its first GitHub
-> Actions run that publishes to the `data` branch remains. Until then the fetch 404s and the read
-> falls back to live factors by design.
+> flow / trend / rupiah / breadth / S&P 500 factors) into the risk-on/neutral/risk-off read. **The
+> server-side job is now built** (`tools/idx-regime-scraper/`, **26** pytest cases green — incl. the
+> §3a `macro` block: `macro.py` permissive FRED parse + `trend()` + the optional `macro` snapshot
+> field); only its first GitHub Actions run that publishes to the `data` branch remains. Until then
+> the fetch 404s and the read falls back to live factors by design.
 
 ---
 
@@ -204,9 +234,14 @@ percentile test under `-UITestFixtures`.
 **Regime read (now built — `Features/Regime/`):**
 - §3 aggregate foreign flow ✅ (`AggregateForeignFlowService`); LQ45 breadth % > 200dma ✅
   (`BreadthService` + `LQ45Constituents` + `MovingAverage`).
+- §3a intermarket macro anchors ✅ — `usRates` (US 10y, fed funds in detail) + `globalDollar` (broad
+  USD) factors read from `snapshot.macro` via `RegimeSynthesizer.globalHeadwindSignal` (rising =
+  risk-off); `globalEquities` ✅ — the live S&P 500 200-day trend (`ChartService` `SP500` →
+  `MovingAverage.distanceFromSMA(_,200)`, reuses `trendSignal`). Both `RegimeViewModel.load` and
+  `StockbitDataProvider.fetchMarketContext` fan-outs fetch `SP500` and stay byte-for-byte identical.
 - §3 synthesis ✅ — `RegimeSynthesizer` (pure, fully unit-tested) + `RegimeViewModel`/`RegimeView`.
-  Weighted vote, valuation 2×, one-sided late-cycle valuation guard, graceful degradation when a
-  factor (or the whole snapshot) is missing.
+  Weighted vote (nine factors; macro/global legs weight 1, valuation 2×), one-sided late-cycle
+  valuation guard, graceful degradation when a factor (or the whole snapshot/`macro` block) is missing.
 - §6 scraper ✅ built (`tools/idx-regime-scraper/` + `.github/workflows/idx-regime.yml`): cap-weighted
   index P/E·P/B (Composite + sectors + LQ45/IDX30) + BI rate, pytest-covered, emits the app contract.
   Only its **first publishing run** to the `data` branch remains — until then the valuation-percentile

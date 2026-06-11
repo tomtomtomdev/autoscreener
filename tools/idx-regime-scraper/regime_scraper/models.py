@@ -68,3 +68,18 @@ class BIRate:
 
     def to_dict(self) -> dict:
         return {"value": self.value, "direction": self.direction, "asOf": self.as_of}
+
+
+@dataclass(frozen=True)
+class MacroSeries:
+    """A generic macro level read directionally — US fed funds, the US 10y yield, the
+    broad-dollar index. Same shape as ``BIRate`` but with a ``trend`` (up/down/flat)
+    rather than a policy ``direction`` (cut/hold/hike), since these are market levels,
+    not discrete policy moves. Serialises into the ``macro`` object of the contract."""
+
+    value: float
+    trend: str  # "up" | "down" | "flat"
+    as_of: str
+
+    def to_dict(self) -> dict:
+        return {"value": self.value, "trend": self.trend, "asOf": self.as_of}

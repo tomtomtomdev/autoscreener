@@ -47,6 +47,15 @@ import Testing
         #expect(RegimeSynthesizer.breadthSignal(fractionAbove200dma: 0.30) == .riskOff)
         #expect(RegimeSynthesizer.breadthSignal(fractionAbove200dma: nil) == nil)
     }
+
+    @Test func risingGlobalHeadwindsAreRiskOff() {
+        // Rising US yields / a strengthening dollar drain EM liquidity and pressure the
+        // rupiah → risk-off. Falling → the tailwind that pulls foreign money back in.
+        #expect(RegimeSynthesizer.globalHeadwindSignal(trend: .up) == .riskOff)
+        #expect(RegimeSynthesizer.globalHeadwindSignal(trend: .flat) == .neutral)
+        #expect(RegimeSynthesizer.globalHeadwindSignal(trend: .down) == .riskOn)
+        #expect(RegimeSynthesizer.globalHeadwindSignal(trend: nil) == nil)
+    }
 }
 
 // MARK: - Weighted aggregation + the late-cycle guard
@@ -158,6 +167,33 @@ import Testing
         #expect(snap.composite?.pe == 13.2)
         #expect(snap.composite?.pePctile == 0.42)
         #expect(snap.indices["LQ45"]?.pbPctile == 0.49)
+    }
+
+    // The `macro` block (global-rates anchor) the scraper now emits alongside biRate.
+    static let withMacro = Data(#"""
+    { "asOf": "2026-05-31",
+      "biRate": { "value": 5.25, "direction": "cut", "asOf": "2026-05-20" },
+      "macro": {
+        "usFedFunds":  { "value": 4.33,  "trend": "down", "asOf": "2026-06-10" },
+        "us10y":       { "value": 4.30,  "trend": "up",   "asOf": "2026-06-10" },
+        "broadDollar": { "value": 121.5, "trend": "up",   "asOf": "2026-06-10" }
+      },
+      "indices": { "COMPOSITE": { "pe": 13.2, "pb": 2.1, "pePctile": 0.42, "pbPctile": 0.55 } } }
+    """#.utf8)
+
+    @Test func decodesTheMacroBlock() throws {
+        let snap = try JSONDecoder().decode(RegimeSnapshot.self, from: Self.withMacro)
+        #expect(snap.macro?.us10y?.value == 4.30)
+        #expect(snap.macro?.us10y?.trend == .up)
+        #expect(snap.macro?.broadDollar?.value == 121.5)
+        #expect(snap.macro?.broadDollar?.trend == .up)
+        #expect(snap.macro?.usFedFunds?.trend == .down)
+    }
+
+    @Test func macroIsNilWhenAbsentFromContract() throws {
+        // The pre-macro contract (no `macro` key) still decodes — backward compatible.
+        let snap = try JSONDecoder().decode(RegimeSnapshot.self, from: Self.json)
+        #expect(snap.macro == nil)
     }
 
     @Test func compositeValuationPercentileAveragesPeAndPb() throws {

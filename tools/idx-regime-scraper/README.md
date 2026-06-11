@@ -38,6 +38,14 @@ Both are published to the **`data` branch**; the app fetches the raw URL
 | Index P/E·P/B | IDX `LINK_FINANCIAL_DATA_RATIO` | Cloudflare-gated → `curl_cffi` TLS impersonation |
 | BI policy rate | bi.go.id `BI-Rate.aspx` (HTML) | plain HTML; falls back to FRED on failure |
 | BI rate (fallback) | FRED `IRSTCB01IDM156N` (CSV) | monthly, no key, lagged |
+| US fed funds | FRED `DFF` (CSV) | daily, no key — global rate anchor |
+| US 10y yield | FRED `DGS10` (CSV) | daily, no key — EM flow / discount-rate driver |
+| Broad USD | FRED `DTWEXBGS` (CSV) | daily, no key — trade-weighted dollar (rupiah-relevant; not ICE DXY) |
+
+The last three populate the `macro` block of `regime.json` (`{usFedFunds, us10y,
+broadDollar}`, each `{value, trend, asOf}`). They are the left end of the intermarket
+chain (US rates/dollar → EM flows → IDR → IHSG). `--no-macro` skips them; a failed
+series is omitted rather than fatal, so the snapshot degrades like a missing BI rate.
 
 ## Method (`idx-regime-data-research.md` §5)
 
@@ -54,8 +62,9 @@ regime_scraper/
   aggregate.py    §5 cap-weighted P/E·P/B  (pure)
   percentile.py   percentile rank          (pure)
   bi_rate.py      BI HTML + FRED CSV parse (pure)
+  macro.py        US fed funds/10y/dollar FRED CSV parse (pure)
   build.py        compose the snapshot     (pure)
-  models.py       StockRatio / BIRate
+  models.py       StockRatio / BIRate / MacroSeries
   sources.py      live HTTP (lazy curl_cffi) — the only impure module
   __main__.py     CLI: fetch → build → write
 constituents/     LQ45 / IDX30 membership (maintained at each Feb/Aug rebalance)

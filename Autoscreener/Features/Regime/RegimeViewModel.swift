@@ -25,6 +25,9 @@ final class RegimeViewModel {
 
     /// IHSG — the composite index, for the 200-day trend signal.
     private static let compositeSymbol = "IHSG"
+    /// S&P 500 — Stockbit serves global indices on the same `charts/{symbol}/daily`
+    /// path; its 200-day trend is the live global risk-appetite leg.
+    private static let globalEquitySymbol = "SP500"
     /// USD/IDR — the rupiah snapshot (a currency, so price-only, no chart history).
     private static let rupiahSymbol = "USDIDR"
 
@@ -52,12 +55,14 @@ final class RegimeViewModel {
         async let snapshotTask = snapshotProvider.snapshot()
         async let flowTask = flowService.marketFlow()
         async let ihsgTask = chartService.candles(symbol: Self.compositeSymbol, timeframe: .oneYear)
+        async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
         async let rupiahTask = commodityService.quote(symbol: Self.rupiahSymbol)
         async let breadthTask = breadthService.reading(symbols: constituents)
 
         let snapshot = try? await snapshotTask
         let flow = try? await flowTask
         let ihsg = try? await ihsgTask
+        let sp500 = try? await sp500Task
         let rupiah = try? await rupiahTask
         let breadth = await breadthTask
 
@@ -66,6 +71,7 @@ final class RegimeViewModel {
             netForeignRaw: flow?.netForeign.raw,
             netForeignText: flow?.netForeign.formatted,
             ihsgDistanceFrom200dma: ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) },
+            sp500DistanceFrom200dma: sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) },
             usdIdrChangePercent: rupiah?.changePercent,
             breadth: breadth)
 

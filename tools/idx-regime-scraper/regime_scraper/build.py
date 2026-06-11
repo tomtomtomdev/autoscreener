@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple
 
 from .aggregate import aggregate_index, filter_constituents, group_by_sector
-from .models import BIRate, StockRatio
+from .models import BIRate, MacroSeries, StockRatio
 from .percentile import percentile_rank
 
 COMPOSITE = "COMPOSITE"
@@ -48,9 +48,14 @@ def assemble_snapshot(
     indices: Dict[str, IndexPair],
     history: List[dict],
     bi_rate: Optional[BIRate],
+    macro: Optional[Dict[str, MacroSeries]] = None,
 ) -> dict:
     """The ``regime.json`` snapshot: current pe/pb plus each one's percentile vs. the
-    full (current-inclusive) history. Matches the app's ``RegimeSnapshot`` contract."""
+    full (current-inclusive) history. Matches the app's ``RegimeSnapshot`` contract.
+
+    ``macro`` carries the global anchors of the intermarket chain (US fed funds, US 10y
+    yield, broad dollar); ``None`` when the fetch was skipped or failed, so the app's
+    regime read degrades to its IDX-side factors — same contract as ``biRate``."""
     out_indices: Dict[str, dict] = {}
     for key, (pe, pb) in indices.items():
         pe_hist = [h["indices"][key]["pe"] for h in history if key in h.get("indices", {})]
@@ -64,6 +69,7 @@ def assemble_snapshot(
     return {
         "asOf": as_of,
         "biRate": bi_rate.to_dict() if bi_rate else None,
+        "macro": {key: series.to_dict() for key, series in macro.items()} if macro else None,
         "indices": out_indices,
     }
 
@@ -74,12 +80,13 @@ def build(
     prior_history: List[dict],
     constituents: Dict[str, List[str]],
     bi_rate: Optional[BIRate],
+    macro: Optional[Dict[str, MacroSeries]] = None,
 ) -> Tuple[dict, List[dict]]:
     """End-to-end pure build: aggregate → fold into history → assemble snapshot.
     Returns ``(snapshot, updated_history)`` ready to serialise. No I/O."""
     indices = compute_indices(records, constituents)
     history = upsert_history(list(prior_history), history_record(as_of, indices))
-    snapshot = assemble_snapshot(as_of, indices, history, bi_rate)
+    snapshot = assemble_snapshot(as_of, indices, history, bi_rate, macro)
     return snapshot, history
 
 

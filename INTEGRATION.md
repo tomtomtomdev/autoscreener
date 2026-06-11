@@ -142,6 +142,17 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   `AutoscreenerTests/StockbitDataProviderTests.swift` (9 cases: composition, cache,
   degrade-vs-propagate, marketContext map + all-nil throw, throttle pacing). **Full `AutoscreenerTests`
   bundle: 396 passed, 0 failures.**
+- **Regime fan-out addendum (2026-06-11)** — the regime input set grew with the intermarket layer
+  (`idx-regime-data-research.md` §3a): the snapshot now carries a `macro` block (`usRates`/
+  `globalDollar` factors) and the read gained a **live `globalEquities` leg** (S&P 500 200-day trend
+  via `ChartService` `SP500` → `MovingAverage.distanceFromSMA(_,200)`). `RegimeFactorBuilder.factors`
+  took one new optional param `sp500DistanceFrom200dma:` (defaulted `nil`). **The "reused verbatim"
+  invariant holds:** both consumers — `RegimeViewModel.load` and `StockbitDataProvider.fetchMarketContext`
+  — now fetch `SP500` concurrently and pass the same distance, so the empties guard
+  (`SelectionProviderError.noRegimeInputs`) still mirrors the screen exactly. The `MarketContext`
+  field map below is unchanged — the macro/global-equities legs feed the *factor list / emptiness rule*,
+  not the engine's `MarketContext` (no new engine input). Tests: `RegimeFactorBuilderTests` (global
+  legs), all green.
 
 - **Phase 2 ✅ (2026-06-07) — ARCHETYPE SEAM COMPLETE (additive, industrial path byte-for-byte
   unchanged).** The §14 rework landed entirely inside `Autoscreener/Features/Selection/

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from .build import build, compute_indices, history_record, upsert_history
-from .sources import fetch_bi_rate, fetch_idx_ratios
+from .sources import fetch_bi_rate, fetch_idx_ratios, fetch_macro_series
 
 ROOT = Path(__file__).resolve().parent.parent  # tools/idx-regime-scraper/
 CONSTITUENTS_DIR = ROOT / "constituents"
@@ -78,6 +78,8 @@ def run(argv: List[str] = None) -> int:
                         help="also fetch the N months before the target to seed percentile history")
     parser.add_argument("--out-dir", default=str(ROOT / "dist"), help="where to write the JSON files")
     parser.add_argument("--no-bi", action="store_true", help="skip the BI-rate fetch (offline/testing)")
+    parser.add_argument("--no-macro", action="store_true",
+                        help="skip the US fed-funds/10y/dollar fetch (offline/testing)")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out_dir)
@@ -107,7 +109,8 @@ def run(argv: List[str] = None) -> int:
         return 1
 
     bi_rate = None if args.no_bi else fetch_bi_rate()
-    snapshot, history = build(month_end(year, month), records, history, constituents, bi_rate)
+    macro = None if args.no_macro else fetch_macro_series()
+    snapshot, history = build(month_end(year, month), records, history, constituents, bi_rate, macro)
 
     snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n")
     history_path.write_text(json.dumps(history, indent=2) + "\n")

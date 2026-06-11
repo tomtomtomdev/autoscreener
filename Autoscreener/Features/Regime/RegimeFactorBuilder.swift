@@ -11,6 +11,7 @@ nonisolated enum RegimeFactorBuilder {
         netForeignRaw: Double?,
         netForeignText: String?,
         ihsgDistanceFrom200dma: Double?,
+        sp500DistanceFrom200dma: Double? = nil,
         usdIdrChangePercent: Double?,
         breadth: BreadthReading?
     ) -> [RegimeFactor] {
@@ -30,6 +31,36 @@ nonisolated enum RegimeFactorBuilder {
             factors.append(RegimeFactor(
                 kind: .policyRate, signal: signal,
                 detail: "BI rate \(rateText(rate.value)), last move: \(rate.direction.rawValue)"))
+        }
+
+        // US rates — the 10y Treasury yield trend, the global discount-rate / EM-flow
+        // anchor. Fed funds rides along in the detail for context (it's the policy rate
+        // behind the 10y), but the vote is the 10y to avoid double-counting the US leg.
+        if let series = snapshot?.macro?.us10y,
+           let signal = RegimeSynthesizer.globalHeadwindSignal(trend: series.trend) {
+            factors.append(RegimeFactor(
+                kind: .usRates, signal: signal,
+                detail: "US 10y \(rateText(series.value)) \(trendWord(series.trend))\(fedFundsContext(snapshot?.macro?.usFedFunds))"))
+        }
+
+        // Global dollar — the broad trade-weighted USD trend (rupiah/flow pressure).
+        if let series = snapshot?.macro?.broadDollar,
+           let signal = RegimeSynthesizer.globalHeadwindSignal(trend: series.trend) {
+            factors.append(RegimeFactor(
+                kind: .globalDollar, signal: signal,
+                detail: "Broad USD \(trendWord(series.trend)) (index \(indexText(series.value)))"))
+        }
+
+        // Global equities — the S&P 500 vs. its 200-day average, the live global
+        // risk-appetite leg (Murphy intermarket: US equities lead EM flows). Above its
+        // 200dma → risk-on, below → risk-off; same trend semantics as the IHSG leg, so
+        // it reuses `trendSignal`.
+        if let distance = sp500DistanceFrom200dma,
+           let signal = RegimeSynthesizer.trendSignal(distanceFrom200dma: distance) {
+            let position = distance >= 0 ? "above" : "below"
+            factors.append(RegimeFactor(
+                kind: .globalEquities, signal: signal,
+                detail: "S&P 500 \(pct1(abs(distance))) \(position) its 200-day average"))
         }
 
         // Aggregate net foreign flow.
@@ -77,7 +108,28 @@ nonisolated enum RegimeFactorBuilder {
     /// A figure that is already a percentage (e.g. a `changePercent` of −1.96), with sign.
     private static func signedPct(_ percent: Double) -> String { String(format: "%+.2f%%", percent) }
     private static func rateText(_ value: Double) -> String { String(format: "%.2f%%", value) }
+    /// A bare index level (the dollar index has no unit), one decimal.
+    private static func indexText(_ value: Double) -> String { String(format: "%.1f", value) }
     private static func stripLeadingMinus(_ s: String) -> String { s.hasPrefix("-") ? String(s.dropFirst()) : s }
+
+    private static func trendWord(_ trend: MacroTrend) -> String {
+        switch trend {
+        case .up: "rising"
+        case .down: "falling"
+        case .flat: "flat"
+        }
+    }
+
+    /// Fed-funds context appended to the US-rates detail, e.g. " (Fed easing)". Empty
+    /// when fed funds is unavailable so the 10y line still reads cleanly.
+    private static func fedFundsContext(_ series: RegimeSnapshot.MacroSeries?) -> String {
+        guard let series else { return "" }
+        switch series.trend {
+        case .up: return " (Fed tightening)"
+        case .down: return " (Fed easing)"
+        case .flat: return " (Fed on hold)"
+        }
+    }
 
     private static func valuationWord(_ signal: RegimeSignal) -> String {
         switch signal {

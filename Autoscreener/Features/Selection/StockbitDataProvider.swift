@@ -66,6 +66,9 @@ actor StockbitDataProvider: DataProvider {
 
     /// IDX Composite — the market index whose bars feed the engine's timing/beta leg.
     static let marketIndexSymbol = "IHSG"
+    /// S&P 500 — the global risk-appetite leg of the regime read (Stockbit serves it on
+    /// the same `charts/{symbol}/daily` path as IHSG).
+    private static let globalEquitySymbol = "SP500"
     /// USD/IDR — the rupiah leg of the regime read (a currency, price-only).
     private static let rupiahSymbol = "USDIDR"
     /// Two calendar years of daily bars comfortably clears `dataIntegrity.minTradingDays` (200).
@@ -223,15 +226,18 @@ actor StockbitDataProvider: DataProvider {
         async let snapshotTask = snapshotProvider.snapshot()
         async let flowTask = flowService.marketFlow()
         async let ihsgTask = chartService.candles(symbol: Self.marketIndexSymbol, timeframe: .oneYear)
+        async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
         async let rupiahTask = commodityService.quote(symbol: Self.rupiahSymbol)
         async let breadthTask = breadthService.reading(symbols: breadthConstituents)
 
         let snapshot = try? await snapshotTask
         let flow = try? await flowTask
         let ihsg = try? await ihsgTask
+        let sp500 = try? await sp500Task
         let rupiah = try? await rupiahTask
         let breadth = await breadthTask
         let distance = ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
+        let sp500Distance = sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
 
         // Decide emptiness exactly as the regime screen does: if no factor resolves, refuse to
         // score a phantom regime (§1.7). `RegimeFactorBuilder` is the single source of that rule.
@@ -240,6 +246,7 @@ actor StockbitDataProvider: DataProvider {
             netForeignRaw: flow?.netForeign.raw,
             netForeignText: flow?.netForeign.formatted,
             ihsgDistanceFrom200dma: distance,
+            sp500DistanceFrom200dma: sp500Distance,
             usdIdrChangePercent: rupiah?.changePercent,
             breadth: breadth)
         guard !factors.isEmpty else { throw SelectionProviderError.noRegimeInputs }

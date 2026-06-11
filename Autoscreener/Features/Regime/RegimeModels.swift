@@ -53,6 +53,9 @@ nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable {
     nonisolated enum Kind: String, Sendable, CaseIterable {
         case valuation = "Valuation"           // index P/E·P/B percentile — dominant driver
         case policyRate = "BI rate"
+        case usRates = "US 10y yield"          // global discount-rate / EM-flow anchor
+        case globalDollar = "Global USD"       // broad trade-weighted dollar — rupiah/flow pressure
+        case globalEquities = "Global equities" // S&P 500 200-day trend — live global risk appetite
         case foreignFlow = "Foreign flow"
         case trend = "IHSG trend"
         case rupiah = "Rupiah (USD/IDR)"
@@ -87,6 +90,13 @@ nonisolated enum BIRateDirection: String, Sendable, Decodable {
     case cut, hold, hike
 }
 
+/// Directional read of a global macro level over its recent window. Unlike the BI
+/// policy `direction` (a discrete rate move), these are market levels — US yields and
+/// the dollar — so the contract carries a simple trend, not a hike/cut/hold.
+nonisolated enum MacroTrend: String, Sendable, Decodable {
+    case up, down, flat
+}
+
 /// The static JSON a server-side monthly job produces and the app fetches read-only
 /// (`idx-regime-data-research.md` §6). Carries the two regime inputs the app cannot
 /// source on-device: the BI policy rate and the cap-weighted index P/E·P/B
@@ -95,11 +105,30 @@ nonisolated enum BIRateDirection: String, Sendable, Decodable {
 nonisolated struct RegimeSnapshot: Sendable, Equatable, Decodable {
     let asOf: String
     let biRate: BIRate?
+    /// Global-rates anchor (US fed funds / US 10y yield / broad dollar) — the left end
+    /// of the intermarket chain that drives EM flows into IDX. `nil` for a pre-macro
+    /// snapshot or when the scraper skipped/failed the fetch; the read degrades to its
+    /// IDX-side factors, exactly like a missing `biRate`.
+    let macro: MacroBlock?
     let indices: [String: IndexValuation]
 
     nonisolated struct BIRate: Sendable, Equatable, Decodable {
         let value: Double
         let direction: BIRateDirection
+        let asOf: String
+    }
+
+    /// The `macro` object of the contract. Each series is optional — one failed FRED
+    /// fetch is omitted rather than dropping the whole block.
+    nonisolated struct MacroBlock: Sendable, Equatable, Decodable {
+        let usFedFunds: MacroSeries?
+        let us10y: MacroSeries?
+        let broadDollar: MacroSeries?
+    }
+
+    nonisolated struct MacroSeries: Sendable, Equatable, Decodable {
+        let value: Double
+        let trend: MacroTrend
         let asOf: String
     }
 

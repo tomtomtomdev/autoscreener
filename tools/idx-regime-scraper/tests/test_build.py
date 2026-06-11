@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from regime_scraper.build import COMPOSITE, build, compute_indices
-from regime_scraper.models import BIRate, StockRatio
+from regime_scraper.models import BIRate, MacroSeries, StockRatio
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -52,6 +52,24 @@ def test_percentile_uses_prior_history_and_bi_rate_optional():
     assert composite["pbPctile"] == 1.0
     assert len(history) == 2
     assert snapshot["biRate"] is None
+
+
+def test_build_includes_macro_block_when_present():
+    macro = {
+        "us10y": MacroSeries(value=4.35, trend="up", as_of="2026-06-03"),
+        "broadDollar": MacroSeries(value=121.5, trend="up", as_of="2026-06-03"),
+    }
+    snapshot, _ = build("2026-01-31", load_rows(), [], {}, None, macro)
+    assert snapshot["macro"] == {
+        "us10y": {"value": 4.35, "trend": "up", "asOf": "2026-06-03"},
+        "broadDollar": {"value": 121.5, "trend": "up", "asOf": "2026-06-03"},
+    }
+
+
+def test_build_macro_is_none_when_absent():
+    # Backward-compatible: the existing 5-arg call still works and omits macro.
+    snapshot, _ = build("2026-01-31", load_rows(), [], {}, None)
+    assert snapshot["macro"] is None
 
 
 def test_rerunning_a_period_is_idempotent():

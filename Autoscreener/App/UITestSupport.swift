@@ -232,6 +232,10 @@ enum UITestFixtures {
     static let regimeSnapshot = RegimeSnapshot(
         asOf: "2026-01-31",
         biRate: RegimeSnapshot.BIRate(value: 4.75, direction: .cut, asOf: "2026-01-15"),
+        macro: RegimeSnapshot.MacroBlock(
+            usFedFunds: RegimeSnapshot.MacroSeries(value: 4.33, trend: .down, asOf: "2026-01-31"),
+            us10y: RegimeSnapshot.MacroSeries(value: 4.10, trend: .down, asOf: "2026-01-31"),
+            broadDollar: RegimeSnapshot.MacroSeries(value: 119.0, trend: .flat, asOf: "2026-01-31")),
         indices: [
             "COMPOSITE": RegimeSnapshot.IndexValuation(pe: 13.2, pb: 2.1, pePctile: 0.42, pbPctile: 0.55),
             "LQ45": RegimeSnapshot.IndexValuation(pe: 12.1, pb: 1.9, pePctile: 0.38, pbPctile: 0.49),

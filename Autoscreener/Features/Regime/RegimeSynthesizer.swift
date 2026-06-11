@@ -87,6 +87,19 @@ nonisolated enum RegimeSynthesizer {
         return .neutral
     }
 
+    /// US yields and the broad dollar are both *headwinds when rising* (Murphy
+    /// intermarket): a higher US discount rate and a stronger dollar pull capital out
+    /// of EM, pressuring foreign flow and the rupiah → risk-off. Falling → the tailwind
+    /// that brings money back. Shared by the `usRates` and `globalDollar` factors.
+    static func globalHeadwindSignal(trend: MacroTrend?) -> RegimeSignal? {
+        guard let t = trend else { return nil }
+        switch t {
+        case .up: return .riskOff
+        case .down: return .riskOn
+        case .flat: return .neutral
+        }
+    }
+
     // MARK: - Aggregation
 
     /// Maps a normalised weighted-vote score to a stance.

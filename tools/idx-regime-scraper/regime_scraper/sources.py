@@ -7,20 +7,32 @@ without it installed.
 Sources (``idx-regime-data-research.md`` §3–§4):
   • IDX  LINK_FINANCIAL_DATA_RATIO  — Cloudflare-gated JSON → curl_cffi TLS impersonation
   • bi.go.id BI-Rate.aspx            — plain server-rendered HTML
-  • FRED IRSTCB01IDM156N             — CSV fallback / cross-check
+  • FRED IRSTCB01IDM156N             — BI-rate CSV fallback / cross-check
+  • FRED DFF / DGS10 / DTWEXBGS      — US fed funds, US 10y yield, broad dollar (CSV)
 """
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.request import Request, urlopen
 
 from .bi_rate import parse_bi_rate_html, parse_fred_csv, to_bi_rate
-from .models import BIRate, StockRatio
+from .macro import parse_fred_series, to_macro_series
+from .models import BIRate, MacroSeries, StockRatio
 
 IDX_RATIO_URL = "https://www.idx.co.id/primary/DigitalStatistic/GetApiDataPaginated"
 BI_RATE_URL = "https://www.bi.go.id/id/statistik/indikator/BI-Rate.aspx"
-FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=IRSTCB01IDM156N"
+FRED_CSV_BASE = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
+FRED_CSV_URL = FRED_CSV_BASE + "IRSTCB01IDM156N"
+
+# The global anchors of the intermarket chain, keyed as they appear in the ``macro``
+# block of regime.json. DFF/DGS10 are daily; DTWEXBGS (broad trade-weighted dollar) is
+# the EM-relevant dollar gauge — more apt for the rupiah than the proprietary ICE DXY.
+MACRO_FRED_SERIES = {
+    "usFedFunds": "DFF",
+    "us10y": "DGS10",
+    "broadDollar": "DTWEXBGS",
+}
 
 _PAGE_SIZE = 500
 _BROWSER_UA = (
@@ -94,6 +106,22 @@ def fetch_fred_rate() -> Optional[BIRate]:
         return to_bi_rate(parse_fred_csv(csv_text))
     except Exception:  # noqa: BLE001
         return None
+
+
+def fetch_macro_series() -> Dict[str, MacroSeries]:
+    """The global macro anchors from FRED (``MACRO_FRED_SERIES``). Each series is
+    independent: one failed/empty fetch is skipped, not fatal, mirroring how a missing
+    BI rate degrades the snapshot rather than aborting it."""
+    out: Dict[str, MacroSeries] = {}
+    for key, series_id in MACRO_FRED_SERIES.items():
+        try:
+            csv_text = _get_text(FRED_CSV_BASE + series_id)
+            series = to_macro_series(parse_fred_series(csv_text))
+        except Exception:  # noqa: BLE001 — one bad series shouldn't drop the rest
+            series = None
+        if series is not None:
+            out[key] = series
+    return out
 
 
 def _get_text(url: str) -> str:

@@ -101,7 +101,7 @@ private let happyBrokerRecords = [
 private func makeSnapshot(valuation: Double?, rate: BIRateDirection?) -> RegimeSnapshot {
     let composite = RegimeSnapshot.IndexValuation(pe: nil, pb: nil, pePctile: valuation, pbPctile: nil)
     let biRate = rate.map { RegimeSnapshot.BIRate(value: 5.75, direction: $0, asOf: "2026-06-01") }
-    return RegimeSnapshot(asOf: "2026-06-01", biRate: biRate,
+    return RegimeSnapshot(asOf: "2026-06-01", biRate: biRate, macro: nil,
                           indices: [RegimeSnapshot.compositeKey: composite])
 }
 
