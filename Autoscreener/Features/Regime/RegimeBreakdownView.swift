@@ -1,45 +1,24 @@
 import SwiftUI
 
-/// Sidebar "Market Regime" screen: the top-down risk-on / neutral / risk-off read
-/// (`idx-investing-research.md` §3). Shows the synthesised stance, the transparent
-/// factor breakdown that produced it, and — when it fired — the late-cycle guard
-/// note. Framed as a *posture*, never a forecast (Howard Marks: you can prepare,
-/// not predict).
-struct RegimeView: View {
-    @State private var vm: RegimeViewModel
-
-    @MainActor
-    init(vm: RegimeViewModel? = nil) {
-        _vm = State(initialValue: vm ?? RegimeViewModel())
-    }
+/// The full top-down regime breakdown (`idx-investing-research.md` §3): the
+/// synthesised risk-on / neutral / risk-off stance, the transparent factor
+/// breakdown that produced it, and — when it fired — the late-cycle guard note.
+/// Framed as a *posture*, never a forecast (Howard Marks: you can prepare, not
+/// predict).
+///
+/// Pushed from the regime banner atop `MarketsView`, so it renders inside that
+/// screen's `NavigationStack` and owns no stack of its own. The banner only
+/// pushes once a read exists, so this view always has data — no loading/error
+/// states to handle here.
+struct RegimeBreakdownView: View {
+    let read: RegimeRead
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let read = vm.read {
-                    readBody(read)
-                } else if vm.isLoading {
-                    ProgressView("Reading the market…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = vm.error {
-                    ContentUnavailableView("Regime unavailable", systemImage: "gauge.with.dots.needle.bottom.50percent", description: Text(error))
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            }
-            .navigationTitle("Market Regime")
-            .task { await vm.load() }
-            .refreshable { await vm.load(force: true) }
-        }
-        .accessibilityIdentifier("RegimeView")
-    }
-
-    private func readBody(_ read: RegimeRead) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                header(read)
+                header
                 Divider()
-                factorList(read)
+                factorList
                 if read.valuationCapped { cappedNote }
                 footnote
             }
@@ -47,16 +26,18 @@ struct RegimeView: View {
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        .navigationTitle("Market Regime")
+        .accessibilityIdentifier("RegimeView")
     }
 
     // MARK: - Header (the stance)
 
-    private func header(_ read: RegimeRead) -> some View {
+    private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Text(read.stance.rawValue)
                     .font(.largeTitle.bold())
-                    .foregroundStyle(Self.color(read.stance))
+                    .foregroundStyle(RegimeColors.color(read.stance))
                     .accessibilityIdentifier("regime.stance")
                 Spacer()
                 if let asOf = read.asOf {
@@ -74,7 +55,7 @@ struct RegimeView: View {
 
     // MARK: - Factors
 
-    private func factorList(_ read: RegimeRead) -> some View {
+    private var factorList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("What's driving it")
                 .font(.headline)
@@ -109,7 +90,7 @@ struct RegimeView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Self.color(signal), in: Capsule())
+            .background(RegimeColors.color(signal), in: Capsule())
             .frame(width: 72, alignment: .center)
             .fixedSize()
     }
@@ -136,9 +117,12 @@ struct RegimeView: View {
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    // MARK: - Colour mapping (kept in the view; the models stay UI-free)
-
+/// Colour mapping for the regime stance/signal. Kept in the UI layer (shared by
+/// `RegimeBreakdownView` and the banner in `MarketsView`) so the models stay
+/// UI-free.
+enum RegimeColors {
     static func color(_ stance: RegimeStance) -> Color {
         switch stance {
         case .riskOn: .green

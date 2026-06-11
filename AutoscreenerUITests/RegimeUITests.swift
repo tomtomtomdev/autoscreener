@@ -3,12 +3,13 @@ import XCTest
 import AppKit
 #endif
 
-/// Drives the sidebar → Market Regime flow against canned, offline fixtures
-/// (`-UITestFixtures`). Under fixtures the read is deterministic: a mid-range
-/// valuation (neutral) + a BI-rate cut (risk-on) + net foreign selling (risk-off)
-/// + a weakening rupiah (risk-off) + broad LQ45 breadth (risk-on) net to a
-/// **Neutral** stance, with the transparent factor breakdown rendered. No auth,
-/// network, or Keychain involved.
+/// Drives the sidebar → Markets → regime banner → breakdown flow against canned,
+/// offline fixtures (`-UITestFixtures`). The regime read now lives as a banner
+/// atop the Markets screen; tapping it pushes the full factor breakdown. Under
+/// fixtures the read is deterministic: a mid-range valuation (neutral) + a BI-rate
+/// cut (risk-on) + net foreign selling (risk-off) + a weakening rupiah (risk-off)
+/// + broad LQ45 breadth (risk-on) net to a **Neutral** stance, with the
+/// transparent factor breakdown rendered. No auth, network, or Keychain involved.
 final class RegimeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -45,13 +46,20 @@ final class RegimeUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        let regime = sidebarItem(app, "Market Regime")
-        XCTAssertTrue(regime.waitForExistence(timeout: 15), "Market Regime sidebar item should appear")
-        regime.click()
+        // Market Regime is no longer its own sidebar entry — it's a banner atop Markets.
+        let markets = sidebarItem(app, "Markets")
+        XCTAssertTrue(markets.waitForExistence(timeout: 15), "Markets sidebar item should appear")
+        markets.click()
 
-        // The synthesised stance renders and is the deterministic fixture value.
+        // The banner shows the synthesised stance — the deterministic fixture value.
+        let bannerStance = element(app, "regime.banner.stance")
+        XCTAssertTrue(bannerStance.waitForExistence(timeout: 10), "Regime banner stance should render")
+        XCTAssertEqual(bannerStance.label, "Neutral", "Fixture inputs net to a Neutral stance")
+
+        // Tapping the banner pushes the full breakdown.
+        element(app, "regime.banner").click()
         let stance = element(app, "regime.stance")
-        XCTAssertTrue(stance.waitForExistence(timeout: 10), "Regime stance should render")
+        XCTAssertTrue(stance.waitForExistence(timeout: 10), "Breakdown stance should render after pushing the banner")
         XCTAssertEqual(stance.label, "Neutral", "Fixture inputs net to a Neutral stance")
 
         // The transparent factor breakdown renders, including the dominant valuation

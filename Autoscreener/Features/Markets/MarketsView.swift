@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// Sidebar "Markets" screen: browse the composite, indices, and IDX-IC sectors;
-/// tapping one pushes its OHLCV candlestick chart. Owns its own navigation, like
-/// `WatchlistView`. Mirrors the `NavigationStack` + `.navigationDestination`
-/// pattern in `ScreenerView`.
+/// Sidebar "Markets" screen: the top-down regime read sits as a banner atop the
+/// instruments it's derived from. Tapping the banner pushes the full factor
+/// breakdown (`RegimeBreakdownView`); below it, browse the composite, indices,
+/// and IDX-IC sectors — tapping one pushes its OHLCV candlestick chart. Owns its
+/// own navigation, like `WatchlistView`. Mirrors the `NavigationStack` +
+/// `.navigationDestination` pattern in `ScreenerView`.
 ///
 /// The "Commodities" and "Currencies" sections instead show a live price +
 /// % change snapshot (from `emitten/{symbol}/info` via `CommoditiesViewModel`),
@@ -11,18 +13,22 @@ import SwiftUI
 /// historical chart data, so they don't navigate to a detail screen.
 struct MarketsView: View {
     private let chartService: any ChartServicing
+    @State private var regime: RegimeViewModel
     @State private var commodities: CommoditiesViewModel
 
     @MainActor
     init(chartService: any ChartServicing = AppDependencies.shared.chartService,
+         regime: RegimeViewModel? = nil,
          commodities: CommoditiesViewModel? = nil) {
         self.chartService = chartService
+        _regime = State(initialValue: regime ?? RegimeViewModel())
         _commodities = State(initialValue: commodities ?? CommoditiesViewModel())
     }
 
     var body: some View {
         NavigationStack {
             List {
+                Section { regimeBanner }
                 ForEach(MarketCatalog.grouped(), id: \.0) { group, symbols in
                     Section(group.rawValue) {
                         ForEach(symbols) { item in
@@ -46,10 +52,67 @@ struct MarketsView: View {
                     name: item.name,
                     service: chartService))
             }
-            .task { await commodities.load() }
-            .refreshable { await commodities.load(force: true) }
+            // Load both concurrently so the regime's breadth fan-out (one chart
+            // request per LQ45 constituent) doesn't block the commodity prices.
+            .task {
+                async let r: () = regime.load()
+                async let c: () = commodities.load()
+                _ = await (r, c)
+            }
+            .refreshable {
+                async let r: () = regime.load(force: true)
+                async let c: () = commodities.load(force: true)
+                _ = await (r, c)
+            }
         }
         .accessibilityIdentifier("MarketsView")
+    }
+
+    // MARK: - Regime banner
+
+    /// Compact regime summary at the top of the list. When a read exists it's a
+    /// `NavigationLink` to the full breakdown; while the (slow) inputs load it
+    /// shows a small spinner, and on total failure a quiet note — either way the
+    /// markets list below stays usable and pull-to-refresh retries.
+    @ViewBuilder
+    private var regimeBanner: some View {
+        if let read = regime.read {
+            NavigationLink {
+                RegimeBreakdownView(read: read)
+            } label: {
+                bannerLabel(read)
+            }
+            .accessibilityIdentifier("regime.banner")
+        } else if regime.isLoading {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Reading the market…")
+                    .foregroundStyle(.secondary)
+            }
+        } else if let error = regime.error {
+            Text(error)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func bannerLabel(_ read: RegimeRead) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("Market Regime")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(read.stance.rawValue)
+                    .font(.headline)
+                    .foregroundStyle(RegimeColors.color(read.stance))
+                    .accessibilityIdentifier("regime.banner.stance")
+            }
+            Text(read.stance.guidance)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     @ViewBuilder
