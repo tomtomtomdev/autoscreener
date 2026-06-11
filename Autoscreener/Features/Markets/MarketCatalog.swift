@@ -2,6 +2,7 @@ import Foundation
 
 /// Section a market symbol belongs to in the Markets menu.
 nonisolated enum MarketGroup: String, CaseIterable, Sendable {
+    case global = "Global"
     case composite = "Composite"
     case index = "Indices"
     case sector = "Sectors"
@@ -13,7 +14,7 @@ nonisolated enum MarketGroup: String, CaseIterable, Sendable {
     /// `charts/{symbol}/daily` history for them — so their rows don't navigate.
     var hasChart: Bool {
         switch self {
-        case .composite, .index, .sector: true
+        case .global, .composite, .index, .sector: true
         case .commodity, .currency: false
         }
     }
@@ -36,6 +37,25 @@ nonisolated struct MarketSymbol: Identifiable, Hashable, Sendable {
 /// it matches how the screeners are hardcoded in `SidebarItem`.
 nonisolated enum MarketCatalog {
     static let all: [MarketSymbol] = [
+        // Global indices — Stockbit serves world indices on the same
+        // `emitten/{symbol}/info` (snapshot) and `charts/{symbol}/daily` (history)
+        // paths as IDX symbols, so they price and chart like the composite. Symbols
+        // are from the Stockbit request capture (see memory `regime-macro-data-sources`),
+        // pending live `charts/{symbol}/daily` confirmation — unlike the IDX block
+        // below, which was verified live 2026-06-04. SP500 already backs the regime's
+        // global-equities factor (`RegimeViewModel.globalEquitySymbol`).
+        MarketSymbol(symbol: "SP500", name: "S&P 500", group: .global),
+        MarketSymbol(symbol: "DOW30", name: "Dow Jones", group: .global),
+        MarketSymbol(symbol: "NASDAQ", name: "Nasdaq Composite", group: .global),
+        MarketSymbol(symbol: "FTSE", name: "FTSE 100", group: .global),
+        MarketSymbol(symbol: "DAX", name: "DAX", group: .global),
+        MarketSymbol(symbol: "CAC40", name: "CAC 40", group: .global),
+        MarketSymbol(symbol: "NIKKEI", name: "Nikkei 225", group: .global),
+        MarketSymbol(symbol: "HANGSENG", name: "Hang Seng", group: .global),
+        MarketSymbol(symbol: "KOSPI", name: "KOSPI", group: .global),
+        MarketSymbol(symbol: "SHANGHAI", name: "Shanghai Composite", group: .global),
+        MarketSymbol(symbol: "STI", name: "Straits Times", group: .global),
+
         // Composite
         MarketSymbol(symbol: "IHSG", name: "Jakarta Composite", group: .composite),
 

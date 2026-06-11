@@ -101,6 +101,26 @@ final class MarketsUITests: XCTestCase {
         }
     }
 
+    /// The Global section sits directly below the regime banner and lists world
+    /// indices (S&P 500, Nikkei, …). They're priced and chartable like the IDX
+    /// composite — proven by the section header plus an `SP500` priced row.
+    @MainActor
+    func testGlobalIndicesSectionShowsPricedRows() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = openMarkets()
+
+        XCTAssertTrue(app.staticTexts["Global"].waitForExistence(timeout: 5),
+                      "Global section header should appear in Markets")
+        let sp500 = app.descendants(matching: .any)
+            .matching(identifier: "MarketsPricedRow.SP500").firstMatch
+        XCTAssertTrue(sp500.waitForExistence(timeout: 5),
+                      "SP500 should render as a priced global-index row")
+    }
+
     /// Commodities and currencies have no `charts/{symbol}/daily` history, so their
     /// rows must NOT push the OHLCV chart detail. A chartable row (the composite)
     /// is the positive control proving navigation still works for everything else.

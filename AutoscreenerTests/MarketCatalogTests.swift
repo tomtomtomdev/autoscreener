@@ -29,7 +29,20 @@ import Testing
     }
 
     @Test func groupedPreservesDeclarationOrder() {
-        #expect(MarketCatalog.grouped().map(\.0) == [.composite, .index, .sector, .commodity, .currency])
+        #expect(MarketCatalog.grouped().map(\.0) == [.global, .composite, .index, .sector, .commodity, .currency])
+    }
+
+    @Test func coversAllGlobalIndices() {
+        let expected: Set<String> = [
+            "SP500", "DOW30", "NASDAQ", "FTSE", "DAX", "CAC40",
+            "NIKKEI", "HANGSENG", "KOSPI", "SHANGHAI", "STI",
+        ]
+        let global = Set(MarketCatalog.all.filter { $0.group == .global }.map(\.symbol))
+        #expect(global == expected)
+    }
+
+    @Test func globalIndicesAreChartable() {
+        #expect(MarketGroup.global.hasChart)
     }
 
     @Test func includesAllCommodityAndCurrencySymbols() {
