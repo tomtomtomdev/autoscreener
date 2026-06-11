@@ -12,8 +12,9 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Auth pipeline**: `POST /login/v6/username` → store access + refresh JWTs → pre-flight refresh on `expired_at` proximity → 401 backstop via `POST /login/refresh` → silent retry.
 - [x] **New-device MFA**: detect `multi_factor` envelope, walk `/mfa/verification/v1/challenge/{start,otp/send,otp/verify}` then `/login/v6/new-device/verify` — sequential email → phone OTPs, auto-sent on the server's `default_channel`.
 - [x] **Screener run**: fifteen canned screener templates (Bandar Accumulating, Bandar Above MA20, Bandar Shift Today, Accum/Dist Positive, 1M / 6M / 3M Net Foreign Flow, Foreign Buy Streak ≥5, Fresh Foreign Buy, Frequency Spike, Volume Spike, Above 50MA, Above 200MA, Liquidity Floor, Intraday Liquidity) — `GET /screener/templates/{id}` for page 1, `POST /screener/templates` with `save:"0"` for pages ≥ 2.
-- [x] **Watchlist (composite)**: union of all fifteen screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc. The two liquidity rules are *veto gates*: stocks missing from either are flagged "ILLIQUID" in red regardless of bandar score.
-- [x] **On-demand refresh** (§15): every screener tab and the composite Watchlist fetch live when first revealed and whenever the user taps Refresh. No background scheduler and no on-disk snapshot cache — data is always pulled fresh from Stockbit.
+- [x] **Watchlist (composite)**: union of all twenty screeners' rows, scored by per-rule weight (`bandar-master.json`), sorted desc. The two liquidity rules are *veto gates*: stocks missing from either evaluable gate are **excluded** from the composite entirely (hard-AND), not tagged.
+- [x] **Continuous market-hours sweep + disk cache** (§15): while the IDX market is open, a single coordinator sweeps all twenty screeners (bandar-accum → intraday-liquidity, 1–1.5 s throttle between each) then waits a random 5–10 min and repeats, writing each result into a disk-persisted `ScreenerStore`. Every screener tab and the Watchlist read from that cache — when the market is closed (or on a cold relaunch), they render the last persisted snapshot with no network. Refresh forces an immediate sweep regardless of session.
+- [ ] **Today's Picks**: the Tier-A selection screen is **hidden from the sidebar for now** (feature code retained; the app lands on the Watchlist).
 - [x] **Results table**: SwiftUI `Table` with sortable columns (symbol, name, + 1–2 metric columns depending on the screener's `sequence`).
 - [x] **Pagination**: increment `page` in the request body for "Load more".
 - [x] **Stock-code search** (§7.3): a `.searchable` toolbar field on the Liquidity Floor, Intraday Liquidity, and Watchlist tabs filters rows by ticker (case-insensitive substring on the symbol). On the two paginated screener tabs, entering a term auto-loads all remaining pages first, so a match is never hidden behind lazy pagination; the Watchlist already holds the complete set.
@@ -186,11 +187,11 @@ POST /screener/templates                                                   ← p
 | Above 200MA | `6676268` | `Price >= Price MA 200` *(compare)* | `[2661, 12462]` | 1.0 |
 | Liquidity Floor † | `6676314` | `Value MA 20 >= 5,000,000,000` *(basic threshold)* | `[16454]` | 0.5 |
 | Intraday Liquidity † | `6676320` | `Value >= 10,000,000,000` *(basic threshold)* | `[13620]` | 0.5 |
-| Watchlist | — | composite of all fifteen above, deduped by symbol | — | sum (max 17.5) |
+| Watchlist | — | composite of all twenty above, deduped by symbol, veto-excluded | — | sum (max 22.5) |
 
-† *Veto gate* — `bandar-master.json` declares these `veto: true`. Matching contributes `weight` to the composite score normally (weighted-OR), but **missing from either** trips a hard-AND "ILLIQUID" flag (red) on the row in the Watchlist tab, regardless of bandar score. The flag's tooltip lists which gate(s) the row failed.
+† *Veto gate* — `bandar-master.json` declares these `veto: true`. Matching contributes `weight` to the composite score normally (weighted-OR), but a stock **missing from either** evaluable gate is **excluded from the Watchlist composite entirely** (hard-AND), regardless of bandar score. (The individual Liquidity Floor / Intraday Liquidity *screener tabs* still list their own rows — exclusion is a Watchlist-composite concern only.)
 
-> **A gate only vetoes when it was actually evaluated.** The flag is materialized onto each row (`WatchlistRow.failedVetoGates`) at composition time, restricted to veto gates that were *freshly fetched successfully* in the live fan-out this run. A veto gate whose fetch failed is **not** enforced (and the status bar shows a "Liquidity veto not enforced" notice), rather than blanket-flagging every row ILLIQUID. Without this, a single failed liquidity fetch would flag the entire watchlist illiquid.
+> **A gate only vetoes when it was actually evaluated.** Exclusion is applied by `WatchlistComposer.compose` over the cached snapshots, restricted to veto gates that have a snapshot in the `ScreenerStore` this generation. A veto gate whose fetch failed (no snapshot) is **not** enforced (and the status bar shows a "Liquidity veto not enforced" notice) rather than blanket-excluding every row. Without this, a single failed liquidity fetch would empty the whole watchlist.
 
 ‡ *Frequency Spike divergence* — `bandar-master.json`'s `freq-spike` rule is an **OR** (`bool(freq_spike) or freq_analyzer >= 1.5`), but the captured Stockbit template (6676260) ships two `basic` filters which the API **AND**-combines. We mirror the captured wire exactly so the per-tab page-2+ POSTs reproduce the GET's row set; the watchlist weight (1.0) is unchanged. The practical effect is a stricter Frequency Spike tab than the master spec's OR.
 
@@ -318,21 +319,14 @@ The second metric column is conditional: single-column screeners like Accum/Dist
 
 The `Last` / `Δ%` columns from the original sketch were removed — Stockbit's `screener/templates` response doesn't carry intraday price for metric-only filters (those come from `/company-price-feed`, separate feature).
 
-### 7.1 Auto-pagination
+### 7.1 No view-side pagination (superseded by the sweep cache)
 
-No "Load more" button. SwiftUI's `.onAppear` is attached to the **last row's Symbol cell**: when it scrolls into view, `vm.rowDidAppear(at: rows.count - 1)` fires, the ViewModel guards (`hasMore`, `!isLoading`) collapse repeat triggers (Table reuses cells) into a single network call, and `loadMore()` increments `page` and POSTs to `/screener/templates`.
-
-End-of-list detection in `ScreenerViewModel.updateServerSaysDone`:
-- empty page returned → done (definitive),
-- `total` supplied and `rows.count >= total` → done,
-- otherwise: partial page (< `config.limit` rows) → done (heuristic).
-
-Once `serverSaysDone == true`, `hasMore` is permanently false until a fresh `run()` / `bootstrap()` resets it.
+Screener tabs no longer paginate at the view layer. The sweep coordinator already walks every page per screener (page 1 via `GET`, pages 2+ via `POST`, terminating on empty / partial-page / total / a 20-page safety cap) and stores the **full result set** as one `ScreenerSnapshot`. A tab renders all rows from that snapshot at once; there is no `loadMore`/`rowDidAppear`. Pagination end-of-list detection now lives in `ScreenerSweepCoordinator.fetchAll` (see §15).
 
 ### 7.2 Toolbar + status bar
 
-- Header row: `config.name` (template name) and `config.universe.scope`, plus a `ProgressView` while a fetch is in flight. No action buttons — the screener auto-runs on launch and auto-paginates on scroll, and the network log lives in Settings.
-- Status bar (below the table): "N of T rows · page P" when total is known, "N rows · page P" otherwise. With an active search it switches to "N of M rows match".
+- Header row: `config.name` (template name) and `config.universe.scope`, plus a `ProgressView` while a sweep is in flight (`coordinator.isSweeping`), and a Refresh button (forces an immediate sweep). An "as of HH:mm" badge shows when the cached snapshot landed.
+- Status bar (below the table): "N rows". With an active search it switches to "N of M rows match".
 
 ### 7.3 Stock-code search
 
@@ -340,7 +334,7 @@ The **Liquidity Floor** and **Intraday Liquidity** tabs — and the **Watchlist*
 
 The filter is a single shared implementation: `Array.filteredBySymbol(_:)` on the `SymbolSearchable` protocol, to which both `ScreenerRow` and `WatchlistRow` conform — so the two screener tabs and the Watchlist share one tested code path (`SymbolSearch.swift`).
 
-Because the two screener tabs are lazily paginated, a naive filter over loaded rows would miss a symbol sitting on a not-yet-scrolled page. So the first non-empty keystroke kicks `ScreenerViewModel.loadAllForSearch()`, which walks `loadMore()` until `hasMore` is false — eagerly pulling every remaining page before filtering. A re-entrancy guard (`isExhaustingPages`) collapses rapid keystrokes into one sweep, and once all pages are in it's a no-op. The Watchlist needs none of this — it already holds the full aggregated set, so its `visibleRows` filter is always complete. Search terms are transient UI state, never persisted.
+Since every snapshot holds the screener's full result set (the sweep walks all pages), the filter is always complete — there's no page-exhaust step. The Watchlist likewise holds the full aggregated set. Search terms are transient UI state, never persisted.
 
 ---
 
@@ -437,30 +431,44 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 - Watchlist fans out to all fifteen templates **sequentially** with a randomised 1000–1500 ms throttle gap between requests (Stockbit penalises parallel bursts), unions rows by symbol, scores by per-rule weight (`bandar-master.json`, max composite **17.5**), sorts descending. Veto-gate rules (Liquidity Floor, Intraday Liquidity) flip a per-row `isVetoed` flag when the stock is missing from either gate — the table renders Symbol/Name in red and shows an "ILLIQUID" Flag column (tooltip lists which gate(s) failed). One paywall counter increment for the whole composite. Cancellation mid-bootstrap (tab switch while a fetch is in flight) is treated as internal noise and re-tried on next view appearance — never surfaced as an error banner.
 - Real Stockbit envelope (`data.calcs[].company.{symbol,name}` + `data.calcs[].results[].{id,raw}`) decoded via Codable; rows sorted by template default on each load.
 
-191 unit tests passing. Next milestone in §16.
+**API-fetching revamp (2026-06-11).** Replaced the on-demand, uncached fetch model with a single continuous market-hours sweep into a disk-backed cache (see §15). New types: `MarketClock` (IDX sessions), `ScreenerStore` (disk-persisted snapshot cache), `ScreenerSweepCoordinator` (owns the loop + fan-out, moved out of `WatchlistViewModel`), `WatchlistComposer` (union + veto exclusion). `ScreenerViewModel`/`WatchlistViewModel` are now thin store projections (no fetching/pagination). **Veto changed from tag → exclude**: stocks missing a liquidity gate are dropped from the composite (the ILLIQUID column and `WatchlistRow.failedVetoGates`/`isVetoed` were removed). Today's Picks is hidden from the sidebar (feature code retained); the app lands on the Watchlist. Full unit suite green (added `MarketClockTests`, `ScreenerStoreTests`, `ScreenerSweepCoordinatorTests`, `WatchlistComposerTests`; rewrote the screener/watchlist VM + search suites for the store model) plus a `WatchlistUITests` cache/exclusion check. Next milestone in §16.
 
 ---
 
-## 15. On-demand refresh model
+## 15. Continuous market-hours sweep + disk cache
 
-Every screener tab and the composite Watchlist fetch **live, on demand**. There is no background scheduler and nothing is persisted to disk — data is always pulled fresh from Stockbit.
+There is **one fetch path**: a `ScreenerSweepCoordinator` that fills a disk-backed `ScreenerStore`. Every screener tab and the composite Watchlist are thin read-only projections over that store — they never fetch themselves. The store survives app restarts, so a relaunch (even with the market closed) renders the last captured snapshot immediately.
 
-### 15.1 Triggers
+```
+ScreenerSweepCoordinator (@MainActor, @Observable)
+   └─ MarketClock.isOpen → run full fan-out (throttle 1–1.5 s/screener)
+        └─ writes each kind's ScreenerSnapshot into ScreenerStore as it lands
+        └─ persists the store to disk after the sweep
+        └─ sleep random 5–10 min → repeat;  closed → sleep until next open
+ScreenerStore (@MainActor, @Observable, disk-backed)  ← single source of truth
+   ├─ ScreenerViewModel (per tab)  → renders snapshots[kind]
+   └─ WatchlistViewModel           → WatchlistComposer over all snapshots (veto-excluded)
+```
 
-- **First reveal.** A tab's `.task` calls `autoRunIfNeeded()` once per ViewModel lifetime, which runs the live bootstrap fetch (`GET /screener/templates/{id}` → infinite-scroll POSTs for pages 2+). Re-appearing a tab does not re-fetch or re-fire the paywall counter.
-- **Refresh button.** Each screener tab and the Watchlist expose a Refresh button in their toolbar that re-runs the live fetch. An "as of HH:mm" badge shows when the displayed rows landed.
+### 15.1 Market clock (`Core/Market/MarketClock.swift`)
 
-### 15.2 Watchlist fan-out
+Pure value type. IDX regular sessions in **Asia/Jakarta, weekdays only**: Session 1 09:00–12:00 and Session 2 13:30–15:50 (half-open, so 15:50 sharp is closed). Fetching pauses over the 12:00–13:30 lunch break. `isOpen(at:)` and `nextOpen(after:)` take an injectable clock (tested at session boundaries / lunch / weekend). **Exchange holidays are not modelled** — a holiday weekday is treated as open (documented limitation; worst case a wasted sweep returning yesterday's values).
 
-`WatchlistViewModel.refresh()` is the throttled live fan-out across every screener (randomised 1000–1500 ms gap between requests — Stockbit penalises parallel bursts), unioning rows by symbol, scoring by per-rule weight (`bandar-master.json`), and sorting descending — all composed in memory. One paywall increment for the whole sweep. Cancellation mid-fan-out (a tab switch while the fetch is in flight) is treated as internal noise: partial rows stay visible, no error banner is shown, and `didAutoRun` resets so the next appearance retries from scratch.
+### 15.2 Sweep loop & cadence
 
-### 15.3 Veto-gate enforcement
+`start()` is idempotent (called from `ContentView` once signed in). The loop: **open** → `runSweep()` then sleep a random **5–10 min**; **closed** → sleep until `nextOpen` (capped at 15 min so it re-checks). `runSweep()` does one paywall increment, then fetches the twenty screeners in `fanOutOrder` (bandar-accum → intraday-liquidity), each request preceded by a randomised **1000–1500 ms** throttle (first request free), walking every page per screener up to a 20-page safety cap. Each screener's `ScreenerSnapshot{config, rows, fetchedAt}` is written to the store **as it lands**, so all surfaces fill in progressively. `refreshNow()` runs one sweep immediately regardless of session (wired to every Refresh button). Mid-sweep cancellation is treated as internal noise (partial snapshots kept, no error banner).
 
-A liquidity veto gate is only enforced when it was **freshly fetched successfully** in the live fan-out this run. A gate whose fetch failed is not applied (and the status bar shows a "Liquidity veto not enforced" notice) rather than blanket-flagging every row ILLIQUID. See §4.0.
+### 15.3 Store & persistence (`Features/Screener/ScreenerStore.swift`)
 
-### 15.4 Scope caveat
+`snapshots: [BandarScreenerKind: ScreenerSnapshot]` plus `lastSweepAt` and a `version` write-counter (lets the Watchlist memoise its composite instead of recomputing per render). Persisted as JSON at `Application Support/Autoscreener/screener-cache.json`, keyed by `kind.rawValue` so adding/removing a kind never invalidates the file (unknown keys dropped, missing kinds self-heal next sweep). A corrupt/missing file loads as empty.
 
-macOS apps don't run when quit, and there is no out-of-process refresh. Data reflects whatever was last fetched in the current session; a relaunch starts empty until the first reveal/refresh pulls live. Background / scheduled refresh (e.g. via a `launchd` agent) is a possible future milestone — see §16.
+### 15.4 Composite + veto exclusion (`Features/Watchlist/WatchlistComposer.swift`)
+
+`compose(snapshots)` unions rows by symbol (summing per-rule weights), then **excludes** any symbol missing from an *evaluable* veto gate (a gate with a snapshot present). A veto gate with no snapshot is not enforced and surfaces a "Liquidity veto not enforced" notice instead of emptying the list. See §4.0.
+
+### 15.5 Headless mode (tests / `-UITestFixtures`)
+
+Under UI fixtures and unit tests the coordinator does **not** run the continuous loop and the store starts empty (no real user file is read). `start()` instead seeds the store with a single sweep over the stub services (with a no-op throttle), so the UI renders deterministically and offline.
 
 ---
 

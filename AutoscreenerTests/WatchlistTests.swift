@@ -281,369 +281,124 @@ enum WatchlistTestHelpers {
     }
 }
 
+// MARK: - Composite compose + veto exclusion
+
 @MainActor
-@Suite struct WatchlistBootstrapTests {
-    private func makeVM(paywall: WatchlistFakePaywall = WatchlistFakePaywall(),
-                        templates: WatchlistFakeTemplates = WatchlistFakeTemplates(),
-                        screener: WatchlistFakeScreener = WatchlistFakeScreener(),
-                        safetyCap: Int = 20,
-                        sleeper: @escaping WatchlistViewModel.Sleeper = { _ in }) -> WatchlistViewModel {
-        WatchlistViewModel(paywall: paywall, templates: templates,
-                           screener: screener, safetyCap: safetyCap,
-                           sleeper: sleeper)
+@Suite struct WatchlistComposerTests {
+    private func snap(_ kind: BandarScreenerKind, _ symbols: [String]) -> ScreenerSnapshot {
+        ScreenerSnapshot(config: WatchlistTestHelpers.config(for: kind.templateID),
+                         rows: symbols.map { WatchlistTestHelpers.row($0) },
+                         fetchedAt: Date(timeIntervalSince1970: 0))
     }
 
-    @Test func bootstrapFiresPaywallIncrementExactlyOnceAcrossAllFetches() async {
-        let paywall = WatchlistFakePaywall()
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-            "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
-            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
-            "6676231": .success(WatchlistTestHelpers.initial(for: .foreignFlow3M, rows: [])),
-        ]
-        let vm = makeVM(paywall: paywall, templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(paywall.checkCalls == [.screener])
-        #expect(paywall.incrementCalls == [.screener])
-        #expect(Set(templates.loadCalls) == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676273", "6676280", "6676288", "6676291", "6676292", "6676314", "6676320"])
-        #expect(templates.loadCalls.count == 20)
-    }
-
-    @Test func dedupesBySymbolAcrossAllScreenersUnioningWeights() async {
-        // BBCA returned by all 4 → score 7.0 (2.0+1.5+2.0+1.5).
-        // BBRI returned by accumulating + shiftToday → 4.0.
-        // CARE returned by aboveMA20 only → 1.5.
-        // DSSA returned by accumDistPositive only → 1.5.
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("BBRI")])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
-                rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("CARE")])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
-                rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("BBRI")])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
-                rows: [WatchlistTestHelpers.row("BBCA"), WatchlistTestHelpers.row("DSSA")])),
-        ]
-        let vm = makeVM(templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        let byID = Dictionary(uniqueKeysWithValues: vm.rows.map { ($0.symbol, $0) })
-        #expect(vm.rows.count == 4)
-        #expect(byID["BBCA"]?.matchedScreeners == [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive])
-        #expect(byID["BBCA"]?.score == 7.0)
-        #expect(byID["BBRI"]?.matchedScreeners == [.accumulating, .shiftToday])
-        #expect(byID["BBRI"]?.score == 4.0)
-        #expect(byID["CARE"]?.matchedScreeners == [.aboveMA20])
+    /// No veto gates present ⇒ no exclusion: union by symbol, sum the weights.
+    @Test func dedupesBySymbolAcrossScreenersUnioningWeights() {
+        let result = WatchlistComposer.compose([
+            .accumulating: snap(.accumulating, ["BBCA", "BBRI"]),
+            .aboveMA20: snap(.aboveMA20, ["BBCA", "CARE"]),
+            .shiftToday: snap(.shiftToday, ["BBCA", "BBRI"]),
+            .accumDistPositive: snap(.accumDistPositive, ["BBCA", "DSSA"]),
+        ])
+        let byID = Dictionary(uniqueKeysWithValues: result.rows.map { ($0.symbol, $0) })
+        #expect(result.rows.count == 4)
+        #expect(byID["BBCA"]?.score == 7.0)   // 2.0+1.5+2.0+1.5
+        #expect(byID["BBRI"]?.score == 4.0)   // 2.0+2.0
         #expect(byID["CARE"]?.score == 1.5)
-        #expect(byID["DSSA"]?.matchedScreeners == [.accumDistPositive])
         #expect(byID["DSSA"]?.score == 1.5)
     }
 
-    @Test func sortsDescendingByScoreThenAscendingBySymbol() async {
-        // AAA and ZZZ both in all 4 (tie 7.0 → AAA first by symbol). MMM in only accumulating (2.0).
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("MMM"), WatchlistTestHelpers.row("ZZZ")])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
-                rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
-                rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
-                rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("ZZZ")])),
-        ]
-        let vm = makeVM(templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(vm.rows.map(\.symbol) == ["AAA", "ZZZ", "MMM"])
+    @Test func sortsByScoreDescThenSymbolAsc() {
+        let result = WatchlistComposer.compose([
+            .accumulating: snap(.accumulating, ["AAA", "MMM", "ZZZ"]),
+            .aboveMA20: snap(.aboveMA20, ["AAA", "ZZZ"]),
+            .shiftToday: snap(.shiftToday, ["AAA", "ZZZ"]),
+            .accumDistPositive: snap(.accumDistPositive, ["AAA", "ZZZ"]),
+        ])
+        #expect(result.rows.map(\.symbol) == ["AAA", "ZZZ", "MMM"])  // 7.0, 7.0(tie→symbol), 2.0
     }
 
-    @Test func autoPaginatesEachScreenerUntilPartialPage() async {
-        // accumulating: page1=25 (full), page2=25 (full), page3=12 (partial → done).
-        // Other three screeners: empty page 1 → no POST.
-        let templates = WatchlistFakeTemplates()
-        let page1Acc = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1Acc)),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-        ]
-        let screener = WatchlistFakeScreener()
-        screener.pages["6676213"] = [
-            2: (0..<25).map { WatchlistTestHelpers.row("ACC2_\($0)") },
-            3: (0..<12).map { WatchlistTestHelpers.row("ACC3_\($0)") },
-        ]
-        let vm = makeVM(templates: templates, screener: screener)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(vm.rows.count == 62)  // 25 + 25 + 12
-        #expect(vm.rows.allSatisfy { $0.matchedScreeners == [.accumulating] })
-        #expect(screener.callCount(for: "6676213") == 2)  // pages 2 and 3
-        #expect(screener.callCount(for: "6676217") == 0)
-        #expect(screener.callCount(for: "6676221") == 0)
-        #expect(screener.callCount(for: "6676223") == 0)
+    /// With both veto gates present, a stock must appear in BOTH to survive.
+    @Test func vetoExclusionDropsStocksMissingFromAnEvaluableGate() {
+        let result = WatchlistComposer.compose([
+            .accumulating: snap(.accumulating, ["FULL", "HALF", "NONE"]),
+            .liquidityFloor: snap(.liquidityFloor, ["FULL", "HALF"]),
+            .intradayLiquidity: snap(.intradayLiquidity, ["FULL"]),
+        ])
+        // FULL is in both gates → survives. HALF misses intraday → dropped. NONE misses both → dropped.
+        #expect(result.rows.map(\.symbol) == ["FULL"])
+        #expect(result.vetoNotice == nil)  // both gates evaluable
     }
 
-    @Test func partialScreenerFailureKeepsRemainingAndSurfacesError() async {
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676217": .failure(ScreenerError.malformedResponse),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-        ]
-        let vm = makeVM(templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(vm.rows.count == 1)
-        #expect(vm.rows.first?.matchedScreeners == [.accumulating, .shiftToday, .accumDistPositive])
-        // 2.0 + 2.0 + 1.5 = 5.5 (aboveMA20's 1.5 missing due to failure)
-        #expect(vm.rows.first?.score == 5.5)
-        #expect(vm.error != nil)
-        // Error message names the failed screener so the user knows what's missing.
-        #expect(vm.error?.contains("Bandar Above MA20") == true)
+    /// A veto gate with no snapshot isn't enforced (so the list isn't wrongly emptied);
+    /// the notice warns which gate was skipped.
+    @Test func missingVetoGateIsNotEnforcedAndSurfacesNotice() {
+        let result = WatchlistComposer.compose([
+            .accumulating: snap(.accumulating, ["FULL", "HALF"]),
+            .liquidityFloor: snap(.liquidityFloor, ["FULL", "HALF"]),
+            // intradayLiquidity snapshot absent → not enforced.
+        ])
+        #expect(Set(result.rows.map(\.symbol)) == ["FULL", "HALF"])
+        #expect(result.vetoNotice?.contains("Intraday Liquidity") == true)
     }
 
-    @Test func autoRunIsIdempotentAcrossMultipleCalls() async {
-        let paywall = WatchlistFakePaywall()
+    @Test func noVetoSnapshotsMeansNoExclusionButNoticeNamesBothGates() {
+        let result = WatchlistComposer.compose([.accumulating: snap(.accumulating, ["AAA", "BBB"])])
+        #expect(result.rows.count == 2)
+        #expect(result.vetoNotice?.contains("Liquidity Floor") == true)
+        #expect(result.vetoNotice?.contains("Intraday Liquidity") == true)
+    }
+}
+
+// MARK: - WatchlistViewModel as a store projection
+
+@MainActor
+@Suite struct WatchlistViewModelProjectionTests {
+    private func seededStore(_ entries: [(BandarScreenerKind, [String])]) -> ScreenerStore {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
+        for (kind, symbols) in entries {
+            store.apply(ScreenerSnapshot(config: WatchlistTestHelpers.config(for: kind.templateID),
+                                         rows: symbols.map { WatchlistTestHelpers.row($0) },
+                                         fetchedAt: Date(timeIntervalSince1970: 0)), for: kind)
+        }
+        return store
+    }
+
+    @Test func rowsReflectComposedStoreWithVetoExclusion() {
+        let store = seededStore([
+            (.accumulating, ["FULL", "HALF"]),
+            (.liquidityFloor, ["FULL", "HALF"]),
+            (.intradayLiquidity, ["FULL"]),
+        ])
+        let vm = WatchlistViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store))
+        #expect(vm.rows.map(\.symbol) == ["FULL"])
+    }
+
+    @Test func rowsRecomputeWhenStoreChanges() {
+        let store = seededStore([(.accumulating, ["AAA"])])
+        let vm = WatchlistViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store))
+        #expect(vm.rows.map(\.symbol) == ["AAA"])  // primes the memo
+
+        store.apply(ScreenerSnapshot(config: WatchlistTestHelpers.config(for: BandarScreenerKind.accumulating.templateID),
+                                     rows: [WatchlistTestHelpers.row("AAA"), WatchlistTestHelpers.row("BBB")],
+                                     fetchedAt: Date(timeIntervalSince1970: 0)), for: .accumulating)
+        #expect(Set(vm.rows.map(\.symbol)) == ["AAA", "BBB"])  // memo invalidated by version bump
+    }
+
+    @Test func searchFiltersBySymbol() {
+        let store = seededStore([(.accumulating, ["BBCA", "BBRI", "TLKM"])])
+        let vm = WatchlistViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store))
+        vm.searchText = "bb"
+        #expect(Set(vm.visibleRows.map(\.symbol)) == ["BBCA", "BBRI"])
+    }
+
+    @Test func refreshTriggersACoordinatorSweep() async {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
         let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-            "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
-            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
-            "6676231": .success(WatchlistTestHelpers.initial(for: .foreignFlow3M, rows: [])),
-        ]
-        let vm = makeVM(paywall: paywall, templates: templates)
+        let coord = SweepTestKit.coordinator(store: store, templates: templates)
+        let vm = WatchlistViewModel(store: store, coordinator: coord)
 
-        await vm.autoRunIfNeeded()
-        await vm.autoRunIfNeeded()
-        await vm.autoRunIfNeeded()
+        await vm.refresh()
 
-        #expect(paywall.checkCalls.count == 1)
-        #expect(paywall.incrementCalls.count == 1)
         #expect(templates.loadCalls.count == 20)
-    }
-
-    @Test func paywallIneligibleSurfacesBannerButRunsAnyway() async {
-        let paywall = WatchlistFakePaywall()
-        paywall.eligibility = PaywallEligibility(eligible: false, message: "Upgrade to use the screener.")
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-        ]
-        let vm = makeVM(paywall: paywall, templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(vm.paywallMessage == "Upgrade to use the screener.")
-        #expect(vm.rows.count == 1)
-    }
-
-    @Test func safetyCapBoundsPagesPerScreener() async {
-        // Page 1 returns a full page; all subsequent POSTs return a full page too → would
-        // loop forever. The VM's safetyCap stops it.
-        let templates = WatchlistFakeTemplates()
-        let page1 = (0..<25).map { WatchlistTestHelpers.row("P1_\($0)") }
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1)),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-        ]
-        let screener = WatchlistFakeScreener()
-        screener.alwaysFullPage = ("6676213", 25)
-        // safetyCap=5 → pages 2,3,4,5 POSTed = 4 calls; page 6 not visited.
-        let vm = makeVM(templates: templates, screener: screener, safetyCap: 5)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(screener.callCount(for: "6676213") == 4)  // pages 2..5
-        #expect(vm.rows.count == 25 + 4 * 25)  // 125
-    }
-
-    /// Throttle: every outgoing screener request except the very first one in a
-    /// bootstrap is preceded by a randomized 1000–1500ms sleep. This holds *across*
-    /// kinds (gap between kind A's last page and kind B's page 1) AND *within* a
-    /// kind (gap between page N and page N+1). Stockbit has rate-limited bursts
-    /// in the past; the pacing keeps a 4-screener watchlist fetch under the radar.
-    @Test func throttlesEveryRequestExceptFirstWithRandomizedDelay() async {
-        // accumulating: page 1 full (25) + page 2 partial (5 → done) = 2 requests
-        // 19 other kinds: empty page 1 → 1 request each
-        // Total = 21 requests → 20 throttled sleeps.
-        let templates = WatchlistFakeTemplates()
-        let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1)),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-            "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
-            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
-            "6676231": .success(WatchlistTestHelpers.initial(for: .foreignFlow3M, rows: [])),
-        ]
-        let screener = WatchlistFakeScreener()
-        screener.pages["6676213"] = [
-            2: (0..<5).map { WatchlistTestHelpers.row("ACC2_\($0)") },  // partial → done
-        ]
-        let recorder = SleepRecorder()
-        let vm = makeVM(templates: templates, screener: screener,
-                        sleeper: { ns in await recorder.record(ns) })
-
-        await vm.autoRunIfNeeded()
-
-        let delays = await recorder.delays
-        #expect(delays.count == 20)
-        #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
-    }
-
-    /// Regression: SwiftUI's `.task` modifier cancels its task when the view
-    /// disappears, which throws `CancellationError` from `Task.sleep` inside the
-    /// throttle. Before the fix, that error became "Couldn't load: Bandar Shift
-    /// Today (CancellationError()) · Accum/Dist Positive (CancellationError())"
-    /// in the user-facing banner. The fix: treat cancellation as internal noise
-    /// — keep partial rows visible, suppress the banner, and reset `didAutoRun`
-    /// so the next view appearance retries from scratch.
-    @Test func cancellationMidBootstrapDoesNotSurfaceAsUserFacingError() async {
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive,
-                rows: [WatchlistTestHelpers.row("BBCA")])),
-        ]
-        // First two GETs use throttle calls #1 (skipped, first request) and #2
-        // (success), then throttle #3 (the gap before shiftToday's GET) throws —
-        // mirrors the user's screenshot where the first two kinds completed.
-        let canceller = CancellingSleeper(failAfter: 2)
-        let sleeper: WatchlistViewModel.Sleeper = { _ in try canceller.tick() }
-        let vm = makeVM(templates: templates, sleeper: sleeper)
-
-        await vm.autoRunIfNeeded()
-
-        // No user-facing banner mentioning the cancellation.
-        #expect(vm.error == nil)
-        // BBCA matched accumulating (2.0) + aboveMA20 (1.5) before cancellation.
-        #expect(vm.rows.first?.symbol == "BBCA")
-        #expect(vm.rows.first?.score == 3.5)
-        // didAutoRun reset so the next view-appearance retries from scratch.
-        // Verified indirectly: a fresh autoRunIfNeeded re-loads all four templates.
-        await vm.autoRunIfNeeded()
-        #expect(templates.loadCalls.filter { $0 == "6676213" }.count == 2)
-    }
-
-    /// Progressive publishing: `rows` must be republished after *each* screener
-    /// completes, not held back until all 20 land. Captured at every throttle gap
-    /// (which fires just before each request after the first), the running row
-    /// count should already reflect the kinds completed so far — and only grow as
-    /// more land. Before the incremental-publish change, every snapshot was 0
-    /// because `rows` was assigned exactly once, at the very end of the sweep.
-    @Test func publishesRowsIncrementallyAsEachScreenerCompletes() async {
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating,
-                rows: [WatchlistTestHelpers.row("AAA")])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20,
-                rows: [WatchlistTestHelpers.row("BBB")])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday,
-                rows: [WatchlistTestHelpers.row("CCC")])),
-            // the other 17 kinds return empty (the fake's default) → add no rows.
-        ]
-        let probe = IncrementalRowProbe()
-        let vm = makeVM(templates: templates, sleeper: { _ in await probe.snapshot() })
-        probe.vm = vm
-
-        await vm.autoRunIfNeeded()
-
-        // accumulating fires first (no throttle gap), so the first snapshot is
-        // taken just before aboveMA20's request — AAA is already on the table.
-        #expect(probe.rowCounts.first == 1)
-        // By the time shiftToday and the empty tail fire, BBB then CCC have landed.
-        #expect(probe.rowCounts.contains(2))
-        #expect(probe.rowCounts.contains(3))
-        // Snapshots never decrease — a sweep only ever accumulates rows.
-        #expect(probe.rowCounts == probe.rowCounts.sorted())
-        #expect(vm.rows.count == 3)
-    }
-
-    /// Progress reporting: the VM exposes how many screeners have completed
-    /// (`loadedScreenerCount`) out of the total (`totalScreenerCount`) so the
-    /// loading indicator can show "Loading… x/y". The completed count advances by
-    /// one as each screener lands — captured at each throttle gap it is the count
-    /// finished *so far* — and reaches the total when the sweep ends.
-    @Test func reportsCompletedScreenerProgress() async {
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
-            // the other 19 kinds return empty (the fake's default) — still complete.
-        ]
-        let probe = IncrementalRowProbe()
-        let vm = makeVM(templates: templates, sleeper: { _ in await probe.snapshot() })
-        probe.vm = vm
-
-        // Total is derived from the fan-out order (all 20 screeners), not hardcoded.
-        #expect(vm.totalScreenerCount == 20)
-        #expect(vm.loadedScreenerCount == 0)
-
-        await vm.autoRunIfNeeded()
-
-        // accumulating completes before the 2nd request's throttle fires, so the
-        // first captured count is 1; it then climbs and never decreases.
-        #expect(probe.loadedCounts.first == 1)
-        #expect(probe.loadedCounts == probe.loadedCounts.sorted())
-        // All 20 screeners completed by the end of the sweep.
-        #expect(vm.loadedScreenerCount == 20)
-    }
-
-    /// Serialisation regression: replacing the `async let` fan-out with a sequential
-    /// loop must keep the deterministic kind order (accumulating → aboveMA20 →
-    /// shiftToday → accumDistPositive → foreignFlow1M → foreignFlow6M →
-    /// foreignFlow3M → foreignBuyStreak → freshForeignBuy → freqSpike →
-    /// volumeSpike → above50MA → above200MA → earningsYield → pbvBelow2 →
-    /// roeQuality → fcfPositive → manageableDebt → liquidityFloor →
-    /// intradayLiquidity).
-    /// If a future refactor accidentally reverses or interleaves, this asserts the
-    /// contract.
-    @Test func fetchesScreenersSequentiallyInDeclaredOrder() async {
-        let templates = WatchlistFakeTemplates()
-        templates.resultsByTemplateID = [
-            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: [])),
-            "6676217": .success(WatchlistTestHelpers.initial(for: .aboveMA20, rows: [])),
-            "6676221": .success(WatchlistTestHelpers.initial(for: .shiftToday, rows: [])),
-            "6676223": .success(WatchlistTestHelpers.initial(for: .accumDistPositive, rows: [])),
-            "6676225": .success(WatchlistTestHelpers.initial(for: .foreignFlow1M, rows: [])),
-            "6676228": .success(WatchlistTestHelpers.initial(for: .foreignFlow6M, rows: [])),
-            "6676231": .success(WatchlistTestHelpers.initial(for: .foreignFlow3M, rows: [])),
-        ]
-        let vm = makeVM(templates: templates)
-
-        await vm.autoRunIfNeeded()
-
-        #expect(templates.loadCalls == ["6676213", "6676217", "6676221", "6676223", "6676225", "6676228", "6676231", "6676235", "6676238", "6676260", "6676263", "6676264", "6676268", "6676273", "6676280", "6676288", "6676291", "6676292", "6676314", "6676320"])
     }
 }

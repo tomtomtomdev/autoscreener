@@ -30,13 +30,6 @@ struct ScreenerView: View {
         if enableSearch {
             coreView
                 .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
-                .onChange(of: vm.searchText) { oldValue, newValue in
-                    // The first non-empty keystroke kicks a one-shot page exhaust so
-                    // the filter sees every match, not just the pages scrolled in.
-                    if oldValue.isEmpty && !newValue.isEmpty {
-                        Task { await vm.loadAllForSearch() }
-                    }
-                }
         } else {
             coreView
         }
@@ -127,9 +120,9 @@ struct ScreenerView: View {
         let cols = vm.config.columns
         let firstName = cols.first?.name ?? "Metric 1"
         // Render the filtered view; with an empty search term this is identical to
-        // `vm.rows`, so scroll-pagination behaves exactly as before.
+        // `vm.rows`. The cached snapshot holds the full result set, so there's no
+        // pagination — the table renders every matching row at once.
         let visible = vm.visibleRows
-        let lastSymbol = visible.last?.symbol
         return Table(visible, sortOrder: $vm.sort) {
             TableColumn("No") { row in
                 if let i = visible.firstIndex(where: { $0.id == row.id }) {
@@ -151,14 +144,6 @@ struct ScreenerView: View {
                 .buttonStyle(.link)
                 .accessibilityIdentifier("stockcode-\(row.symbol)")
                 .help("View \(row.symbol) financials")
-                .onAppear {
-                    // Last row scrolled into view → kick the next page.
-                    // Idempotent and no-op once the server signals we're done
-                    // (and while a search is active, all pages are already in).
-                    if row.symbol == lastSymbol {
-                        Task { await vm.rowDidAppear(at: vm.rows.count - 1) }
-                    }
-                }
             }
             // IDX tickers are 4 letters (occasionally 5) — pin to 5 monospaced
             // chars so the code column stays tight and doesn't steal width.
@@ -174,9 +159,6 @@ struct ScreenerView: View {
             if cols.count > 1 {
                 TableColumn(cols[1].name) { row in metricCell(row.value(at: 1)) }
             }
-        }
-        .onChange(of: vm.sort) { _, _ in
-            if !vm.sort.isEmpty { vm.rows.sort(using: vm.sort) }
         }
     }
 
@@ -207,8 +189,7 @@ struct ScreenerView: View {
         if !vm.searchText.isEmpty {
             return "\(vm.visibleRows.count) of \(vm.rows.count) rows match"
         }
-        if let total = vm.total { return "\(vm.rows.count) of \(total) rows · page \(vm.currentPage)" }
-        return "\(vm.rows.count) rows · page \(vm.currentPage)"
+        return "\(vm.rows.count) rows"
     }
 
     private func formatDecimal(_ v: Double) -> String {
@@ -223,9 +204,9 @@ struct ScreenerView: View {
     let deps = AppDependencies.shared
     return ScreenerView(
         vm: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService
+            store: deps.screenerStore,
+            coordinator: deps.screenerSweepCoordinator,
+            kind: .accumulating
         ),
         title: "Preview"
     )

@@ -34,6 +34,10 @@ final class TodaysPicksUITests: XCTestCase {
 
     @MainActor
     func testTodaysPicksShowsRankedRecommendations() throws {
+        // Today's Picks is hidden from the sidebar for now (the feature code remains).
+        // Skip until it's resurfaced. See the "hide Today's Picks" change.
+        try XCTSkipIf(true, "Today's Picks is hidden from the sidebar for now")
+
         // macOS gives each display its own Space; with multiple displays attached, XCUITest can't
         // snapshot a window on another Space (windows == 0). Skip on multi-display dev machines —
         // still runs on single-display / CI. Mirrors `RegimeUITests` / `MarketsUITests`.

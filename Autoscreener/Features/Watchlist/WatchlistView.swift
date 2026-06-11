@@ -25,6 +25,7 @@ struct WatchlistView: View {
                 statusBar
             }
             .frame(minWidth: 720, minHeight: 480)
+            .accessibilityIdentifier("WatchlistView")
             .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
             .task { await vm.autoRunIfNeeded() }
             .navigationDestination(item: $selectedTicker) { ticker in
@@ -119,9 +120,9 @@ struct WatchlistView: View {
                     selectedTicker = StockTicker(symbol: row.symbol, name: row.name)
                 } label: {
                     Text(row.symbol).monospaced()
-                        .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("watchlist.stockcode-\(row.symbol)")
                 .help("View \(row.symbol) financials")
             }
             // IDX tickers are 4 letters (occasionally 5) — pin to 5 monospaced
@@ -130,7 +131,6 @@ struct WatchlistView: View {
 
             TableColumn("Name") { row in
                 Text(row.name)
-                    .foregroundStyle(row.isVetoed ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
             }
             .width(min: 160, ideal: 240)
 
@@ -138,26 +138,7 @@ struct WatchlistView: View {
                 Text(formatScore(row.score)).monospacedDigit()
             }
             .width(min: 60, ideal: 80)
-
-            TableColumn("Flag") { row in
-                if row.isVetoed {
-                    Label("ILLIQUID", systemImage: "exclamationmark.octagon.fill")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.red)
-                        .help(vetoReason(row))
-                }
-            }
-            .width(min: 110, ideal: 130)
         }
-    }
-
-    /// Lists which veto gates the row fails (e.g. "Fails: Liquidity Floor, Intraday Liquidity").
-    /// Shown as a tooltip on the ILLIQUID badge so the user can see *why* without
-    /// adding more columns. Reads the materialized `failedVetoGates` so it reflects
-    /// only the gates that were actually evaluated.
-    private func vetoReason(_ row: WatchlistRow) -> String {
-        let missing = row.failedVetoGates.map(\.displayName).sorted()
-        return missing.isEmpty ? "" : "Fails: \(missing.joined(separator: ", "))"
     }
 
     private var statusBar: some View {

@@ -115,24 +115,7 @@ final class StubScreenerAPIClient {
     }
 }
 
-// MARK: - ScreenerViewModel
-
-final class FakeScreenerService: ScreenerServicing, @unchecked Sendable {
-    enum Outcome { case success(ScreenerPage), failure(ScreenerError) }
-    var outcomes: [Outcome] = []
-    private(set) var calls: [(config: ScreenerConfig, page: Int)] = []
-
-    func run(_ config: ScreenerConfig, page: Int) async throws -> ScreenerPage {
-        calls.append((config, page))
-        guard !outcomes.isEmpty else {
-            return ScreenerPage(rows: [], total: 0, page: page)
-        }
-        switch outcomes.removeFirst() {
-        case .success(let p): return p
-        case .failure(let e): throw e
-        }
-    }
-}
+// MARK: - ScreenerViewModel (store projection)
 
 private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow {
     ScreenerRow(symbol: symbol, name: symbol + " Co", values: [a, b], lastPrice: nil, pctChange: nil)
@@ -140,54 +123,45 @@ private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow 
 
 @MainActor
 @Suite struct ScreenerViewModelTests {
-    @Test func runLoadsFirstPage() async {
-        let svc = FakeScreenerService()
-        svc.outcomes = [.success(.init(rows: [makeRow("BBCA", 1, 2), makeRow("BBRI", 3, 4)], total: 2, page: 1))]
-        let vm = ScreenerViewModel(service: svc)
+    /// Seeds a store with one snapshot for `kind` and returns a VM bound to it.
+    private func makeVM(kind: BandarScreenerKind = .accumulating,
+                        rows: [ScreenerRow],
+                        config: ScreenerConfig = ScreenerConfig()) -> (ScreenerViewModel, ScreenerStore) {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
+        store.apply(ScreenerSnapshot(config: config, rows: rows, fetchedAt: Date(timeIntervalSince1970: 0)), for: kind)
+        let vm = ScreenerViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store), kind: kind)
+        return (vm, store)
+    }
 
-        await vm.run()
-
-        #expect(vm.rows.count == 2)
+    @Test func rendersRowsFromStoreSnapshot() {
+        let (vm, _) = makeVM(rows: [makeRow("BBCA", 1, 2), makeRow("BBRI", 3, 4)])
+        #expect(Set(vm.rows.map(\.symbol)) == ["BBCA", "BBRI"])
         #expect(vm.total == 2)
-        #expect(vm.currentPage == 1)
-        #expect(svc.calls.first?.page == 1)
         #expect(vm.error == nil)
     }
 
-    @Test func loadMoreAppendsAndIncrementsPage() async {
-        let svc = FakeScreenerService()
-        svc.outcomes = [
-            .success(.init(rows: [makeRow("A", 1, 1)], total: 2, page: 1)),
-            .success(.init(rows: [makeRow("B", 2, 2)], total: 2, page: 2)),
-        ]
-        let vm = ScreenerViewModel(service: svc)
-        await vm.run()
-        await vm.loadMore()
-
-        // Template sort applies after each load — ordercol=2 desc → B(2) before A(1).
-        #expect(vm.rows.map(\.symbol) == ["B", "A"])
-        #expect(vm.currentPage == 2)
-        #expect(vm.hasMore == false)
+    @Test func appliesTemplateDefaultSortDescendingByFirstMetric() {
+        // Default ScreenerConfig: ordercol=2, ordertype=desc → sort by values[0] desc.
+        let (vm, _) = makeVM(rows: [makeRow("A", 10, 0), makeRow("B", 50, 0), makeRow("C", 30, 0)])
+        #expect(vm.rows.map(\.symbol) == ["B", "C", "A"])
     }
 
-    @Test func runClearsPreviousRows() async {
-        let svc = FakeScreenerService()
-        svc.outcomes = [
-            .success(.init(rows: [makeRow("A", 1, 1)], total: 1, page: 1)),
-            .success(.init(rows: [makeRow("X", 9, 9)], total: 1, page: 1)),
-        ]
-        let vm = ScreenerViewModel(service: svc)
-        await vm.run()
-        await vm.run()
-        #expect(vm.rows.map(\.symbol) == ["X"])
+    @Test func headerSortOverridesTemplateDefault() {
+        let (vm, _) = makeVM(rows: [makeRow("A", 10, 0), makeRow("B", 50, 0), makeRow("C", 30, 0)])
+        vm.sort = [KeyPathComparator(\ScreenerRow.symbol, order: .forward)]
+        #expect(vm.rows.map(\.symbol) == ["A", "B", "C"])
     }
 
-    @Test func surfacesUnauthorizedError() async {
-        let svc = FakeScreenerService()
-        svc.outcomes = [.failure(.unauthorized)]
-        let vm = ScreenerViewModel(service: svc)
-        await vm.run()
-        #expect(vm.error == "Session expired. Please sign in again.")
+    @Test func searchFiltersBySymbol() {
+        let (vm, _) = makeVM(rows: [makeRow("BBCA", 1, 1), makeRow("BBRI", 2, 2), makeRow("TLKM", 3, 3)])
+        vm.searchText = "bb"
+        #expect(Set(vm.visibleRows.map(\.symbol)) == ["BBCA", "BBRI"])
+    }
+
+    @Test func noSnapshotYieldsNoRows() {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
+        let vm = ScreenerViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store), kind: .roeQuality)
         #expect(vm.rows.isEmpty)
+        #expect(vm.total == nil)
     }
 }

@@ -19,9 +19,15 @@ nonisolated struct StubPaywallService: PaywallServicing {
 
 nonisolated struct StubScreenerTemplateService: ScreenerTemplateServicing {
     func load(templateID: String) async throws -> ScreenerInitialResult {
-        ScreenerInitialResult(
+        // The intraday-liquidity veto gate (6676320) deliberately omits GOTO, so the
+        // composite Watchlist excludes it (fails a veto gate) while the per-screener
+        // tabs still list all three. Every other screener returns all three rows.
+        let rows = templateID == "6676320"
+            ? UITestFixtures.screenerRows.filter { $0.symbol != "GOTO" }
+            : UITestFixtures.screenerRows
+        return ScreenerInitialResult(
             config: ScreenerConfig(),
-            page: ScreenerPage(rows: UITestFixtures.screenerRows, total: UITestFixtures.screenerRows.count, page: 1))
+            page: ScreenerPage(rows: rows, total: rows.count, page: 1))
     }
 }
 

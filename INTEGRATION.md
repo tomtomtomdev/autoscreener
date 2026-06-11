@@ -256,8 +256,10 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     empty one (no market fetch / no `noRegimeInputs` throw), else runs the engine over it. Plus an
     `AppDependencies` extension wiring the live closures: `makeSelectionEngine(universe:config:)`
     (pure composition of `StockbitDataProvider` + `StockSelectionEngine` from the 10 services),
-    `watchlistUniverse()` (drives a fresh `WatchlistViewModel` — the same fan-out the user sees — and
-    returns its de-duplicated ranked symbols), and the `selectionRunner` computed property.
+    `watchlistUniverse()` (**updated 2026-06-11**: now reads the shared `ScreenerStore` cache via
+    `WatchlistComposer.compose(...).rows.map(\.symbol)` instead of spinning a throwaway
+    `WatchlistViewModel` fan-out — the cache is filled by the continuous sweep coordinator; see
+    SPEC §15), and the `selectionRunner` computed property.
   - **Tests:** new `AutoscreenerTests/SelectionRunnerTests.swift` (2 cases: sources the universe and
     runs the engine over **exactly** that universe via an `EchoProvider`/spy; empty universe
     short-circuits without building an engine). The composition root itself (the `AppDependencies`
@@ -301,6 +303,12 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     bank CAPM β is a distinct single-factor choice from the two-factor timing β — kept as a config knob
     to sweep, NOT wired to the regression (wiring it would move the BBCA worked example). **Full
     `AutoscreenerTests` bundle: 458 passed, 0 failures** — golden master unchanged.
+
+> **⚠️ Hidden again 2026-06-11 (API-fetching revamp).** Today's Picks is currently **hidden from the
+> sidebar** (the "Today" section and the `.todaysPicks` detail arm were removed; default landing is now
+> the Watchlist). All the code below remains intact and wired — only the sidebar entry is gone, so the
+> screen is dormant until resurfaced. `watchlistUniverse()` now reads the `ScreenerStore` cache (above).
+> `TodaysPicksUITests` is skipped (`XCTSkipIf(true, …)`) for the same reason. See SPEC §15.
 
 - **Today's Picks UI ✅ (2026-06-09, commit `99386fc`) — TIER-A IS NOW USER-VISIBLE.** The headless engine output is
   wired to a sidebar screen (the deferred "Today's Picks" item). MVVM-lite per `swiftui-architecture`
@@ -681,7 +689,8 @@ sourcing a historical IDX dataset with as-of/announcement dates (the spec's own 
   per-day `value` (traded rupiah) directly; no keystats-MA workaround needed.
 - ~~Tier A v1 universe: screener result, watchlist, or a fixed candidate list?~~ — **decided
   (2026-06-08):** the **composite Watchlist** (the ranked union of the 20 screeners). Wired in
-  `AppDependencies.watchlistUniverse()` (drives a fresh `WatchlistViewModel`, returns `rows.map(\.symbol)`).
+  `AppDependencies.watchlistUniverse()` (as of 2026-06-11 reads the `ScreenerStore` cache via
+  `WatchlistComposer.compose(...).rows.map(\.symbol)`; previously drove a throwaway `WatchlistViewModel`).
 - ~~Which preset is the default (`.balanced`) and is config loaded from JSON/backend or compiled?~~ —
   **decided (2026-06-08):** default `.balanced`, **compiled** (no JSON/backend config layer in v1).
 - **New:** still parse the `/findata-view` display-string tree for the 3 balance-sheet items §11

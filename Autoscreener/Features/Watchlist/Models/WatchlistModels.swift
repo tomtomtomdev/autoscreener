@@ -130,47 +130,17 @@ nonisolated struct WatchlistRow: Identifiable, Hashable, Codable, Sendable {
     let name: String
     var matchedScreeners: Set<BandarScreenerKind>
 
-    /// Veto gates this row FAILS — but restricted to the gates that were actually
-    /// evaluated (freshly fetched, or from the current cache generation) when this
-    /// composite was built. A gate that was stale or missing is deliberately absent
-    /// here: we don't flag a stock against a gate we couldn't read, which is what
-    /// caused the "every row shows ILLIQUID" bug when one liquidity cache went stale.
-    /// Materialized by `WatchlistViewModel` at composition time so the verdict travels
-    /// with the persisted snapshot and survives a cold boot. Empty ⇒ liquid (no flag).
-    var failedVetoGates: Set<BandarScreenerKind>
-
     init(symbol: String,
          name: String,
-         matchedScreeners: Set<BandarScreenerKind>,
-         failedVetoGates: Set<BandarScreenerKind> = []) {
+         matchedScreeners: Set<BandarScreenerKind>) {
         self.symbol = symbol
         self.name = name
         self.matchedScreeners = matchedScreeners
-        self.failedVetoGates = failedVetoGates
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case symbol, name, matchedScreeners, failedVetoGates
-    }
-
-    // Custom decode tolerates snapshots written before `failedVetoGates` existed —
-    // they decode to "not vetoed" and self-correct on the next refresh.
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        symbol = try c.decode(String.self, forKey: .symbol)
-        name = try c.decode(String.self, forKey: .name)
-        matchedScreeners = try c.decode(Set<BandarScreenerKind>.self, forKey: .matchedScreeners)
-        failedVetoGates = try c.decodeIfPresent(Set<BandarScreenerKind>.self, forKey: .failedVetoGates) ?? []
     }
 
     var score: Double {
         matchedScreeners.reduce(0) { $0 + $1.weight }
     }
-
-    /// True when this stock fails at least one veto gate that was actually evaluated.
-    /// Hard-AND semantics from `bandar-master.json` — but only over gates we hold a
-    /// usable reading for (see `failedVetoGates`).
-    var isVetoed: Bool { !failedVetoGates.isEmpty }
 
     var id: String { symbol }
 }

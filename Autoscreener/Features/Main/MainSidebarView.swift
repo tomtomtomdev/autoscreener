@@ -118,7 +118,9 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
 }
 
 struct MainSidebarView: View {
-    @State private var selection: SidebarItem? = .todaysPicks
+    // Today's Picks is hidden for now — land on the composite Watchlist, the hub the
+    // continuous screener sweep feeds.
+    @State private var selection: SidebarItem? = .watchlist
 
     // Hold one ViewModel per screener so switching tabs preserves their loaded rows
     // and doesn't fire a fresh paywall counter on every back-and-forth.
@@ -146,141 +148,38 @@ struct MainSidebarView: View {
 
     init() {
         let deps = AppDependencies.shared
-        _bandarAccumulatingVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676213"
-        ))
-        _bandarAboveMA20VM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676217"
-        ))
-        _bandarShiftTodayVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676221"
-        ))
-        _accumDistPositiveVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676223"
-        ))
-        _foreignFlow1MVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676225"
-        ))
-        _foreignFlow6MVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676228"
-        ))
-        _foreignFlow3MVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676231"
-        ))
-        _foreignBuyStreakVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676235"
-        ))
-        _freshForeignBuyVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676238"
-        ))
-        _freqSpikeVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676260"
-        ))
-        _volumeSpikeVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676263"
-        ))
-        _above50MAVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676264"
-        ))
-        _above200MAVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676268"
-        ))
-        _earningsYieldVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676273"
-        ))
-        _pbvBelow2VM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676280"
-        ))
-        _roeQualityVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676288"
-        ))
-        _fcfPositiveVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676291"
-        ))
-        _manageableDebtVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676292"
-        ))
-        _liquidityFloorVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676314"
-        ))
-        _intradayLiquidityVM = State(initialValue: ScreenerViewModel(
-            service: deps.screenerService,
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            templateID: "6676320"
-        ))
-        _watchlistVM = State(initialValue: WatchlistViewModel(
-            paywall: deps.paywallService,
-            templates: deps.screenerTemplateService,
-            screener: deps.screenerService
-        ))
+        let store = deps.screenerStore
+        let coordinator = deps.screenerSweepCoordinator
+        func screener(_ kind: BandarScreenerKind) -> ScreenerViewModel {
+            ScreenerViewModel(store: store, coordinator: coordinator, kind: kind)
+        }
+        _bandarAccumulatingVM = State(initialValue: screener(.accumulating))
+        _bandarAboveMA20VM = State(initialValue: screener(.aboveMA20))
+        _bandarShiftTodayVM = State(initialValue: screener(.shiftToday))
+        _accumDistPositiveVM = State(initialValue: screener(.accumDistPositive))
+        _foreignFlow1MVM = State(initialValue: screener(.foreignFlow1M))
+        _foreignFlow6MVM = State(initialValue: screener(.foreignFlow6M))
+        _foreignFlow3MVM = State(initialValue: screener(.foreignFlow3M))
+        _foreignBuyStreakVM = State(initialValue: screener(.foreignBuyStreak))
+        _freshForeignBuyVM = State(initialValue: screener(.freshForeignBuy))
+        _freqSpikeVM = State(initialValue: screener(.freqSpike))
+        _volumeSpikeVM = State(initialValue: screener(.volumeSpike))
+        _above50MAVM = State(initialValue: screener(.above50MA))
+        _above200MAVM = State(initialValue: screener(.above200MA))
+        _earningsYieldVM = State(initialValue: screener(.earningsYield))
+        _pbvBelow2VM = State(initialValue: screener(.pbvBelow2))
+        _roeQualityVM = State(initialValue: screener(.roeQuality))
+        _fcfPositiveVM = State(initialValue: screener(.fcfPositive))
+        _manageableDebtVM = State(initialValue: screener(.manageableDebt))
+        _liquidityFloorVM = State(initialValue: screener(.liquidityFloor))
+        _intradayLiquidityVM = State(initialValue: screener(.intradayLiquidity))
+        _watchlistVM = State(initialValue: WatchlistViewModel(store: store, coordinator: coordinator))
     }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                Section("Today") {
-                    Label(SidebarItem.todaysPicks.title,
-                          systemImage: SidebarItem.todaysPicks.systemImage)
-                        .tag(SidebarItem.todaysPicks)
-                }
+                // Today's Picks is hidden for now (still wired in code, just not surfaced).
                 Section("Screeners") {
                     ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
@@ -316,8 +215,9 @@ struct MainSidebarView: View {
     private var detail: some View {
         switch selection {
         case .todaysPicks:
-            TodaysPicksView()
-                .id(SidebarItem.todaysPicks)
+            // Hidden from the sidebar for now; if reached, fall back to Watchlist.
+            WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
+                .id(SidebarItem.watchlist)
         case .bandarAccumulating:
             ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
                 .id(SidebarItem.bandarAccumulating)

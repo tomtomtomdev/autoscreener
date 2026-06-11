@@ -48,14 +48,11 @@ extension AppDependencies {
         return StockSelectionEngine(provider: provider, config: config)
     }
 
-    /// §10 universe: the composite Watchlist (the ranked union of the 20 screeners). Drives a fresh
-    /// `WatchlistViewModel` — the same throttled fan-out the user sees — and returns its
-    /// de-duplicated, ranked symbols.
+    /// §10 universe: the composite Watchlist (the ranked union of the 20 screeners), read
+    /// from the shared `ScreenerStore` cache that the sweep coordinator fills. Returns the
+    /// de-duplicated, ranked, veto-filtered symbols.
     func watchlistUniverse() async -> [Ticker] {
-        let watchlist = WatchlistViewModel(
-            paywall: paywallService, templates: screenerTemplateService, screener: screenerService)
-        await watchlist.refresh()
-        return watchlist.rows.map(\.symbol)
+        WatchlistComposer.compose(screenerStore.snapshots).rows.map(\.symbol)
     }
 
     /// The thin headless Tier-A entry point: rank the composite-Watchlist universe under `config`.

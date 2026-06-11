@@ -38,6 +38,11 @@ final class AppDependencies {
     let emittenService: any EmittenServicing
     let companyPriceFeedService: any CompanyPriceFeedServicing
     let brokerActivityService: any BrokerActivityServicing
+    // Single source of truth for screener data + the continuous market-hours sweep
+    // that fills it. Every screener tab and the composite Watchlist read the store.
+    let screenerStore: ScreenerStore
+    let marketClock: MarketClock
+    let screenerSweepCoordinator: ScreenerSweepCoordinator
     let authState = AuthState()
 
     static let shared = AppDependencies()
@@ -78,6 +83,25 @@ final class AppDependencies {
         self.emittenService = useFixtures ? StubEmittenService() : EmittenService(apiClient: client)
         self.companyPriceFeedService = useFixtures ? StubCompanyPriceFeedService() : CompanyPriceFeedService(apiClient: client)
         self.brokerActivityService = useFixtures ? StubBrokerActivityService() : BrokerActivityService(apiClient: client)
+
+        // Screener cache + sweep. Under fixtures/tests we start from an empty cache
+        // (don't read a real user's file) and disable the continuous loop — the
+        // coordinator instead seeds the store with one sweep over the stub services,
+        // so the UI renders deterministically without fetching on a timer.
+        let headless = useFixtures || ProcessInfo.processInfo.isRunningTests
+        let cacheStore = ScreenerStore(loadFromDisk: !headless)
+        let clock = MarketClock()
+        self.screenerStore = cacheStore
+        self.marketClock = clock
+        self.screenerSweepCoordinator = ScreenerSweepCoordinator(
+            store: cacheStore, clock: clock,
+            paywall: self.paywallService,
+            templates: self.screenerTemplateService,
+            screener: self.screenerService,
+            runsContinuousLoop: !headless,
+            // Under fixtures/tests the seed sweep should land instantly — skip the
+            // anti-burst throttle (it only matters against the live Stockbit API).
+            sleeper: headless ? { _ in } : { try await Task.sleep(nanoseconds: $0) })
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).
