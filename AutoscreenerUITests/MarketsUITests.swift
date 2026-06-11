@@ -4,10 +4,10 @@ import AppKit
 #endif
 
 /// Drives the sidebar → Markets flow against canned, offline fixtures
-/// (`-UITestFixtures`), verifying the new Commodities + Currencies price sections
-/// render. Under fixtures the rows are fed by `StubCommodityPriceService`, so the
-/// formatted price ("100") and a signed % change are deterministic — no auth,
-/// network, or Keychain involved.
+/// (`-UITestFixtures`), verifying every price section renders — the composite,
+/// indices, and sectors as well as commodities + currencies. Under fixtures the
+/// rows are fed by `StubCommodityPriceService`, so the formatted price ("100") and
+/// a signed % change are deterministic — no auth, network, or Keychain involved.
 final class MarketsUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -76,6 +76,29 @@ final class MarketsUITests: XCTestCase {
         // USD/IDR is present under Currencies.
         XCTAssertTrue(app.staticTexts["USDIDR"].waitForExistence(timeout: 5),
                       "USDIDR currency row should be listed")
+    }
+
+    /// The composite, indices, and sectors are now priced rows too — they carry a
+    /// value + % change like commodities, served by the same `emitten/{symbol}/info`
+    /// snapshot. Proven by the `MarketsPricedRow.<symbol>` identifier, which only the
+    /// priced row sets (the old plain row had none).
+    @MainActor
+    func testCompositeIndexAndSectorRowsShowPriceAndChange() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = openMarkets()
+
+        // IHSG (composite), LQ45 (index), and IDXENERGY (sector) each render the
+        // priced row, fed by the per-symbol stub quote.
+        for symbol in ["IHSG", "LQ45", "IDXENERGY"] {
+            let row = app.descendants(matching: .any)
+                .matching(identifier: "MarketsPricedRow.\(symbol)").firstMatch
+            XCTAssertTrue(row.waitForExistence(timeout: 5),
+                          "\(symbol) should render as a priced row with a value + % change")
+        }
     }
 
     /// Commodities and currencies have no `charts/{symbol}/daily` history, so their

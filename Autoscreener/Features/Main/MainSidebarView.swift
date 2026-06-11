@@ -146,7 +146,7 @@ struct MainSidebarView: View {
     // data and doesn't re-fire the expensive regime fetch (a chart request per
     // LQ45 constituent for breadth) on every visit.
     @State private var regimeVM: RegimeViewModel
-    @State private var commoditiesVM: CommoditiesViewModel
+    @State private var marketQuotesVM: MarketQuotesViewModel
 
     init() {
         let deps = AppDependencies.shared
@@ -177,7 +177,7 @@ struct MainSidebarView: View {
         _intradayLiquidityVM = State(initialValue: screener(.intradayLiquidity))
         _watchlistVM = State(initialValue: WatchlistViewModel(store: store, coordinator: coordinator))
         _regimeVM = State(initialValue: RegimeViewModel())
-        _commoditiesVM = State(initialValue: CommoditiesViewModel())
+        _marketQuotesVM = State(initialValue: MarketQuotesViewModel())
     }
 
     var body: some View {
@@ -280,7 +280,7 @@ struct MainSidebarView: View {
             ScreenerView(vm: intradayLiquidityVM, title: SidebarItem.intradayLiquidity.title, enableSearch: true)
                 .id(SidebarItem.intradayLiquidity)
         case .markets:
-            MarketsView(regime: regimeVM, commodities: commoditiesVM)
+            MarketsView(regime: regimeVM, quotes: marketQuotesVM)
                 .id(SidebarItem.markets)
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)

@@ -7,22 +7,23 @@ import SwiftUI
 /// own navigation, like `WatchlistView`. Mirrors the `NavigationStack` +
 /// `.navigationDestination` pattern in `ScreenerView`.
 ///
-/// The "Commodities" and "Currencies" sections instead show a live price +
-/// % change snapshot (from `emitten/{symbol}/info` via `CommoditiesViewModel`),
-/// loaded on appear and refreshable by pull-to-refresh. Those rows have no
-/// historical chart data, so they don't navigate to a detail screen.
+/// Every row shows a live price + % change snapshot (from `emitten/{symbol}/info`
+/// via `MarketQuotesViewModel`), loaded on appear and refreshable by
+/// pull-to-refresh. Commodities and currencies have no historical chart data, so
+/// only they stay non-navigating; the composite, indices, and sectors are both
+/// priced and tappable into their chart.
 struct MarketsView: View {
     private let chartService: any ChartServicing
     @State private var regime: RegimeViewModel
-    @State private var commodities: CommoditiesViewModel
+    @State private var marketQuotes: MarketQuotesViewModel
 
     @MainActor
     init(chartService: any ChartServicing = AppDependencies.shared.chartService,
          regime: RegimeViewModel? = nil,
-         commodities: CommoditiesViewModel? = nil) {
+         quotes: MarketQuotesViewModel? = nil) {
         self.chartService = chartService
         _regime = State(initialValue: regime ?? RegimeViewModel())
-        _commodities = State(initialValue: commodities ?? CommoditiesViewModel())
+        _marketQuotes = State(initialValue: quotes ?? MarketQuotesViewModel())
     }
 
     var body: some View {
@@ -33,7 +34,7 @@ struct MarketsView: View {
                     Section(group.rawValue) {
                         ForEach(symbols) { item in
                             // Commodities and currencies have no historical chart
-                            // data, so they render as plain, non-navigating rows.
+                            // data, so they render as non-navigating rows.
                             if item.group.hasChart {
                                 NavigationLink(value: item) {
                                     row(item)
@@ -53,16 +54,16 @@ struct MarketsView: View {
                     service: chartService))
             }
             // Load both concurrently so the regime's breadth fan-out (one chart
-            // request per LQ45 constituent) doesn't block the commodity prices.
+            // request per LQ45 constituent) doesn't block the market prices.
             .task {
                 async let r: () = regime.load()
-                async let c: () = commodities.load()
-                _ = await (r, c)
+                async let q: () = marketQuotes.load()
+                _ = await (r, q)
             }
             .refreshable {
                 async let r: () = regime.load(force: true)
-                async let c: () = commodities.load(force: true)
-                _ = await (r, c)
+                async let q: () = marketQuotes.load(force: true)
+                _ = await (r, q)
             }
         }
         .accessibilityIdentifier("MarketsView")
@@ -115,30 +116,14 @@ struct MarketsView: View {
         }
     }
 
-    @ViewBuilder
+    /// Every group renders the same priced row (symbol + name + value + % change).
+    /// Navigation is decided by the caller in `body` via `group.hasChart`.
     private func row(_ item: MarketSymbol) -> some View {
-        switch item.group {
-        case .commodity, .currency:
-            pricedRow(item)
-        default:
-            plainRow(item)
-        }
-    }
-
-    private func plainRow(_ item: MarketSymbol) -> some View {
-        HStack(spacing: 10) {
-            Text(item.symbol)
-                .font(.body.weight(.medium))
-                .monospaced()
-                .frame(minWidth: 96, alignment: .leading)
-            Text(item.name)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
+        pricedRow(item)
     }
 
     private func pricedRow(_ item: MarketSymbol) -> some View {
-        let quote = commodities.quotes[item.symbol]
+        let quote = marketQuotes.quotes[item.symbol]
         return HStack(spacing: 10) {
             Text(item.symbol)
                 .font(.body.weight(.medium))
@@ -160,7 +145,7 @@ struct MarketsView: View {
                             .foregroundStyle(quote.isUp ? .green : .red)
                     }
                 }
-            } else if commodities.isLoading {
+            } else if marketQuotes.isLoading {
                 ProgressView().controlSize(.small)
             } else {
                 Text("—").foregroundStyle(.secondary)

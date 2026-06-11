@@ -19,7 +19,7 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Pagination**: increment `page` in the request body for "Load more".
 - [x] **Stock-code search** (§7.3): a `.searchable` toolbar field on the Liquidity Floor, Intraday Liquidity, and Watchlist tabs filters rows by ticker (case-insensitive substring on the symbol). On the two paginated screener tabs, entering a term auto-loads all remaining pages first, so a match is never hidden behind lazy pagination; the Watchlist already holds the complete set.
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
-- [x] **Markets — regime banner + commodities & currencies price list** (§17): the Markets screen opens with the **Market Regime banner** (risk-on / neutral / risk-off read; tap → full factor breakdown), then lists composite/indices/sectors plus **Commodities** (13: Crude Oil, Brent, Natural Gas, Newcastle Coal, Palm Oil, Gold, Silver, Nickel, Copper, Aluminium, Tin, Zinc, Rubber) and **Currencies** (USD/IDR), each row showing a live last-price + signed % change from `GET /emitten/{symbol}/info`. Loaded on appear, pull-to-refresh, per-symbol failure tolerated. Tapping a chartable row opens the existing OHLCV chart.
+- [x] **Markets — regime banner + every-row price list** (§17): the Markets screen opens with the **Market Regime banner** (risk-on / neutral / risk-off read; tap → full factor breakdown), then lists the composite (IHSG), indices, and IDX-IC sectors plus **Commodities** (13: Crude Oil, Brent, Natural Gas, Newcastle Coal, Palm Oil, Gold, Silver, Nickel, Copper, Aluminium, Tin, Zinc, Rubber) and **Currencies** (USD/IDR) — **every row** showing a live last-price + signed % change from `GET /emitten/{symbol}/info` (the same snapshot serves indices/sectors as commodities). Loaded on appear, pull-to-refresh, per-symbol failure tolerated. Tapping a chartable row (composite/index/sector) opens the existing OHLCV chart; commodities/currencies don't navigate.
 - [x] **Build DMG**: `scripts/build_dmg.sh` produces a notarisable `Autoscreener.dmg`.
 
 Out of scope for v1: real-time WebSocket price streaming (`wss-trading.stockbit.com`), saving custom templates, multi-account, paywall enforcement (we hit `paywall/eligibility/check` and surface the result, but don't gate UI), filter-builder UI (canned preset only). Charting and the Markets browser shipped after the original v1 cut (see §17).
@@ -381,12 +381,12 @@ Since every snapshot holds the screener's full result set (the sweep walks all p
 - `ScreenerSearchTests` — `visibleRows` tracks `searchText`; `loadAllForSearch()` exhausts every remaining page and leaves `hasMore == false`
 - `WatchlistSearchTests` — `visibleRows` filters by symbol (blank passthrough, case-insensitive, symbol-not-name)
 - `CommodityPriceServiceTests` — `emitten/{symbol}/info` endpoint shape; parse of live OIL/XAU/CPO captures (string vs JSON-number fields, signed `change`, comma-grouped `formatted_price`, integer-string price, `"NA"` value/average tolerance); non-numeric-price + malformed-JSON throws; error mapping through a real `APIClient` + `StubSession` (unauthorized / paywall 403 / malformed / happy path)
-- `CommoditiesViewModelTests` — fan-out populates all quotes; **partial failure** keeps the other rows; **total failure** sets a screen error; reload-skip when loaded; force-reload refetches; retry after total failure
-- `MarketCatalogTests` — declaration order incl. `.commodity`/`.currency`, all 14 priced symbols present, USD/IDR is the sole currency
+- `MarketQuotesViewModelTests` — fan-out populates all quotes; **default catalog covers the chartable groups too** (composite/indices/sectors, not just commodities/currencies); **partial failure** keeps the other rows; **total failure** sets a screen error; reload-skip when loaded; force-reload refetches; retry after total failure
+- `MarketCatalogTests` — declaration order incl. `.commodity`/`.currency`, all 14 commodity/currency symbols present, all 11 IDX-IC sectors, USD/IDR is the sole currency
 
 **UI verification.** Confirm UI changes with XCUITest under `-UITestFixtures`, never via the Accessibility API or screenshot scripts (flaky on multi-display macOS). `AutoscreenerUITests`:
 - `StockDetailUITests` — tap a stock code → financial-detail flow (report/period switching)
-- `MarketsUITests` — sidebar → Markets → Commodities/Currencies sections render with stubbed price + % change
+- `MarketsUITests` — sidebar → Markets → Commodities/Currencies sections render with stubbed price + % change; composite/index/sector rows also render as priced rows (`MarketsPricedRow.<symbol>`); chartable rows still navigate while commodities/currencies don't
 - `RegimeUITests` — sidebar → Markets → regime banner shows the (deterministic Neutral) stance → tap → full factor breakdown (valuation / BI rate / LQ45 breadth rows)
 
 Both guard `XCTSkipIf(NSScreen.screens.count > 1)` — they pass on single-display/CI and skip on multi-display dev machines, where XCUITest can't snapshot a window on another Space. Full sign-in remains a real-network smoke (run manually).
@@ -434,7 +434,9 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 
 **API-fetching revamp (2026-06-11).** Replaced the on-demand, uncached fetch model with a single continuous market-hours sweep into a disk-backed cache (see §15). New types: `MarketClock` (IDX sessions), `ScreenerStore` (disk-persisted snapshot cache), `ScreenerSweepCoordinator` (owns the loop + fan-out, moved out of `WatchlistViewModel`), `WatchlistComposer` (union + veto exclusion). `ScreenerViewModel`/`WatchlistViewModel` are now thin store projections (no fetching/pagination). **Veto changed from tag → exclude**: stocks missing a liquidity gate are dropped from the composite (the ILLIQUID column and `WatchlistRow.failedVetoGates`/`isVetoed` were removed). Today's Picks is hidden from the sidebar (feature code retained); the app lands on the Watchlist. Full unit suite green (added `MarketClockTests`, `ScreenerStoreTests`, `ScreenerSweepCoordinatorTests`, `WatchlistComposerTests`; rewrote the screener/watchlist VM + search suites for the store model) plus a `WatchlistUITests` cache/exclusion check. Next milestone in §16.
 
-**Markets + Regime UI merge (2026-06-11).** Collapsed the two "Markets"-section sidebar entries ("Market Regime" + "Markets") into a single **Markets** screen: the regime read now sits as a banner atop the instrument list, tappable to push the full factor breakdown (`RegimeBreakdownView`, extracted from the deleted `RegimeView`; `RegimeColors` moved alongside it). `RegimeViewModel` + `CommoditiesViewModel` hoisted into `MainSidebarView` to preserve loaded data across tab switches and avoid re-firing the breadth fan-out on every visit; the two load concurrently. `RegimeUITests` rewritten for the Markets → banner → breakdown flow. Build + full unit suite green; UI tests skip on multi-display dev machines (run on single-display/CI). See §17.
+**Markets + Regime UI merge (2026-06-11).** Collapsed the two "Markets"-section sidebar entries ("Market Regime" + "Markets") into a single **Markets** screen: the regime read now sits as a banner atop the instrument list, tappable to push the full factor breakdown (`RegimeBreakdownView`, extracted from the deleted `RegimeView`; `RegimeColors` moved alongside it). `RegimeViewModel` + `CommoditiesViewModel` (later renamed `MarketQuotesViewModel`) hoisted into `MainSidebarView` to preserve loaded data across tab switches and avoid re-firing the breadth fan-out on every visit; the two load concurrently. `RegimeUITests` rewritten for the Markets → banner → breakdown flow. Build + full unit suite green; UI tests skip on multi-display dev machines (run on single-display/CI). See §17.
+
+**Markets — price + % change on IHSG, indices & sectors (2026-06-11).** The composite/index/sector rows now show a live last-price + signed % change like commodities/currencies, instead of plain `symbol + name`. Stockbit's `emitten/{symbol}/info` returns the same price-header shape for indices/stocks as for commodities, so the existing `CommodityPriceService` path is reused with zero new wiring. `CommoditiesViewModel` → **`MarketQuotesViewModel`** (now fans out over `MarketCatalog.all`, ~35 concurrent requests, per-symbol failure still tolerated); `MarketCatalog.priced` dropped (every group is quoted); `MarketsView` routes all groups through the priced row while keeping the `.hasChart` NavigationLink wrapping (composite/index/sector stay tappable into the chart). Tests: `MarketQuotesViewModelTests` gains a default-catalog-covers-chartable-groups case; `MarketsUITests` gains a priced-row check for IHSG/index/sector. Build + full unit suite green; UI tests skip on multi-display (run on single-display/CI). See §17.
 
 ---
 
@@ -490,15 +492,17 @@ Pick from the ranked list — none are in-flight.
 
 ---
 
-## 17. Markets — regime banner + commodities & currencies price list
+## 17. Markets — regime banner + every-row price list
 
-The Markets sidebar screen (`Features/Markets/`) opens with the **Market Regime banner** (the top-down risk-on / neutral / risk-off read — `idx-investing-research.md` §3) sitting atop the instrument list it's derived from. The banner shows the synthesised stance + a one-line posture; tapping it pushes `RegimeBreakdownView`, the transparent factor breakdown (valuation, BI rate, US rates/dollar, global equities, foreign flow, IHSG trend, rupiah, LQ45 breadth) with the late-cycle valuation guard note. Below the banner the screen lists the composite, indices, and IDX-IC sectors as chartable rows, plus two **priced** sections — **Commodities** (13 symbols) and **Currencies** (USD/IDR) — each carrying a live last-price + signed % change. Tapping any chartable row opens the shared `OHLCVChartView` (commodities chart identically via `charts/{symbol}/daily`).
+The Markets sidebar screen (`Features/Markets/`) opens with the **Market Regime banner** (the top-down risk-on / neutral / risk-off read — `idx-investing-research.md` §3) sitting atop the instrument list it's derived from. The banner shows the synthesised stance + a one-line posture; tapping it pushes `RegimeBreakdownView`, the transparent factor breakdown (valuation, BI rate, US rates/dollar, global equities, foreign flow, IHSG trend, rupiah, LQ45 breadth) with the late-cycle valuation guard note. Below the banner **every** row — the composite (IHSG), indices, IDX-IC sectors, **Commodities** (13 symbols) and **Currencies** (USD/IDR) — carries a live last-price + signed % change. Tapping a chartable row (composite/index/sector) opens the shared `OHLCVChartView`; commodities/currencies have no `charts/{symbol}/daily` history, so only they don't navigate.
 
-The regime read and the markets list were **merged into this one screen** (2026-06-11) — previously two separate sidebar entries under "Markets". The `RegimeViewModel` and `CommoditiesViewModel` are now held in `MainSidebarView` (like the screener VMs) so switching tabs preserves loaded data and doesn't re-fire the expensive regime fetch (a `charts/{symbol}/daily` request per LQ45 constituent for breadth) on every visit; both load concurrently on appear and force-refresh together on pull-to-refresh.
+Price + % change on the composite/index/sector rows shipped after the original merge (2026-06-11) — they were previously plain `symbol + name` rows. The snapshot uses the same `GET /emitten/{symbol}/info` path already serving commodities (§17.1): it returns the identical price-header shape for indices and stocks, so one fan-out covers the whole list (~35 concurrent requests, in line with the regime breadth fan-out).
+
+The regime read and the markets list were **merged into this one screen** (2026-06-11) — previously two separate sidebar entries under "Markets". `RegimeViewModel` and `MarketQuotesViewModel` are now held in `MainSidebarView` (like the screener VMs) so switching tabs preserves loaded data and doesn't re-fire the expensive regime fetch (a `charts/{symbol}/daily` request per LQ45 constituent for breadth) on every visit; both load concurrently on appear and force-refresh together on pull-to-refresh.
 
 ### 17.1 Price source — `GET /emitten/{symbol}/info`
 
-The detail-header price snapshot lives in `data` of `emitten/{symbol}/info`, **not** `company-price-feed/indicative-price-volume/{symbol}` (which returns `data:null` outside the pre-open indicative auction). Verified live 2026-06-04 on OIL/XAU/CPO/USDIDR. Wire-format gotchas the DTO tolerates:
+The detail-header price snapshot lives in `data` of `emitten/{symbol}/info`, **not** `company-price-feed/indicative-price-volume/{symbol}` (which returns `data:null` outside the pre-open indicative auction). Verified live 2026-06-04 on OIL/XAU/CPO/USDIDR; the same path/shape serves indices (IHSG/IDX30 verified) and sectors, which is why one service backs every Markets row. Wire-format gotchas the DTO tolerates:
 
 | Field | Type on wire | Note |
 |---|---|---|
@@ -513,11 +517,11 @@ The detail-header price snapshot lives in `data` of `emitten/{symbol}/info`, **n
 
 ```
 Features/Markets/
-├── MarketCatalog.swift          // + .commodity / .currency MarketGroup cases, 14 symbols, `priced` helper
+├── MarketCatalog.swift          // composite/index/sector/commodity/currency MarketGroup cases; all symbols; `grouped()`
 ├── CommodityModels.swift        // CommodityQuote (domain) + EmittenInfoResponseDTO + toDomain()
 ├── CommodityPriceService.swift  // CommodityPriceServicing; static makeEndpoint/parse; APIError→CommodityPriceError mapping (mirrors ChartService)
-├── CommoditiesViewModel.swift   // @MainActor @Observable; concurrent withTaskGroup fan-out; per-symbol failure tolerance
-└── MarketsView.swift            // regime banner (→ RegimeBreakdownView push) + priced rows for .commodity/.currency; concurrent regime+commodities load on .task / .refreshable
+├── MarketQuotesViewModel.swift  // @MainActor @Observable; concurrent withTaskGroup fan-out over MarketCatalog.all; per-symbol failure tolerance
+└── MarketsView.swift            // regime banner (→ RegimeBreakdownView push) + priced rows for every group; .hasChart rows wrapped in NavigationLink; concurrent regime+quotes load on .task / .refreshable
 
 Features/Regime/
 └── RegimeBreakdownView.swift    // full factor breakdown (pushed from the banner) + RegimeColors stance/signal→Color (UI-layer; models stay UI-free)

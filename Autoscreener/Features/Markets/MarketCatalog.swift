@@ -89,10 +89,4 @@ nonisolated enum MarketCatalog {
             (group, all.filter { $0.group == group })
         }
     }
-
-    /// Symbols that show a live price snapshot in the Markets list (commodities +
-    /// currencies). Backs `CommoditiesViewModel`.
-    static var priced: [MarketSymbol] {
-        all.filter { $0.group == .commodity || $0.group == .currency }
-    }
 }

@@ -29,7 +29,7 @@ extension BreadthServicing {
 /// Computes breadth by fanning out one daily-chart request per constituent and
 /// counting how many close above their `period`-day SMA. Per-name failure is
 /// tolerated — a paywalled or illiquid name is simply absent from `measured`
-/// rather than failing the whole read (mirrors `CommoditiesViewModel`).
+/// rather than failing the whole read (mirrors `MarketQuotesViewModel`).
 nonisolated final class BreadthService: BreadthServicing {
     private let chartService: any ChartServicing
     init(chartService: any ChartServicing) { self.chartService = chartService }

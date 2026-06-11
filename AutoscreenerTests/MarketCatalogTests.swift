@@ -32,14 +32,17 @@ import Testing
         #expect(MarketCatalog.grouped().map(\.0) == [.composite, .index, .sector, .commodity, .currency])
     }
 
-    @Test func includesAllPricedCommodityAndCurrencySymbols() {
-        let priced = Set(MarketCatalog.priced.map(\.symbol))
+    @Test func includesAllCommodityAndCurrencySymbols() {
+        let commoditiesAndFX = Set(
+            MarketCatalog.all
+                .filter { $0.group == .commodity || $0.group == .currency }
+                .map(\.symbol))
         let expected: Set<String> = [
             "OIL", "BRENT", "GAS", "COAL-NEWCASTLE", "CPO", "XAU", "SILVER",
             "NICKEL", "COPPER", "ALUMINIUM", "TIN", "ZINC-COMMODITIES", "RUBBER",
             "USDIDR",
         ]
-        #expect(priced == expected)
+        #expect(commoditiesAndFX == expected)
     }
 
     @Test func usdIdrIsTheOnlyCurrency() {

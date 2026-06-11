@@ -7,7 +7,7 @@ import Observation
 /// breadth — then runs `RegimeSynthesizer` to produce the risk-on / neutral /
 /// risk-off read. Every input is fetched tolerantly: a feed that fails (or the
 /// snapshot that isn't published yet) simply drops its factor rather than failing
-/// the whole screen, matching `CommoditiesViewModel`.
+/// the whole screen, matching `MarketQuotesViewModel`.
 @MainActor
 @Observable
 final class RegimeViewModel {

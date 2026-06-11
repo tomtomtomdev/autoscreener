@@ -28,10 +28,10 @@ private func symbol(_ s: String) -> MarketSymbol {
 private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
 
 @MainActor
-@Suite struct CommoditiesViewModelTests {
+@Suite struct MarketQuotesViewModelTests {
     @Test func loadPopulatesQuotesForEverySymbol() async {
         let svc = FakeCommodityPriceService()
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()
 
@@ -40,10 +40,26 @@ private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
         #expect(Set(svc.calls) == ["OIL", "XAU", "CPO"])
     }
 
+    /// The default catalog covers the chartable groups (composite/indices/sectors),
+    /// not just commodities + currencies — that's what puts a price + % change on
+    /// the IHSG, index, and sector rows. `emitten/{symbol}/info` serves them all.
+    @Test func defaultCatalogQuotesChartableGroupsToo() async {
+        let svc = FakeCommodityPriceService()
+        let vm = MarketQuotesViewModel(service: svc)   // default symbols = MarketCatalog.all
+
+        await vm.load()
+
+        let called = Set(svc.calls)
+        #expect(called.contains("IHSG"))        // composite
+        #expect(called.contains("LQ45"))        // an index
+        #expect(called.contains("IDXENERGY"))   // a sector
+        #expect(vm.quotes["IHSG"] != nil)
+    }
+
     @Test func partialFailureKeepsOtherQuotes() async {
         let svc = FakeCommodityPriceService()
         svc.failingSymbols = ["OIL"]
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()
 
@@ -56,7 +72,7 @@ private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
     @Test func totalFailureSetsError() async {
         let svc = FakeCommodityPriceService()
         svc.failAll = true
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()
 
@@ -66,7 +82,7 @@ private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
 
     @Test func reloadIsSkippedWhenAlreadyLoadedAndNotForced() async {
         let svc = FakeCommodityPriceService()
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()
         await vm.load()                     // no force, already loaded
@@ -76,7 +92,7 @@ private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
 
     @Test func forceReloadRefetches() async {
         let svc = FakeCommodityPriceService()
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()
         await vm.load(force: true)
@@ -87,7 +103,7 @@ private let threeSymbols = [symbol("OIL"), symbol("XAU"), symbol("CPO")]
     @Test func totalFailureThenRetryOnNextLoad() async {
         let svc = FakeCommodityPriceService()
         svc.failAll = true
-        let vm = CommoditiesViewModel(symbols: threeSymbols, service: svc)
+        let vm = MarketQuotesViewModel(symbols: threeSymbols, service: svc)
 
         await vm.load()                     // total failure leaves hasLoaded false
         svc.failAll = false
