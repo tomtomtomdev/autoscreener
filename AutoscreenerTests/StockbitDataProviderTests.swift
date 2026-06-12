@@ -96,6 +96,23 @@ private let happyBrokerRecords = [
                          netValue: bil(10), buyValue: bil(60), sellValue: bil(50)),
 ]
 
+// Captured-endpoint overlays (Slice 4) — best-effort legs the provider carries onto SecurityData /
+// MarketContext. Minimal but distinguishable fixtures so the wiring tests can prove they populate.
+private let happyPeers = PeerComparison(
+    symbols: ["WIFI", "INDUSTRY", "SECTOR"],
+    groups: [PeerMetricGroup(name: "Valuation",
+        metrics: [PeerMetric(id: 12148, name: "PE", raw: ["WIFI": "15.67"], numeric: ["WIFI": 15.67])])])
+private let happySeasonality = Seasonality(symbol: "WIFI",
+    months: [SeasonalMonth(name: "Jun", upCount: 6, downCount: 4, totalYears: 10,
+                           avgReturnPct: 1.20, probabilityUpPct: 60)])
+private let happyDistribution = BrokerDistribution(symbol: "WIFI", date: "2026-06-11",
+    topBuyers: [DistributionLeg(code: "XL", type: "Asing", amount: 5_000_000_000)],
+    topSellers: [DistributionLeg(code: "YP", type: "Lokal", amount: 3_000_000_000)])
+/// Built via the real top-stock parse so the StockbitValue wiring is exercised end-to-end.
+private let happyLeaderboard = try! OrderTradeFlowService.parseTopStocks(Data(#"""
+{"message":"ok","data":{"top_buy":[{"rank":1,"code":"BBCA","value":{"raw":"12000000000","formatted":"12 B"},"lot":{"raw":"1000","formatted":"1000"},"foreign_value":{"raw":"8000000000","formatted":"8 B"}}],"top_sell":[]}}
+"""#.utf8))
+
 // MARK: - Regime inputs
 
 private func makeSnapshot(valuation: Double?, rate: BIRateDirection?) -> RegimeSnapshot {
@@ -186,6 +203,35 @@ private struct StubBroker: BrokerActivityServicing {
     }
 }
 
+private struct StubComparison: ComparisonRatiosServicing {
+    var value: PeerComparison?
+    func comparison(symbol: String) async throws -> PeerComparison {
+        guard let value else { throw StubError.absent }
+        return value
+    }
+}
+
+private struct StubSeasonality: SeasonalityServicing {
+    var value: Seasonality?
+    func seasonality(symbol: String, year: Int, backYear: Int) async throws -> Seasonality {
+        guard let value else { throw StubError.absent }
+        return value
+    }
+}
+
+private struct StubOrderFlow: OrderTradeFlowServicing {
+    var distributionValue: BrokerDistribution?
+    var leaderboardValue: FlowLeaderboard?
+    func distribution(symbol: String) async throws -> BrokerDistribution {
+        guard let distributionValue else { throw StubError.absent }
+        return distributionValue
+    }
+    func topStocks(valueType: TopStockValueType, page: Int) async throws -> FlowLeaderboard {
+        guard let leaderboardValue else { throw StubError.absent }
+        return leaderboardValue
+    }
+}
+
 private struct StubSnapshot: RegimeSnapshotProviding {
     var value: RegimeSnapshot?
     func snapshot() async throws -> RegimeSnapshot {
@@ -237,6 +283,10 @@ private func makeProvider(
     emitten: any EmittenServicing = StubEmitten(infoResult: happyInfo, profileResult: happyProfile),
     priceFeed: any CompanyPriceFeedServicing = happyPriceFeed,
     broker: any BrokerActivityServicing = StubBroker(records: happyBrokerRecords),
+    comparison: any ComparisonRatiosServicing = StubComparison(value: happyPeers),
+    seasonality: any SeasonalityServicing = StubSeasonality(value: happySeasonality),
+    orderFlow: any OrderTradeFlowServicing = StubOrderFlow(distributionValue: happyDistribution,
+                                                           leaderboardValue: happyLeaderboard),
     snapshot: any RegimeSnapshotProviding = StubSnapshot(value: makeSnapshot(valuation: 0.42, rate: .hike)),
     flow: any AggregateForeignFlowServicing = StubAggFlow(value: makeFlow(net: -1_500_000_000)),
     chart: any ChartServicing = StubChart(),
@@ -246,7 +296,9 @@ private func makeProvider(
 ) -> StockbitDataProvider {
     StockbitDataProvider(
         universe: universe, keystats: keystats, fundachart: fundachart, statements: statements,
-        emitten: emitten, priceFeed: priceFeed, broker: broker, snapshotProvider: snapshot,
+        emitten: emitten, priceFeed: priceFeed, broker: broker,
+        comparisonService: comparison, seasonalityService: seasonality, orderFlowService: orderFlow,
+        snapshotProvider: snapshot,
         flowService: flow, chartService: chart, commodityService: commodity, breadthService: breadth,
         breadthConstituents: ["BBCA"], sleeper: sleeper)
 }
@@ -301,6 +353,11 @@ private func makeProvider(
         // Index legs present (§1.5 sector map → IDXTECHNO; market → IHSG).
         #expect(!s.sectorIndexBars.isEmpty)
         #expect(!s.marketIndexBars.isEmpty)
+
+        // Captured-endpoint overlays carried best-effort (Slice 4).
+        #expect(s.peerComparison?.symbols == ["WIFI", "INDUSTRY", "SECTOR"])
+        #expect(s.seasonality?.month("Jun")?.probabilityUpPct == 60)
+        #expect(s.brokerDistribution?.buyConcentration() == 1.0)   // one buyer ⇒ 100% concentrated
     }
 
     @Test func cachesSecurityDataPerSymbol() async throws {
@@ -323,7 +380,10 @@ private func makeProvider(
             priceFeed: StubPriceFeed(barsBySymbol: ["WIFI": wifiBars],
                                      defaultBars: indexBars,
                                      throwingSymbols: ["IDXTECHNO", "IHSG"]),  // index bars fail
-            broker: StubBroker(records: nil))                                 // broker signal fails
+            broker: StubBroker(records: nil),                                 // broker signal fails
+            comparison: StubComparison(value: nil),                           // peer ratios fail
+            seasonality: StubSeasonality(value: nil),                         // seasonality fails
+            orderFlow: StubOrderFlow(distributionValue: nil, leaderboardValue: nil))  // distribution fails
 
         let s = try await provider.data(for: "WIFI")
 
@@ -333,6 +393,10 @@ private func makeProvider(
         #expect(s.sectorIndexBars.isEmpty)
         #expect(s.marketIndexBars.isEmpty)
         #expect(s.financials.last?.currentAssets == 0)   // overlay skipped → tree fields stay 0
+        // Captured-endpoint overlays degrade to nil rather than aborting the pick.
+        #expect(s.peerComparison == nil)
+        #expect(s.seasonality == nil)
+        #expect(s.brokerDistribution == nil)
     }
 
     @Test func propagatesWhenAnEssentialFieldIsMissing() async throws {
@@ -397,6 +461,15 @@ private func makeProvider(
         #expect(c.idrWeakeningTrend == true)             // USD/IDR +0.35%
         #expect(c.breadthAbove200dma == 0.75)            // 30 / 40
         #expect(c.indexAbove200dma == false)             // chart stub throws → distance absent
+        #expect(c.flowLeaders?.topBuy.first?.code == "BBCA")   // top-stock leaderboard carried (Slice 4)
+    }
+
+    @Test func degradesFlowLeadersToNilWhenTopStockFails() async throws {
+        let provider = makeProvider(
+            orderFlow: StubOrderFlow(distributionValue: happyDistribution, leaderboardValue: nil))
+        let c = try await provider.marketContext()
+        #expect(c.flowLeaders == nil)                    // best-effort leg degrades, regime still scores
+        #expect(c.indexValuationPercentile == 0.42)      // the rest of the context is unaffected
     }
 
     @Test func throwsWhenEveryRegimeInputIsAbsent() async throws {
@@ -420,7 +493,8 @@ private func makeProvider(
         let provider = makeProvider(sleeper: { await recorder.record($0) })
         _ = try await provider.data(for: "WIFI")
         // Many paced calls (keystats + 3× fundachart + info + bars + statements + profile + 2 index
-        // + broker): the first is free, every later one sleeps — so several delays were requested.
+        // + broker + the 3 Slice-4 overlays): the first is free, every later one sleeps — so several
+        // delays were requested.
         #expect(await recorder.delays.count >= 5)
     }
 }

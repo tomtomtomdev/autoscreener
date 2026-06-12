@@ -141,6 +141,31 @@ nonisolated struct StubBrokerActivityService: BrokerActivityServicing {
                        limit: Int, page: Int) async throws -> [BrokerActivityRecord] { [] }
 }
 
+// Captured-endpoint overlays (Slice 4). Best-effort legs the provider attaches with `try?`, so a
+// benign-empty value keeps the "every leaf service stubbed under fixtures" invariant without any
+// canned data — no screen drives the engine under fixtures yet.
+
+nonisolated struct StubComparisonRatiosService: ComparisonRatiosServicing {
+    func comparison(symbol: String) async throws -> PeerComparison {
+        PeerComparison(symbols: [], groups: [])
+    }
+}
+
+nonisolated struct StubSeasonalityService: SeasonalityServicing {
+    func seasonality(symbol: String, year: Int, backYear: Int) async throws -> Seasonality {
+        Seasonality(symbol: symbol, months: [])
+    }
+}
+
+nonisolated struct StubOrderTradeFlowService: OrderTradeFlowServicing {
+    func distribution(symbol: String) async throws -> BrokerDistribution {
+        BrokerDistribution(symbol: symbol, date: "", topBuyers: [], topSellers: [])
+    }
+    func topStocks(valueType: TopStockValueType, page: Int) async throws -> FlowLeaderboard {
+        FlowLeaderboard(topBuy: [], topSell: [])
+    }
+}
+
 enum UITestFixtures {
     // `lastPrice` is seeded so the paper-trading allocator has a price to size against
     // under fixtures (the screener tabs render the Last column from it too).

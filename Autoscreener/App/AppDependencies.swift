@@ -40,6 +40,10 @@ final class AppDependencies {
     let emittenService: any EmittenServicing
     let companyPriceFeedService: any CompanyPriceFeedServicing
     let brokerActivityService: any BrokerActivityServicing
+    // Captured-endpoint best-effort overlays the engine carries (StockbitDataProvider, Slice 4).
+    let comparisonRatiosService: any ComparisonRatiosServicing
+    let seasonalityService: any SeasonalityServicing
+    let orderTradeFlowService: any OrderTradeFlowServicing
     // Single source of truth for screener + markets data, filled by the continuous
     // market-hours sweep. Every screener tab and the composite Watchlist read the
     // screener store; the Markets screen reads the market store. Nothing else fetches.
@@ -95,6 +99,9 @@ final class AppDependencies {
         self.emittenService = useFixtures ? StubEmittenService() : EmittenService(apiClient: client)
         self.companyPriceFeedService = useFixtures ? StubCompanyPriceFeedService() : CompanyPriceFeedService(apiClient: client)
         self.brokerActivityService = useFixtures ? StubBrokerActivityService() : BrokerActivityService(apiClient: client)
+        self.comparisonRatiosService = useFixtures ? StubComparisonRatiosService() : ComparisonRatiosService(apiClient: client)
+        self.seasonalityService = useFixtures ? StubSeasonalityService() : SeasonalityService(apiClient: client)
+        self.orderTradeFlowService = useFixtures ? StubOrderTradeFlowService() : OrderTradeFlowService(apiClient: client)
 
         // Screener cache + sweep. Under fixtures/tests we start from an empty cache
         // (don't read a real user's file) and disable the continuous loop — the

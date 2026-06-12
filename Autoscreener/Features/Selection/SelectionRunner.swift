@@ -42,6 +42,8 @@ extension AppDependencies {
             keystats: keystatsRatioService, fundachart: fundachartService,
             statements: financialStatementService, emitten: emittenService,
             priceFeed: companyPriceFeedService, broker: brokerActivityService,
+            comparisonService: comparisonRatiosService, seasonalityService: seasonalityService,
+            orderFlowService: orderTradeFlowService,
             snapshotProvider: regimeSnapshotService, flowService: aggregateForeignFlowService,
             chartService: chartService, commodityService: commodityPriceService,
             breadthService: breadthService)

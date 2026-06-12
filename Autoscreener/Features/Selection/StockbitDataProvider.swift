@@ -44,6 +44,11 @@ actor StockbitDataProvider: DataProvider {
     private let emitten: any EmittenServicing
     private let priceFeed: any CompanyPriceFeedServicing
     private let broker: any BrokerActivityServicing
+    // Captured-endpoint best-effort overlays (Slice 4): peer ratios, monthly seasonality, and the
+    // per-ticker broker distribution; `orderFlowService` also serves the market-wide leaderboard.
+    private let comparisonService: any ComparisonRatiosServicing
+    private let seasonalityService: any SeasonalityServicing
+    private let orderFlowService: any OrderTradeFlowServicing
 
     // Market-wide regime inputs — the identical set `RegimeFactorBuilder` consumes (§3).
     private let snapshotProvider: any RegimeSnapshotProviding
@@ -83,6 +88,9 @@ actor StockbitDataProvider: DataProvider {
         emitten: any EmittenServicing,
         priceFeed: any CompanyPriceFeedServicing,
         broker: any BrokerActivityServicing,
+        comparisonService: any ComparisonRatiosServicing,
+        seasonalityService: any SeasonalityServicing,
+        orderFlowService: any OrderTradeFlowServicing,
         snapshotProvider: any RegimeSnapshotProviding,
         flowService: any AggregateForeignFlowServicing,
         chartService: any ChartServicing,
@@ -102,6 +110,9 @@ actor StockbitDataProvider: DataProvider {
         self.emitten = emitten
         self.priceFeed = priceFeed
         self.broker = broker
+        self.comparisonService = comparisonService
+        self.seasonalityService = seasonalityService
+        self.orderFlowService = orderFlowService
         self.snapshotProvider = snapshotProvider
         self.flowService = flowService
         self.chartService = chartService
@@ -196,6 +207,13 @@ actor StockbitDataProvider: DataProvider {
         let brokerSignal = SelectionFundamentals.brokerAccumulationSignal(
             from: brokerRecords, window: config.flow.foreignWindow)
 
+        // Captured-endpoint overlays (Slice 4) — carried context only, each best-effort: a paywall /
+        // no-coverage / failure degrades the leg to nil rather than aborting the name's valuation.
+        let peers = try? await paced { try await self.comparisonService.comparison(symbol: t) }
+        let year = Calendar(identifier: .gregorian).component(.year, from: now())
+        let seasonality = try? await paced { try await self.seasonalityService.seasonality(symbol: t, year: year) }
+        let distribution = try? await paced { try await self.orderFlowService.distribution(symbol: t) }
+
         return SecurityData(
             ticker: t,
             sector: info.sector,
@@ -208,7 +226,10 @@ actor StockbitDataProvider: DataProvider {
             foreignNetFlow: stockBars.foreignNetFlowSeries,
             brokerAccumulationSignal: brokerSignal,
             sectorIndexBars: sectorIndexBars,
-            marketIndexBars: marketIndexBars)
+            marketIndexBars: marketIndexBars,
+            peerComparison: peers,
+            seasonality: seasonality,
+            brokerDistribution: distribution)
     }
 
     /// Daily bars for a market/sector index, fetched once per run and cached by symbol.
@@ -229,6 +250,9 @@ actor StockbitDataProvider: DataProvider {
         async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
         async let rupiahTask = commodityService.quote(symbol: Self.rupiahSymbol)
         async let breadthTask = breadthService.reading(symbols: breadthConstituents)
+        // Market-wide flow leaderboard (Slice 4) — best-effort carried context; joins the same
+        // one-shot concurrent fan-out (not throttled), degrading to nil on failure.
+        async let flowLeadersTask = orderFlowService.topStocks(valueType: .net)
 
         let snapshot = try? await snapshotTask
         let flow = try? await flowTask
@@ -236,6 +260,7 @@ actor StockbitDataProvider: DataProvider {
         let sp500 = try? await sp500Task
         let rupiah = try? await rupiahTask
         let breadth = await breadthTask
+        let flowLeaders = try? await flowLeadersTask
         let distance = ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
         let sp500Distance = sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
 
@@ -251,7 +276,7 @@ actor StockbitDataProvider: DataProvider {
             breadth: breadth)
         guard !factors.isEmpty else { throw SelectionProviderError.noRegimeInputs }
 
-        return SelectionFundamentals.marketContext(
+        var context = SelectionFundamentals.marketContext(
             snapshot: snapshot,
             marketForeignFlowNet: flow?.netForeign.raw,
             ihsgDistanceFrom200dma: distance,
@@ -259,6 +284,8 @@ actor StockbitDataProvider: DataProvider {
             breadth: breadth,
             // v1: no single market-wide "relevant" commodity to read — left neutral (§3 note).
             commodityChangePercent: nil)
+        context.flowLeaders = flowLeaders
+        return context
     }
 
     // MARK: - Throttle helper

@@ -315,6 +315,12 @@ struct SecurityData: Sendable {
     let brokerAccumulationSignal: Double
     let sectorIndexBars: [OHLCV]
     let marketIndexBars: [OHLCV]
+    // Captured-endpoint overlays (Slice 4) — best-effort, carried context only. No gate or scorer
+    // reads them yet; feeding them into scoring is a separate, tested calibration pass. Absent
+    // (paywall / no coverage / fetch failure) ⇒ nil, which never blocks or mis-scores a pick.
+    var peerComparison: PeerComparison? = nil        // comparison/v2/ratios — vs INDUSTRY/SECTOR
+    var seasonality: Seasonality? = nil              // seasonality/{SYM} — monthly win-rate overlay
+    var brokerDistribution: BrokerDistribution? = nil // order-trade/broker/distribution — bandar concentration
 }
 
 struct AnnualFinancials: Sendable {
@@ -359,6 +365,9 @@ struct MarketContext: Sendable {
     let biRateRising: Bool
     let marketForeignFlowNet: Rupiah
     let commodityTailwind: Bool
+    // Market-wide accumulation leaderboard (Slice 4, order-trade/top-stock). Carried context only —
+    // no regime input reads it yet; absent ⇒ nil.
+    var flowLeaders: FlowLeaderboard? = nil
 }
 
 enum RegimeAssessor {
