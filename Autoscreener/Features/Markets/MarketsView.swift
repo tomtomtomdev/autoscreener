@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Sidebar "Markets" dashboard: the top-down regime read renders in full atop the
-/// instruments it's derived from (no longer a pushed detail page), then the
-/// instruments are laid out in two columns — Global on the left; Composite,
-/// Indices, and the IDX-IC Sectors stacked on the right; Commodities and
-/// Currencies in a row below. Owns its own navigation, like `WatchlistView`;
+/// Sidebar "Markets" dashboard: the top-down regime read renders beside the
+/// instruments it's derived from (no longer a pushed detail page), laid out in
+/// three two-column rows — regime + Global on the first row; Composite over
+/// Indices on the left with the IDX-IC Sectors beside them on the second row;
+/// Commodities and Currencies in a row below. Owns its own navigation, like `WatchlistView`;
 /// tapping a chartable row pushes its OHLCV candlestick chart via the same
 /// value-based `.navigationDestination` pattern as `ScreenerView`.
 ///
@@ -31,17 +31,20 @@ struct MarketsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    regimeSection
                     HStack(alignment: .top, spacing: 16) {
+                        regimeSection
                         MarketSectionCard(group: .global, symbols: symbols(.global), quotes: marketQuotes)
+                    }
+                    HStack(alignment: .top, spacing: 16) {
                         VStack(spacing: 16) {
                             MarketSectionCard(group: .composite, symbols: symbols(.composite), quotes: marketQuotes)
                             MarketSectionCard(group: .index, symbols: symbols(.index), quotes: marketQuotes)
-                            // Sectors are the longest IDX group; a 2-column grid keeps the
-                            // right column from towering over Global on the left.
-                            MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes, columns: 2)
                         }
                         .frame(maxWidth: .infinity, alignment: .top)
+                        // Sectors is the longest IDX group; a 2-column grid keeps it from
+                        // towering over the Composite/Indices stack on the left.
+                        MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes, columns: 2)
+                            .frame(maxWidth: .infinity, alignment: .top)
                     }
                     HStack(alignment: .top, spacing: 16) {
                         MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
@@ -99,7 +102,8 @@ struct MarketsView: View {
             if let read = regime.read {
                 RegimeBreakdownContent(read: read)
                     .frame(maxWidth: 720, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Fill this HStack cell (not the whole row) so Global sits beside it.
+                    .frame(maxWidth: .infinity, alignment: .top)
                     .accessibilityIdentifier("regime.section")
             }
         case .loading:
