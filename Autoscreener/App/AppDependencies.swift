@@ -45,6 +45,9 @@ final class AppDependencies {
     // screener store; the Markets screen reads the market store. Nothing else fetches.
     let screenerStore: ScreenerStore
     let marketDataStore: MarketDataStore
+    // Paper-trading portfolio (100M IDR sim). Records confirmed allocations only;
+    // reads regime + watchlist from the two stores above, never fetches itself.
+    let paperTradingStore: PaperTradingStore
     let marketClock: MarketClock
     let dataSweepCoordinator: DataSweepCoordinator
     let authState = AuthState()
@@ -103,6 +106,9 @@ final class AppDependencies {
         let clock = MarketClock()
         self.screenerStore = cacheStore
         self.marketDataStore = marketStore
+        // Same headless rule as the other stores: under fixtures/tests start from a
+        // fresh 100M seed rather than reading a real user's portfolio file.
+        self.paperTradingStore = PaperTradingStore(loadFromDisk: !headless)
         self.marketClock = clock
         self.dataSweepCoordinator = DataSweepCoordinator(
             store: cacheStore, marketStore: marketStore, clock: clock,

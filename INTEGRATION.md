@@ -340,6 +340,20 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     the pre-existing `RegimeUITests`/`MarketsUITests` hit right now (verified in-session), NOT a
     test-logic failure. Per the standing note, trust the unit suite.
 
+- **Paper Trading reuses the harness value primitives (2026-06-12) — not a selection-engine change.** A
+  new live **Paper Trading** feature (SPEC §18) — a regime-weighted 100M IDR paper portfolio over the
+  composite Watchlist — **reuses `BacktestHarness.swift`'s value types** (`Portfolio`/`Lot`/`TradeSide`/
+  `ExecutionModel` and the avg-cost/fee accounting in `Portfolio.apply`) but deliberately **does not**
+  drive them through `Backtester`: paper trading is forward, live-priced, single-path, whereas the
+  harness is offline and needs point-in-time history (Tier B, §1/§9, still blocked). The only edit to
+  engine-adjacent code was making **`enum TradeSide: String, Codable, Hashable`** (was a bare `Sendable`
+  enum) so the live layer can persist fills and label plan rows with the same type — additive, no
+  behaviour change; the locked `SelectionEngineCharacterizationTests` golden master is unchanged. The
+  feature lives entirely in `Autoscreener/Features/PaperTrading/` (pure `AllocationEngine` + disk-backed
+  `PaperTradingStore` + VM/View); allocation math is Zweig exposure bands × conviction × fractional-Kelly
+  caps (see SPEC §18.1). New tests: `AllocationEngineTests`, `PaperTradingStoreTests`,
+  `PaperTradingViewModelTests`, `PaperTradingUITests`. **Full `AutoscreenerTests` bundle green.**
+
 **Next action:** **Tier-A is feature-complete, calibrated, and now user-visible** (Today's Picks UI,
 above). Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
 feed):** open the **Today's Picks** screen (or call `AppDependencies.selectionRunner.run(config:

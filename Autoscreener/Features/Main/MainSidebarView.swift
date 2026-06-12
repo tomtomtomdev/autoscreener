@@ -24,6 +24,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case intradayLiquidity
     case markets
     case watchlist
+    case paperTrading
     case appSettings
 
     var id: Self { self }
@@ -52,6 +53,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .intradayLiquidity:  return "Intraday Liquidity"
         case .markets:            return "Markets"
         case .watchlist:          return "Watchlist"
+        case .paperTrading:       return "Paper Trading"
         case .appSettings:        return "Settings"
         }
     }
@@ -80,6 +82,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .intradayLiquidity:  return "bolt.fill"
         case .markets:            return "chart.bar.xaxis"
         case .watchlist:          return "star.circle.fill"
+        case .paperTrading:       return "banknote"
         case .appSettings:        return "gearshape"
         }
     }
@@ -108,6 +111,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .intradayLiquidity:  return "6676320"
         case .markets:            return nil
         case .watchlist:          return nil
+        case .paperTrading:       return nil
         case .appSettings:        return nil
         }
     }
@@ -147,6 +151,9 @@ struct MainSidebarView: View {
     // tabs preserves the binding (the data itself lives in the store, not the VM).
     @State private var regimeVM: RegimeViewModel
     @State private var marketQuotesVM: MarketQuotesViewModel
+    // Paper trading projects the same shared stores (portfolio + regime + screeners);
+    // held here so switching tabs preserves the pending plan binding.
+    @State private var paperTradingVM: PaperTradingViewModel
 
     init() {
         let deps = AppDependencies.shared
@@ -178,6 +185,9 @@ struct MainSidebarView: View {
         _watchlistVM = State(initialValue: WatchlistViewModel(store: store, coordinator: coordinator))
         _regimeVM = State(initialValue: RegimeViewModel())
         _marketQuotesVM = State(initialValue: MarketQuotesViewModel())
+        _paperTradingVM = State(initialValue: PaperTradingViewModel(
+            store: deps.paperTradingStore, screenerStore: store,
+            marketStore: deps.marketDataStore, coordinator: coordinator))
     }
 
     var body: some View {
@@ -198,6 +208,9 @@ struct MainSidebarView: View {
                     Label(SidebarItem.watchlist.title,
                           systemImage: SidebarItem.watchlist.systemImage)
                         .tag(SidebarItem.watchlist)
+                    Label(SidebarItem.paperTrading.title,
+                          systemImage: SidebarItem.paperTrading.systemImage)
+                        .tag(SidebarItem.paperTrading)
                 }
                 Section {
                     Label(SidebarItem.appSettings.title,
@@ -285,6 +298,9 @@ struct MainSidebarView: View {
         case .watchlist:
             WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
                 .id(SidebarItem.watchlist)
+        case .paperTrading:
+            PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
+                .id(SidebarItem.paperTrading)
         case .appSettings:
             AppSettingsView()
                 .id(SidebarItem.appSettings)

@@ -99,7 +99,9 @@ struct Portfolio: Sendable {
     }
 }
 
-enum TradeSide: Sendable { case buy, sell }
+/// Buy or sell. Carries a `String` raw value + `Codable` so the live paper-trading
+/// layer can persist fills and label plan rows with the same type the backtester uses.
+enum TradeSide: String, Sendable, Codable, Hashable { case buy, sell }
 
 // MARK: - Report
 

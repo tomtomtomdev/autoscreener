@@ -142,10 +142,12 @@ nonisolated struct StubBrokerActivityService: BrokerActivityServicing {
 }
 
 enum UITestFixtures {
+    // `lastPrice` is seeded so the paper-trading allocator has a price to size against
+    // under fixtures (the screener tabs render the Last column from it too).
     static let screenerRows: [ScreenerRow] = [
-        ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: nil, pctChange: nil),
-        ScreenerRow(symbol: "TLKM", name: "Telkom Indonesia Tbk.", values: [4_321.0, 3_900.0], lastPrice: nil, pctChange: nil),
-        ScreenerRow(symbol: "GOTO", name: "GoTo Gojek Tokopedia Tbk.", values: [1_234.0, 1_000.0], lastPrice: nil, pctChange: nil),
+        ScreenerRow(symbol: "BBCA", name: "Bank Central Asia Tbk.", values: [9_876.0, 8_000.0], lastPrice: 9_500, pctChange: 0.5),
+        ScreenerRow(symbol: "TLKM", name: "Telkom Indonesia Tbk.", values: [4_321.0, 3_900.0], lastPrice: 2_800, pctChange: -0.3),
+        ScreenerRow(symbol: "GOTO", name: "GoTo Gojek Tokopedia Tbk.", values: [1_234.0, 1_000.0], lastPrice: 70, pctChange: 1.2),
     ]
 
     static func statement(report: FinancialReportType, basis: FinancialPeriodBasis) -> FinancialStatement {

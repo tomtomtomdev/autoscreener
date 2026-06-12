@@ -20,6 +20,7 @@ Target: macOS 15.0+ (Sequoia). Stack: SwiftUI, `@Observable`, `URLSession` async
 - [x] **Stock-code search** (§7.3): a `.searchable` toolbar field on the Liquidity Floor, Intraday Liquidity, and Watchlist tabs filters rows by ticker (case-insensitive substring on the symbol). On the two paginated screener tabs, entering a term auto-loads all remaining pages first, so a match is never hidden behind lazy pagination; the Watchlist already holds the complete set.
 - [x] **Network log panel** in Settings — live request/response trace with redaction of `password`, `otp`, `*_token`, `authorization`.
 - [x] **Markets — regime banner + every-row price list** (§17): the Markets screen leads with the **Market Regime banner** (risk-on / neutral / risk-off read; tap → full factor breakdown) beside a **Global** section of world indices (11: S&P 500, Dow Jones, Nasdaq, FTSE 100, DAX, CAC 40, Nikkei 225, Hang Seng, KOSPI, Shanghai, Straits Times), then the composite (IHSG) over indices on the left with **Commodities** (13: Crude Oil, Brent, Natural Gas, Newcastle Coal, Palm Oil, Gold, Silver, Nickel, Copper, Aluminium, Tin, Zinc, Rubber) over **Currencies** (5: USD/IDR, SGD/IDR, EUR/IDR, AUD/IDR, CNY/IDR) on the right, then the IDX-IC sectors as a single full-width column — **every row** showing a live last-price + signed % change from `GET /emitten/{symbol}/info` (the same snapshot serves global/indices/sectors as commodities). Loaded on appear, pull-to-refresh, per-symbol failure tolerated. Tapping a chartable row (global/composite/index/sector) opens the existing OHLCV chart; commodities/currencies don't navigate.
+- [x] **Paper Trading — regime-weighted 100M IDR portfolio** (§18): a persisted, mark-to-market paper account seeded with Rp 100,000,000 that allocates across the composite Watchlist, sizing total equity exposure by the market regime (§17) and each name by conviction, under explicit risk caps. **Propose-then-confirm**: the app generates a target rebalance (with per-line rationale), the user reviews and clicks Execute; holdings + realized/unrealized P&L track over time. A pure `AllocationEngine` does the sizing; a disk-backed `PaperTradingStore` records confirmed fills. No real orders.
 - [x] **Build DMG**: `scripts/build_dmg.sh` produces a notarisable `Autoscreener.dmg`.
 
 Out of scope for v1: real-time WebSocket price streaming (`wss-trading.stockbit.com`), saving custom templates, multi-account, paywall enforcement (we hit `paywall/eligibility/check` and surface the result, but don't gate UI), filter-builder UI (canned preset only). Charting and the Markets browser shipped after the original v1 cut (see §17).
@@ -387,13 +388,17 @@ Since every snapshot holds the screener's full result set (the sweep walks all p
 - `RegimeComposerTests` — composes a read from available inputs (valuation/breadth/foreign-flow factors present, trend absent without a series); nil when no factor is produced; degrades without the snapshot; breadth factor absent without a screener snapshot
 - `DataSweepCoordinatorTests` — **screener path** (paywall-once, 20 in order, pagination/safety-cap, throttle count, mid-sweep cancel, partial-failure error, fixture seed/veto, open-sweeps/closed-skips loop, closed cadence gap); **market path** (`openSweepPricesEveryCatalogSymbol`, `closedSweepPricesAroundTheClockGroupsOnly`, failed-symbol keeps prior, serial throttle); **regime path** (open composes + writes the read incl. derived breadth, closed leaves the read frozen)
 - `MarketCatalogTests` — declaration order (`.global` first, then `.composite`…`.currency`), all 11 global indices present + chartable, all 18 commodity/currency symbols present, all 11 IDX-IC sectors, all 5 currency pairs (USD/IDR, SGD/IDR, EUR/IDR, AUD/IDR, CNY/IDR)
+- `AllocationEngineTests` (§18) — the regime-gated allocator: risk-off parks ≥70% in cash; risk-on deploys >60% but ≤95% (survive-first cash floor); nil regime → neutral band; no name exceeds the per-name cap; full deployment honours the position-count floor; fractional-Kelly damps the top name vs raw-proportional; lot rounding to 100; empty/no-price/dropped-name handling; sub-band deltas suppressed
+- `PaperTradingStoreTests` (§18) — fresh store seeded with 100M; buys spend cash + open positions; empty plan is a no-op; sell books realized P&L matching `Portfolio.apply`; reset returns to seed; portfolio round-trips to `paper-trading-cache.json`; corrupt file keeps the seed
+- `PaperTradingViewModelTests` (§18) — the screen's wiring (headless stand-in for the XCUITest): joins the three stores, `canPlan` once watchlist + prices load, `generatePlan()` proposes buys, `execute()` books them into Holdings + spends cash, `reset()` returns to seed
 
 **UI verification.** Confirm UI changes with XCUITest under `-UITestFixtures`, never via the Accessibility API or screenshot scripts (flaky on multi-display macOS). `AutoscreenerUITests`:
 - `StockDetailUITests` — tap a stock code → financial-detail flow (report/period switching)
 - `MarketsUITests` — sidebar → Markets → Commodities/Currencies sections render with stubbed price + % change; Global section header + an SP500 priced row render; composite/index/sector rows also render as priced rows (`MarketsPricedRow.<symbol>`); chartable rows still navigate while commodities/currencies don't
 - `RegimeUITests` — sidebar → Markets → regime banner shows the (deterministic Neutral) stance → tap → full factor breakdown (valuation / BI rate / LQ45 breadth rows)
+- `PaperTradingUITests` (§18) — sidebar → Paper Trading → render → wait for the enabled Generate button → generate a plan → assert a `PaperTradingPlanRow_BBCA` buy → Execute → `PaperTradingHoldingRow_BBCA` lands in Holdings
 
-Both guard `XCTSkipIf(NSScreen.screens.count > 1)` — they pass on single-display/CI and skip on multi-display dev machines, where XCUITest can't snapshot a window on another Space. Full sign-in remains a real-network smoke (run manually).
+All guard `XCTSkipIf(NSScreen.screens.count > 1)` — they pass on single-display/CI and skip on multi-display dev machines, where XCUITest can't snapshot a window on another Space. Full sign-in remains a real-network smoke (run manually).
 
 ---
 
@@ -451,6 +456,8 @@ v1 + fifteen screeners (four bandar + three foreign-flow horizons + foreign-buy-
 **Markets — section reflow (2026-06-12).** Re-grouped the dashboard sections into three balanced two-column rows so related instruments sit side by side and the right column no longer towers: **row 1** = regime banner + **Global**; **row 2** = composite (IHSG) over indices on the left, **Sectors** (2-col grid) beside them on the right; **row 3** = Commodities + Currencies (unchanged). Pure layout change in `MarketsView` (`body` reflow + the regime `.ready` frame now fills its HStack cell instead of the whole row); no new types, no service/VM edits, accessibility identifiers unchanged so `MarketsUITests` still match by identifier regardless of position. Build + `MarketsUITests` green (UI tests skip on multi-display dev machines; run on single-display/CI). See §17.
 
 **Markets — Sectors to its own full-width single-column row (2026-06-12).** Sectors left the shared row-2 grid for its **own full-width row** rendered as a **single column** (dropped the `columns: 2` arg; `MarketSectionCard` defaults to `columns: 1`). Row 2's freed right slot now stacks **Commodities over Currencies** mirroring the composite/indices stack on the left, so the dashboard reads: **row 1** = regime + Global; **row 2** = composite/indices ∥ commodities/currencies; **row 3** = Sectors (full width, 1 col). Pure `MarketsView` `body` reflow; no new types, no service/VM edits, accessibility identifiers unchanged. Build + `MarketsUITests` green (skip on multi-display, run on single-display/CI). See §17.
+
+**Paper Trading — regime-weighted 100M IDR portfolio (2026-06-12).** A new **Paper Trading** sidebar screen joins the two halves the app already produced but never connected: the conviction-scored composite Watchlist (§4.0/§15.4) and the market-regime read (§17). A persisted, mark-to-market 100M IDR account allocates across the watchlist via a three-layer framework — **(1)** regime score → target equity exposure (Zweig "don't fight the Fed/tape": risk-off 0–30%, neutral 50–60%, risk-on ≤95% with a survive-first cash floor); **(2)** rank priced watchlist names by `WatchlistRow.score`, top-N; **(3)** conviction → fractional-Kelly-damped, per-name-capped, position-count-floored, lot-rounded weights (Against the Gods: size for survival, diversify, don't chase the extreme). **Propose-then-confirm** — `AllocationEngine.plan(...)` (pure) proposes a rebalance with per-line rationale; the user clicks Execute; `PaperTradingStore.apply(...)` books sells-then-buys through `ExecutionModel.standardIDX` (lot 100, 0.15%/0.25% fees, slippage) and persists to `paper-trading-cache.json`. Reuses, not rebuilds: `RegimeRead`, `WatchlistComposer`, `ScreenerRow.lastPrice` for the price map, and the `Portfolio`/`Lot`/`TradeSide`/`ExecutionModel` value primitives from `BacktestHarness.swift` (`TradeSide` gained `String`+`Codable` for persistence). New folder `Features/PaperTrading/` (models, engine, `@Observable` store, projecting VM, view); wired into `MainSidebarView` + `AppDependencies` (headless-seeded under fixtures). Tests: `AllocationEngineTests`, `PaperTradingStoreTests`, `PaperTradingViewModelTests`, `PaperTradingUITests`. Full unit suite green; UI test skips on multi-display (the VM test covers the generate→execute→holdings flow headlessly). See §18.
 
 ---
 
@@ -560,3 +567,42 @@ OIL (Crude Oil), BRENT (Brent Oil), GAS (Natural Gas), COAL-NEWCASTLE (Newcastle
 ### 17.4 Global index symbols
 
 SP500 (S&P 500), DOW30 (Dow Jones), NASDAQ (Nasdaq Composite), FTSE (FTSE 100), DAX, CAC40 (CAC 40), NIKKEI (Nikkei 225), HANGSENG (Hang Seng), KOSPI, SHANGHAI (Shanghai Composite), STI (Straits Times). Stockbit serves world indices on the same `emitten/{symbol}/info` (snapshot) and `charts/{symbol}/daily` (history) paths as IDX symbols, so they price and chart with zero new wiring. Symbols are from the Stockbit request capture (proxseer), pending live `charts/{symbol}/daily` confirmation — unlike the IDX rows verified live 2026-06-04. SP500 also backs the regime's global-equities factor (fetched in the sweep's regime leg, §15.2).
+
+---
+
+## 18. Paper Trading — regime-weighted 100M IDR portfolio
+
+A persisted, mark-to-market paper account (seeded with **Rp 100,000,000**) that allocates across the composite Watchlist, sizing total equity exposure by the market regime and each name by conviction. It joins the two signals the app already produces — the conviction-scored Watchlist (§4.0/§15.4) and the regime read (§17) — and adds only an allocation + accounting layer. **It places no real orders; it is a simulation.**
+
+The screen reads three stores and writes one: `PaperTradingStore` (the portfolio), `MarketDataStore.regimeRead` (the regime), and `ScreenerStore` (watchlist + prices). It never fetches — the unified sweep (§15) is still the only fetch path.
+
+### 18.1 The allocation framework (the "why")
+
+A three-layer **regime-gated, conviction-weighted, risk-capped** allocator, each layer grounded in a domain skill the project routes to:
+
+1. **How much to deploy (Zweig — `winning-on-wall-street`).** Map `RegimeRead.score ∈ [−1,+1]` to a target equity exposure; the rest is cash. The regime read is already a Zweig-shaped composite (monetary factors `policyRate`/`usRates`/`globalDollar` + tape factors `trend`/`breadth`/`foreignFlow`/`globalEquities` + a valuation guardrail). Bands: **risk-off** (`score ≤ −0.33`) → 0–30%; **neutral** → 50–60%; **risk-on** (`score ≥ +0.33`) → up to **95%** (never 100% — a survive-first cash floor). Piecewise-linear within each band so exposure rises smoothly with conviction. A `nil` regime degrades to the neutral band.
+2. **What to hold (the existing Watchlist score).** Rank veto-clean, priced `WatchlistRow`s by `score` (the tuned per-rule weighted-evidence number), take the top **N** (default 12).
+3. **How much of each (Against the Gods — `against-the-gods`).** Conviction weights = `scoreᵏ` (k = `kellyFraction`, default 0.5 — √-damping, since the screener score is *evidence*, not a calibrated win-probability), normalised to the exposure, then **water-filled** under an effective per-name cap = `min(perNameCap, 1/minPositions)`. The cap both prevents one thesis from sinking the book and forces ≥ `minPositions` names once exposure is high enough (IDX names are highly correlated — correlations spike toward 1 in a crisis — so a count floor is the practical diversification lever). Targets are lot-rounded to 100 shares; deltas worth less than `rebalanceBandPct` × equity are suppressed (anti-churn).
+
+Why a forward paper engine and **not** the existing `Backtester` (§INTEGRATION): the harness is offline, needs point-in-time history, and answers "would this config have worked?". Paper trading is forward, live-priced, single-path — so it **reuses the harness value primitives** (`Portfolio`/`Lot`/`TradeSide`/`ExecutionModel` and the avg-cost/fee math) but not the replay loop.
+
+### 18.2 Propose-then-confirm
+
+`generatePlan()` runs the pure `AllocationEngine.plan(state:watchlist:regime:prices:config:)` → an `AllocationPlan` of `AllocationLine`s (symbol, side, current/target/delta shares, price, est value, target weight, and a human **rationale** string — the same transparency ethos as `RegimeFactor.detail`). Nothing executes until the user clicks **Execute**: `PaperTradingStore.apply(plan:)` books **sells before buys** (to free cash), pricing each fill through `ExecutionModel.standardIDX` (lot 100, buy 0.15%, sell 0.25%, slippage 0.05%), appends `PaperTrade`s, and persists. **Reset** returns the account to its 100M seed.
+
+### 18.3 Components
+
+```
+Features/PaperTrading/
+├── Models/PaperTradingModels.swift  // PaperPosition, PaperTrade, PaperPortfolioState (seed/equity/P&L + avg-cost fill math mirroring Portfolio.apply), AllocationConfig (.standard: Zweig bands + caps + Kelly + score→exposure map), AllocationPlan/AllocationLine
+├── AllocationEngine.swift           // pure enum (like RegimeSynthesizer): the 3-layer allocator, zero I/O
+├── PaperTradingStore.swift          // @MainActor @Observable, disk-backed (paper-trading-cache.json); apply(plan:)/reset; version bump; same DiskModel/atomic-write/load-on-init pattern as MarketDataStore
+├── PaperTradingViewModel.swift      // thin projection joining the three stores; equity/cash/P&L/holdings/trades; generatePlan/execute/reset
+└── PaperTradingView.swift           // header (equity, cash, P&L, regime badge + target exposure), proposed-plan table w/ Execute, holdings, trade log; accessibility ids (PaperTradingView, PaperTradingGenerateButton, PaperTradingExecuteButton, PaperTradingPlanRow_<SYM>, PaperTradingHoldingRow_<SYM>)
+```
+
+**Persistence:** JSON at `Application Support/Autoscreener/paper-trading-cache.json`; a fresh account (no file) is seeded to 100M; a corrupt/missing file keeps the seed.
+
+**DI & headless:** `AppDependencies` builds the store (`loadFromDisk: !headless`, so fixtures/tests start from a clean seed, never a real user's file). `MainSidebarView` holds the VM (preserving the pending plan across tab switches) and adds the sidebar row + detail arm. Under `-UITestFixtures` the seeded screener rows carry a `lastPrice` so the engine has prices to size against.
+
+**Diversification note:** v1 enforces a per-name cap + position-count floor; a **per-sector** cap is deferred (`WatchlistRow` carries no sector). Names absent from every current screener snapshot have no `lastPrice` and are skipped (never filled at a stale cost basis).
