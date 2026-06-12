@@ -36,4 +36,28 @@ import Testing
         store.applyQuotes(["OIL": quote("OIL")])
         #expect(vm(store).isLoading == false)   // store non-empty → no spinner regardless of sweep state
     }
+
+    // MARK: - loadState / hasLoadedOnce (cold-launch empty/loading)
+
+    @Test func loadStateIsLoadingBeforeAnySweep() {
+        let model = vm(SweepTestKit.marketStore())
+        #expect(model.hasLoadedOnce == false)
+        #expect(model.loadState == .loading)
+    }
+
+    @Test func hasLoadedOnceFlipsAndStateIsEmptyAfterASweepWithNoQuotes() {
+        let store = SweepTestKit.marketStore()
+        store.markSweepComplete(at: Date(timeIntervalSince1970: 0))
+        let model = vm(store)
+        #expect(model.hasLoadedOnce == true)
+        #expect(model.loadState == .empty)   // sweep ran, priced nothing → genuinely empty, not loading
+    }
+
+    @Test func loadStateIsReadyOnceQuotesLand() {
+        let store = SweepTestKit.marketStore()
+        store.applyQuotes(["OIL": quote("OIL")])
+        let model = vm(store)
+        #expect(model.hasLoadedOnce == true)
+        #expect(model.loadState == .ready)
+    }
 }

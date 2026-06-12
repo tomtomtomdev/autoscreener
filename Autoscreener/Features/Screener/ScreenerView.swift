@@ -101,19 +101,38 @@ struct ScreenerView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let error = vm.error, vm.rows.isEmpty {
+        switch vm.loadState {
+        case .loading:
+            loadingView
+        case .failed(let message):
             ContentUnavailableView("Couldn't run screener",
                                    systemImage: "exclamationmark.triangle",
-                                   description: Text(error))
-        } else if vm.rows.isEmpty && !vm.isLoading {
+                                   description: Text(message))
+                .accessibilityIdentifier("screener.error")
+        case .empty:
             ContentUnavailableView("No matches",
                                    systemImage: "tablecells",
                                    description: Text("\(title) returned no rows in IHSG."))
-        } else if vm.visibleRows.isEmpty && !vm.searchText.isEmpty {
-            ContentUnavailableView.search(text: vm.searchText)
-        } else {
-            resultsTable
+                .accessibilityIdentifier("screener.empty")
+        case .ready:
+            if vm.visibleRows.isEmpty && !vm.searchText.isEmpty {
+                ContentUnavailableView.search(text: vm.searchText)
+            } else {
+                resultsTable
+            }
         }
+    }
+
+    /// Shown on a cold launch before this screener's first snapshot lands (no disk
+    /// cache yet). Mirrors the `ContentUnavailableView` layout so it sits where the
+    /// table will, then swaps in once the sweep delivers rows.
+    private var loadingView: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading \(title)…").foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("screener.loading")
     }
 
     private var resultsTable: some View {

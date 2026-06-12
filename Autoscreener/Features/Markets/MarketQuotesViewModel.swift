@@ -25,6 +25,21 @@ final class MarketQuotesViewModel {
     /// Spinner only before the first quotes land; once the store has data the rows render.
     var isLoading: Bool { coordinator.isSweeping && store.quotes.isEmpty }
 
+    /// Whether any data has landed (a sweep completed or cached quotes hydrated). Drives
+    /// the per-row spinner-vs-"—": before this flips true, a missing quote is still
+    /// loading; after it, a missing quote is genuinely unpriced.
+    var hasLoadedOnce: Bool { store.lastSweepAt != nil || !store.quotes.isEmpty }
+
+    /// Screen-level render state. No data and no completed sweep → `.loading` (or
+    /// `.failed` if the sweep errored before anything landed); a completed sweep with no
+    /// quotes → `.empty`; otherwise `.ready`.
+    var loadState: LoadState {
+        if !hasLoadedOnce {
+            return coordinator.lastError.map(LoadState.failed) ?? .loading
+        }
+        return store.quotes.isEmpty ? .empty : .ready
+    }
+
     /// Ensures the sweep is running (idempotent). A forced call pulls a fresh sweep now.
     func load(force: Bool = false) async {
         if force { await coordinator.refreshNow() } else { coordinator.start() }

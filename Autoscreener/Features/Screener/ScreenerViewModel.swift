@@ -39,6 +39,19 @@ final class ScreenerViewModel {
     var error: String? { coordinator.lastError }
     var paywallMessage: String? { coordinator.paywallMessage }
 
+    /// Render state for the content area. A missing snapshot means this kind hasn't
+    /// landed yet (cache miss / sweep pending or in progress) → `.loading`, unless the
+    /// sweep already reported a failure → `.failed`. Once a snapshot exists, an empty
+    /// one is a genuine "no matches" (`.empty`); otherwise `.ready`. This keeps the
+    /// cold-launch window from flashing "No matches" before the screener has run.
+    var loadState: LoadState {
+        if store.snapshot(for: kind) == nil {
+            if let error { return .failed(error) }
+            return .loading
+        }
+        return rows.isEmpty ? .empty : .ready
+    }
+
     /// Ensures the sweep pipeline is running (idempotent). Cached rows render
     /// immediately from the store; the live sweep refreshes them.
     func autoRunIfNeeded() async {

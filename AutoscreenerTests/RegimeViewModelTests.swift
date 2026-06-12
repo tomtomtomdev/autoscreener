@@ -35,4 +35,25 @@ import Testing
         store.apply(regimeRead: read(.neutral))
         #expect(vm(store).isLoading == false)
     }
+
+    // MARK: - loadState (cold-launch empty/loading)
+
+    @Test func loadStateIsLoadingBeforeAnySweep() {
+        #expect(vm(SweepTestKit.marketStore()).loadState == .loading)
+    }
+
+    /// The regime leg only runs while the IDX session is open, so a completed sweep with
+    /// no read (market closed, no cache) is `.empty` — the banner shows guidance instead
+    /// of spinning forever.
+    @Test func loadStateIsEmptyAfterASweepWithNoRead() {
+        let store = SweepTestKit.marketStore()
+        store.markSweepComplete(at: Date(timeIntervalSince1970: 0))
+        #expect(vm(store).loadState == .empty)
+    }
+
+    @Test func loadStateIsReadyOnceAReadHasLanded() {
+        let store = SweepTestKit.marketStore()
+        store.apply(regimeRead: read(.neutral))
+        #expect(vm(store).loadState == .ready)
+    }
 }

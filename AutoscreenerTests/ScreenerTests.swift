@@ -164,4 +164,32 @@ private func makeRow(_ symbol: String, _ a: Double, _ b: Double) -> ScreenerRow 
         #expect(vm.rows.isEmpty)
         #expect(vm.total == nil)
     }
+
+    // MARK: - loadState (cold-launch empty/loading)
+
+    /// Regression: a cold launch with no cached snapshot must read as `.loading`, not
+    /// flash the false "No matches" empty state before the screener has even run.
+    @Test func loadStateIsLoadingWhenNoSnapshotAndNoError() {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
+        let vm = ScreenerViewModel(store: store, coordinator: SweepTestKit.coordinator(store: store), kind: .roeQuality)
+        #expect(vm.loadState == .loading)
+    }
+
+    @Test func loadStateIsFailedWhenNoSnapshotAndSweepErrored() {
+        let store = ScreenerStore(fileURL: nil, loadFromDisk: false)
+        let coordinator = SweepTestKit.coordinator(store: store)
+        coordinator.lastError = "Couldn't load: ROE Quality (boom)"
+        let vm = ScreenerViewModel(store: store, coordinator: coordinator, kind: .roeQuality)
+        #expect(vm.loadState == .failed("Couldn't load: ROE Quality (boom)"))
+    }
+
+    @Test func loadStateIsEmptyWhenSnapshotHasNoRows() {
+        let (vm, _) = makeVM(rows: [])
+        #expect(vm.loadState == .empty)
+    }
+
+    @Test func loadStateIsReadyWhenSnapshotHasRows() {
+        let (vm, _) = makeVM(rows: [makeRow("BBCA", 1, 2)])
+        #expect(vm.loadState == .ready)
+    }
 }
