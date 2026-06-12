@@ -32,6 +32,27 @@ import Testing
         #expect(read?.asOf == "2026-01-31")
     }
 
+    @Test func fixtureBIRateHikeTipsTheDocumentedMixToRiskOff() {
+        // The `-UITestFixtures` snapshot now carries the live BI rate (5.50%, a hike →
+        // risk-off) instead of the stale 4.75/cut. Combined with the deterministic mix
+        // `RegimeUITests` drives — neutral valuation, net foreign selling, a weakening
+        // rupiah, soft LQ45 breadth, softened only by a falling US 10y — the read nets
+        // to Risk-off. Regression guard: the old cut value read Neutral and masked the
+        // tightening, which is exactly the bug this fixes. Display-independent, so it
+        // verifies the stance even where the XCUITest skips on a multi-display setup.
+        let mixConstituents = ["BBCA", "TLKM", "BMRI", "ASII", "UNVR"]
+        let read = RegimeComposer.compose(
+            snapshot: UITestFixtures.regimeSnapshot,
+            flow: UITestFixtures.foreignFlow(symbol: "IHSG"),   // net selling → risk-off
+            ihsg: nil, sp500: nil,                              // <200 candles at runtime → absent
+            usdIdrChangePercent: 2.04,                          // rupiah weakening → risk-off
+            aboveSnapshot: above200MA(["BBCA"]),                // 1 of 5 → <40% → risk-off
+            constituents: mixConstituents)
+
+        #expect(read?.factors.first { $0.kind == .policyRate }?.signal == .riskOff)
+        #expect(read?.stance == .riskOff)
+    }
+
     @Test func returnsNilWhenNoInputProducesAFactor() {
         let read = RegimeComposer.compose(
             snapshot: nil, flow: nil, ihsg: nil, sp500: nil,

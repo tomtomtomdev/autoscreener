@@ -6,10 +6,11 @@ import AppKit
 /// Drives the sidebar → Markets → inline regime breakdown against canned, offline
 /// fixtures (`-UITestFixtures`). The regime read renders in full atop the Markets
 /// dashboard (no longer behind a banner tap). Under fixtures the read is
-/// deterministic: a mid-range valuation (neutral) + a BI-rate cut (risk-on) + net
+/// deterministic: a mid-range valuation (neutral) + a BI-rate hike (risk-off) + net
 /// foreign selling (risk-off) + a weakening rupiah (risk-off) + LQ45 breadth derived
-/// from the stub `.above200MA` screener (risk-off) net to a **Neutral** stance, with
-/// the transparent factor breakdown rendered. No auth, network, or Keychain involved.
+/// from the stub `.above200MA` screener (risk-off), softened only by falling US 10y
+/// (risk-on), net to a **Risk-off** stance, with the transparent factor breakdown
+/// rendered. No auth, network, or Keychain involved.
 final class RegimeUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -55,7 +56,7 @@ final class RegimeUITests: XCTestCase {
         // synthesised, deterministic fixture value.
         let stance = element(app, "regime.stance")
         XCTAssertTrue(stance.waitForExistence(timeout: 10), "Breakdown stance should render inline on Markets")
-        XCTAssertEqual(stance.label, "Neutral", "Fixture inputs net to a Neutral stance")
+        XCTAssertEqual(stance.label, "Risk-off", "Fixture inputs (BI-rate hike + foreign selling + weak rupiah + soft breadth) net to a Risk-off stance")
 
         // The transparent factor breakdown renders, including the dominant valuation
         // factor, the BI-rate factor, and the LQ45 breadth factor.

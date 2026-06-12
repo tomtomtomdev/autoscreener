@@ -234,10 +234,11 @@ enum UITestFixtures {
 
     /// Deterministic regime snapshot for the Market Regime screen under UI tests:
     /// composite valuation mid-range (P/E·P/B ≈ 49th pctile → neutral) with the BI
-    /// rate easing (a cut → risk-on).
+    /// rate tightening (a hike → risk-off), mirroring the live BI 7-day reverse repo
+    /// rate of 5.50% (last move 9 Jun 2026, a hike from 5.25%).
     static let regimeSnapshot = RegimeSnapshot(
         asOf: "2026-01-31",
-        biRate: RegimeSnapshot.BIRate(value: 4.75, direction: .cut, asOf: "2026-01-15"),
+        biRate: RegimeSnapshot.BIRate(value: 5.50, direction: .hike, asOf: "2026-06-09"),
         macro: RegimeSnapshot.MacroBlock(
             usFedFunds: RegimeSnapshot.MacroSeries(value: 4.33, trend: .down, asOf: "2026-01-31"),
             us10y: RegimeSnapshot.MacroSeries(value: 4.10, trend: .down, asOf: "2026-01-31"),
