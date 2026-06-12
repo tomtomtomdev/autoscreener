@@ -229,12 +229,22 @@ until then. A test asserts the null/empty envelope degrades to "no coverage."
 
 ---
 
-## 4. `DataProvider` seam changes
+## 4. `DataProvider` seam changes — ✅ SHIPPED (Slice 4, 2026-06-12)
 
 `SecurityData` (per-ticker) and `MarketContext` (market-wide) in `StockSelectionEngine.swift`
-gain **optional** fields; `StockbitDataProvider` fetches them **best-effort** (`try? await
+gained **optional** fields; `StockbitDataProvider` fetches them **best-effort** (`try? await
 paced { … }`) so a failed/absent leg degrades instead of failing the whole pick — exactly the
 existing pattern for the balance-sheet / governance legs.
+
+**Shipped as additive `var … = nil`** (the source-compatible memberwise-init pattern from
+`TTMFinancials.payoutRatio`, so the golden master is byte-for-byte unchanged): `peerComparison` /
+`seasonality` / `brokerDistribution` on `SecurityData`, `flowLeaders` on `MarketContext`.
+`analystCoverage` is **deferred to Slice 5** (data-blocked). The provider gained 3 injected services
+(`comparisonService` / `seasonalityService` / `orderFlowService`); the per-ticker legs are paced,
+the market `top-stock` leg joins the unthrottled regime fan-out; all wired into `AppDependencies`
+(+ `Stub{ComparisonRatios,Seasonality,OrderTradeFlow}Service` fixtures) and `SelectionRunner`.
+`StockbitDataProviderTests` extended (overlays populate / degrade-to-nil / leaderboard carried).
+**Scoring still untouched** — these are carried context only; feeding them into scorers is Slice 6.
 
 ```swift
 // SecurityData — additive, all optional (existing fields unchanged)
@@ -297,6 +307,6 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 2. ✅ **`ComparisonRatiosService`** (Slice 1) — highest selection value, fully captured.
 3. ✅ **Order-trade Tier 1** (Slice 2) — `distribution` (per-ticker bandar) + `top-stock` (market flow) in `OrderTradeFlowService`; `marketMovers` deferred.
 4. ✅ **`SeasonalityService`** (Slice 3) — monthly win-rate / avg-return overlay; fully captured.
-5. **Plumb 2–4 into `SecurityData`/`MarketContext`** as best-effort optional fields (no scoring change). **← next.**
-6. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ — envelope handling only; finalize after a covered-large-cap re-capture.
+5. ✅ **Plumb 2–4 into `SecurityData`/`MarketContext`** (Slice 4) — best-effort optional fields, no scoring change; golden master unchanged.
+6. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ — envelope handling only; finalize after a covered-large-cap re-capture. **← next.**
 7. *(later)* Order-trade Tier 2 UI feeds + scorer calibration for the new factors.
