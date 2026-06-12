@@ -74,20 +74,6 @@ def assemble_snapshot(
     }
 
 
-def patch_bi_rate(snapshot: dict, bi_rate: Optional[BIRate]) -> dict:
-    """Return a copy of a published ``regime.json`` with only its ``biRate`` refreshed.
-
-    The monthly IDX vintage (``asOf``), percentile ``indices`` and ``macro`` block are
-    left exactly as published — this is the cheap daily path that tracks BI's mid-month
-    rate decisions without rebuilding the (Cloudflare-gated, monthly) IDX snapshot. A
-    failed live fetch (``bi_rate is None``) keeps the existing rate rather than wiping it
-    to ``null``, so a transient bi.go.id outage can't blank the policy-rate factor."""
-    out = dict(snapshot)
-    if bi_rate is not None:
-        out["biRate"] = bi_rate.to_dict()
-    return out
-
-
 def build(
     as_of: str,
     records: List[StockRatio],

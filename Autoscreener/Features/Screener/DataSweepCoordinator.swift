@@ -40,6 +40,12 @@ final class DataSweepCoordinator {
     private let chart: any ChartServicing
     private let flow: any AggregateForeignFlowServicing
     private let snapshotProvider: any RegimeSnapshotProviding
+    /// BI policy rate, fetched on-device (bi.go.id / FRED) — replaces the daily Python
+    /// `refresh_bi` patch. Merged over the published snapshot's `biRate`.
+    private let biRateProvider: any BIRateProviding
+    /// FRED global anchors (US fed funds / 10y / broad dollar), fetched on-device —
+    /// replaces the scraper's `macro` block. Merged over the published snapshot's `macro`.
+    private let macroProvider: any FREDMacroProviding
     /// Markets symbols to price each sweep. Empty disables the market + regime legs
     /// entirely (the screener-only path used by the screener unit tests).
     private let catalog: [MarketSymbol]
@@ -53,6 +59,8 @@ final class DataSweepCoordinator {
     /// Gap between sweeps while the IDX is closed (default 20–30 min) — slower because
     /// only the around-the-clock legs refresh.
     private let closedGapRange: ClosedRange<UInt64>
+    /// Max age of the cached BI rate / FRED macro before a sweep refetches them.
+    private let macroTTL: TimeInterval
     /// When false, `start()` seeds the stores with a single sweep instead of running
     /// the continuous loop — used under UI-test fixtures so data is deterministic and
     /// the app doesn't fetch on a timer during a test.
@@ -63,6 +71,15 @@ final class DataSweepCoordinator {
     @ObservationIgnored private var didStart = false
     /// Reset at the top of every sweep — the first request pays no throttle gap.
     @ObservationIgnored private var hasIssuedFirstRequest = false
+
+    /// BI rate + FRED macro change at most daily; refetching them every open sweep
+    /// (5–10 min) would hammer bi.go.id/FRED for nothing. Cached in-memory across sweeps
+    /// and refreshed only when older than `macroTTL` — the on-device equivalent of the
+    /// old once-a-day Python refresh job. A transient fetch failure keeps the prior value
+    /// (and leaves the timestamp unset) so the next sweep retries rather than blanking.
+    @ObservationIgnored private var cachedBIRate: RegimeSnapshot.BIRate?
+    @ObservationIgnored private var cachedMacro: RegimeSnapshot.MacroBlock?
+    @ObservationIgnored private var lastMacroFetchAt: Date?
 
     /// IHSG — the composite index, for the regime's 200-day trend signal.
     private static let compositeSymbol = "IHSG"
@@ -93,6 +110,8 @@ final class DataSweepCoordinator {
          chart: any ChartServicing,
          flow: any AggregateForeignFlowServicing,
          snapshotProvider: any RegimeSnapshotProviding,
+         biRateProvider: any BIRateProviding,
+         macroProvider: any FREDMacroProviding,
          catalog: [MarketSymbol] = MarketCatalog.all,
          constituents: [String] = LQ45Constituents.symbols,
          runsContinuousLoop: Bool = true,
@@ -100,6 +119,7 @@ final class DataSweepCoordinator {
          throttleRange: ClosedRange<UInt64> = 1_000_000_000...1_500_000_000,
          openGapRange: ClosedRange<UInt64> = 300_000_000_000...600_000_000_000,
          closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
+         macroTTL: TimeInterval = 12 * 60 * 60,
          sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) }) {
         self.store = store
         self.marketStore = marketStore
@@ -111,6 +131,9 @@ final class DataSweepCoordinator {
         self.chart = chart
         self.flow = flow
         self.snapshotProvider = snapshotProvider
+        self.biRateProvider = biRateProvider
+        self.macroProvider = macroProvider
+        self.macroTTL = macroTTL
         self.catalog = catalog
         self.constituents = constituents
         self.runsContinuousLoop = runsContinuousLoop
@@ -275,9 +298,15 @@ final class DataSweepCoordinator {
     /// chart fan-out); USD/IDR is read from the currency quote priced this sweep. Only
     /// runs when the IDX session leg is included, so the read freezes after the close.
     private func sweepRegime() async {
-        // regime.json is public GitHub data off a different host — fetched untimed,
-        // outside the Stockbit anti-burst throttle.
-        let snapshot = try? await snapshotProvider.snapshot()
+        // regime.json (the valuation/percentile leg) is public GitHub data off a
+        // different host — fetched untimed, outside the Stockbit anti-burst throttle.
+        let published = try? await snapshotProvider.snapshot()
+
+        // BI rate + FRED macro are now sourced on-device (bi.go.id / FRED, plain HTTPS off
+        // their own hosts — also untimed), refreshed at most daily, then merged *over* the
+        // published snapshot so the device value wins and the published one is a fallback.
+        await refreshMacroIfStale()
+        let snapshot = mergedSnapshot(published: published)
 
         do { try await throttle() } catch { return }
         let flow = try? await self.flow.marketFlow()
@@ -296,6 +325,51 @@ final class DataSweepCoordinator {
             usdIdrChangePercent: usdIdr, aboveSnapshot: above, constituents: constituents) {
             marketStore.apply(regimeRead: read)
         }
+    }
+
+    /// Refreshes the cached BI rate + FRED macro when the cache is older than `macroTTL`
+    /// (or never fetched). Each source degrades independently: a failed fetch keeps the
+    /// prior value, and the timestamp only advances when *something* was fetched, so a
+    /// transient outage retries on the next sweep instead of freezing for the whole TTL.
+    private func refreshMacroIfStale() async {
+        let now = clock.now()
+        if let last = lastMacroFetchAt, now.timeIntervalSince(last) < macroTTL { return }
+
+        let bi = await biRateProvider.biRate()
+        let macro = await macroProvider.macro()
+        if let bi { cachedBIRate = bi }
+        if let macro { cachedMacro = macro }
+        if bi != nil || macro != nil { lastMacroFetchAt = now }
+    }
+
+    /// Merges the on-device BI rate / macro *over* the published snapshot (device wins,
+    /// published is the fallback), keeping the server-only valuation `indices`. Returns
+    /// `nil` when there's nothing to compose from at all, so the caller keeps any prior
+    /// read — the same graceful-degradation contract a missing snapshot had before.
+    private func mergedSnapshot(published: RegimeSnapshot?) -> RegimeSnapshot? {
+        let biRate = cachedBIRate ?? published?.biRate
+        let macro = cachedMacro ?? published?.macro
+        let indices = published?.indices ?? [:]
+        guard biRate != nil || macro != nil || !indices.isEmpty else { return nil }
+        return RegimeSnapshot(
+            asOf: freshestAsOf(published: published, biRate: biRate, macro: macro),
+            biRate: biRate, macro: macro, indices: indices)
+    }
+
+    /// The freshest dated input feeding the read (`RegimeRead.asOf`). ISO `yyyy-MM-dd`
+    /// sorts chronologically, so the max string is the most recent — usually the live BI
+    /// or FRED date now, rather than the monthly valuation vintage.
+    private func freshestAsOf(published: RegimeSnapshot?,
+                              biRate: RegimeSnapshot.BIRate?,
+                              macro: RegimeSnapshot.MacroBlock?) -> String {
+        var candidates: [String] = []
+        if let p = published?.asOf { candidates.append(p) }
+        if let b = biRate?.asOf { candidates.append(b) }
+        if let macro {
+            candidates.append(contentsOf:
+                [macro.usFedFunds?.asOf, macro.us10y?.asOf, macro.broadDollar?.asOf].compactMap { $0 })
+        }
+        return candidates.max() ?? MacroParsing.isoString(clock.now())
     }
 
     // MARK: - Throttle + failure surfacing

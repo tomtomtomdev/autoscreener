@@ -17,6 +17,11 @@ nonisolated protocol RegimeSnapshotProviding: Sendable {
 /// branch, so it deliberately does **not** go through the authenticated Stockbit
 /// `APIClient`. All the Cloudflare/scraping work lives in the server-side job; the app
 /// only does a `GET` of the raw JSON and computes the read on-device.
+///
+/// Its authoritative payload is now the `indices` (valuation/percentile) block. The
+/// snapshot's `biRate`/`macro` are still decoded but treated as a *fallback* by
+/// `DataSweepCoordinator`, which fetches both live on-device (`BIRateService` /
+/// `FREDMacroService`) and merges those over the published values.
 nonisolated final class RegimeSnapshotService: RegimeSnapshotProviding {
     /// Raw URL of the committed snapshot on the `data` branch the scraper writes (the
     /// §6 plan). Until that job ships this 404s, and the read falls back to live factors

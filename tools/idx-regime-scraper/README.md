@@ -1,12 +1,21 @@
 # idx-regime-scraper
 
 Builds the static **`regime.json`** the macOS/iOS app reads for the top-down regime
-read — the two inputs the app can't source on-device: the **BI policy rate** and the
-**cap-weighted index P/E·P/B percentile** vs. each index's own history.
+read. Its **authoritative job is the `indices` block** — the **cap-weighted index
+P/E·P/B percentile** vs. each index's own history, which genuinely can't be produced
+on-device (the IDX ratio feed is Cloudflare-gated and the percentile needs a multi-year
+monthly history).
+
+The **BI policy rate** and the **FRED `macro` anchors** are *also* emitted (so a
+fresh-install / offline device still has a value), but the app now **fetches both live
+on-device** every sweep (`BIRateService` + `FREDMacroService`) and merges those *over*
+the published values — the published `biRate`/`macro` are a fallback, not the source of
+truth. There is therefore **no daily refresh job** any more; only the monthly build runs.
 
 Companion to [`idx-regime-data-research.md`](../../idx-regime-data-research.md) §4–§6
 (sources, aggregation method, and the plan) and to the app-side consumer in
-`Autoscreener/Features/Regime/` (`RegimeSnapshotService` + `RegimeSynthesizer`).
+`Autoscreener/Features/Regime/` (`RegimeSnapshotService` + `BIRateService` +
+`FREDMacroService` + `RegimeSynthesizer`).
 
 ## What it produces
 

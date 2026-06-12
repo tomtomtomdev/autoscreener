@@ -32,6 +32,8 @@ final class AppDependencies {
     let chartService: any ChartServicing
     let commodityPriceService: any CommodityPriceServicing
     let regimeSnapshotService: any RegimeSnapshotProviding
+    let biRateService: any BIRateProviding
+    let fredMacroService: any FREDMacroProviding
     let breadthService: any BreadthServicing
     // Per-ticker legs the Tier-A selection engine consumes (StockbitDataProvider, §8).
     let fundachartService: any FundachartServicing
@@ -76,6 +78,11 @@ final class AppDependencies {
         // regime.json is public, static, unauthenticated data — fetched off the same
         // logging session, NOT the authenticated Stockbit client.
         self.regimeSnapshotService = useFixtures ? StubRegimeSnapshotService() : RegimeSnapshotService(session: session)
+        // BI rate (bi.go.id HTML / FRED CSV) + FRED macro (DFF/DGS10/DTWEXBGS) are now
+        // fetched on-device — public, unauthenticated feeds off the same logging session,
+        // replacing the daily Python `refresh_bi` patch and the scraper's `macro` block.
+        self.biRateService = useFixtures ? StubBIRateService() : BIRateService(session: session)
+        self.fredMacroService = useFixtures ? StubFREDMacroService() : FREDMacroService(session: session)
         // Breadth fans out per-constituent chart calls, so it wraps whichever chart
         // service we resolved (real or the deterministic stub under UI fixtures).
         self.breadthService = useFixtures ? StubBreadthService() : BreadthService(chartService: self.chartService)
@@ -106,6 +113,8 @@ final class AppDependencies {
             chart: self.chartService,
             flow: self.aggregateForeignFlowService,
             snapshotProvider: self.regimeSnapshotService,
+            biRateProvider: self.biRateService,
+            macroProvider: self.fredMacroService,
             runsContinuousLoop: !headless,
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).

@@ -94,6 +94,14 @@ nonisolated struct StubRegimeSnapshotService: RegimeSnapshotProviding {
     func snapshot() async throws -> RegimeSnapshot { UITestFixtures.regimeSnapshot }
 }
 
+nonisolated struct StubBIRateService: BIRateProviding {
+    func biRate() async -> RegimeSnapshot.BIRate? { UITestFixtures.regimeSnapshot.biRate }
+}
+
+nonisolated struct StubFREDMacroService: FREDMacroProviding {
+    func macro() async -> RegimeSnapshot.MacroBlock? { UITestFixtures.regimeSnapshot.macro }
+}
+
 nonisolated struct StubBreadthService: BreadthServicing {
     func reading(symbols: [String], period: Int) async -> BreadthReading {
         // 28 of 45 LQ45 above their 200-day average → 62% → broad (risk-on).

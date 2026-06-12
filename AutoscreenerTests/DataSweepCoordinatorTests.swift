@@ -47,6 +47,8 @@ enum SweepTestKit {
                             chart: any ChartServicing = StubChartService(),
                             flow: any AggregateForeignFlowServicing = AggregateForeignFlowService(flowService: StubForeignFlowService()),
                             snapshotProvider: any RegimeSnapshotProviding = StubRegimeSnapshotService(),
+                            biRateProvider: any BIRateProviding = StubBIRateService(),
+                            macroProvider: any FREDMacroProviding = StubFREDMacroService(),
                             catalog: [MarketSymbol] = [],
                             constituents: [String] = LQ45Constituents.symbols,
                             clock: MarketClock = SweepTestKit.openClock(),
@@ -54,15 +56,17 @@ enum SweepTestKit {
                             safetyCap: Int = 20,
                             openGapRange: ClosedRange<UInt64> = 300_000_000_000...600_000_000_000,
                             closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
+                            macroTTL: TimeInterval = 12 * 60 * 60,
                             sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in }) -> DataSweepCoordinator {
         DataSweepCoordinator(
             store: store, marketStore: marketStore ?? MarketDataStore(fileURL: nil, loadFromDisk: false),
             clock: clock,
             paywall: paywall, templates: templates, screener: screener,
             commodity: commodity, chart: chart, flow: flow, snapshotProvider: snapshotProvider,
+            biRateProvider: biRateProvider, macroProvider: macroProvider,
             catalog: catalog, constituents: constituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
-            openGapRange: openGapRange, closedGapRange: closedGapRange, sleeper: sleeper)
+            openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper)
     }
 
     static let orderedTemplateIDs = [
@@ -249,6 +253,7 @@ enum SweepTestKit {
             chart: StubChartService(),
             flow: AggregateForeignFlowService(flowService: StubForeignFlowService()),
             snapshotProvider: StubRegimeSnapshotService(),
+            biRateProvider: StubBIRateService(), macroProvider: StubFREDMacroService(),
             catalog: [],   // screener-only path under test
             runsContinuousLoop: false, sleeper: { _ in })
 
