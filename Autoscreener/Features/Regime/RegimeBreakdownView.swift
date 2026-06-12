@@ -6,28 +6,21 @@ import SwiftUI
 /// Framed as a *posture*, never a forecast (Howard Marks: you can prepare, not
 /// predict).
 ///
-/// Pushed from the regime banner atop `MarketsView`, so it renders inside that
-/// screen's `NavigationStack` and owns no stack of its own. The banner only
-/// pushes once a read exists, so this view always has data — no loading/error
-/// states to handle here.
-struct RegimeBreakdownView: View {
+/// Rendered inline atop `MarketsView` (no longer a pushed detail page), so it owns
+/// no scroll container or navigation title of its own — the host supplies both. The
+/// host only mounts this once a read exists, so this view always has data; loading
+/// and empty states live in `MarketsView`.
+struct RegimeBreakdownContent: View {
     let read: RegimeRead
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                Divider()
-                factorList
-                if read.valuationCapped { cappedNote }
-                footnote
-            }
-            .padding(24)
-            .frame(maxWidth: 640, alignment: .leading)
-            .frame(maxWidth: .infinity)
+        VStack(alignment: .leading, spacing: 20) {
+            header
+            Divider()
+            factorList
+            if read.valuationCapped { cappedNote }
+            footnote
         }
-        .navigationTitle("Market Regime")
-        .accessibilityIdentifier("RegimeView")
     }
 
     // MARK: - Header (the stance)
@@ -120,8 +113,7 @@ struct RegimeBreakdownView: View {
 }
 
 /// Colour mapping for the regime stance/signal. Kept in the UI layer (shared by
-/// `RegimeBreakdownView` and the banner in `MarketsView`) so the models stay
-/// UI-free.
+/// `RegimeBreakdownContent` and `MarketsView`) so the models stay UI-free.
 enum RegimeColors {
     static func color(_ stance: RegimeStance) -> Color {
         switch stance {

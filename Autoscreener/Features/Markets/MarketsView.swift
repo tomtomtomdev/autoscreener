@@ -1,17 +1,18 @@
 import SwiftUI
 
-/// Sidebar "Markets" screen: the top-down regime read sits as a banner atop the
-/// instruments it's derived from. Tapping the banner pushes the full factor
-/// breakdown (`RegimeBreakdownView`); below it, browse the composite, indices,
-/// and IDX-IC sectors — tapping one pushes its OHLCV candlestick chart. Owns its
-/// own navigation, like `WatchlistView`. Mirrors the `NavigationStack` +
-/// `.navigationDestination` pattern in `ScreenerView`.
+/// Sidebar "Markets" dashboard: the top-down regime read renders in full atop the
+/// instruments it's derived from (no longer a pushed detail page), then the
+/// instruments are laid out in two columns — Global on the left; Composite,
+/// Indices, and the IDX-IC Sectors stacked on the right; Commodities and
+/// Currencies in a row below. Owns its own navigation, like `WatchlistView`;
+/// tapping a chartable row pushes its OHLCV candlestick chart via the same
+/// value-based `.navigationDestination` pattern as `ScreenerView`.
 ///
 /// Every row shows a live price + % change snapshot (from `emitten/{symbol}/info`
 /// via `MarketQuotesViewModel`), loaded on appear and refreshable by
 /// pull-to-refresh. Commodities and currencies have no historical chart data, so
-/// only they stay non-navigating; the composite, indices, and sectors are both
-/// priced and tappable into their chart.
+/// only they stay non-navigating; the composite, indices, sectors, and global
+/// indices are both priced and tappable into their chart.
 struct MarketsView: View {
     private let chartService: any ChartServicing
     @State private var regime: RegimeViewModel
@@ -28,25 +29,37 @@ struct MarketsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section { regimeBanner }
-                ForEach(MarketCatalog.grouped(), id: \.0) { group, symbols in
-                    Section(group.rawValue) {
-                        ForEach(symbols) { item in
-                            // Commodities and currencies have no historical chart
-                            // data, so they render as non-navigating rows.
-                            if item.group.hasChart {
-                                NavigationLink(value: item) {
-                                    row(item)
-                                }
-                            } else {
-                                row(item)
-                            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    regimeSection
+                    HStack(alignment: .top, spacing: 16) {
+                        MarketSectionCard(group: .global, symbols: symbols(.global), quotes: marketQuotes)
+                        VStack(spacing: 16) {
+                            MarketSectionCard(group: .composite, symbols: symbols(.composite), quotes: marketQuotes)
+                            MarketSectionCard(group: .index, symbols: symbols(.index), quotes: marketQuotes)
+                            // Sectors are the longest IDX group; a 2-column grid keeps the
+                            // right column from towering over Global on the left.
+                            MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes, columns: 2)
                         }
+                        .frame(maxWidth: .infinity, alignment: .top)
+                    }
+                    HStack(alignment: .top, spacing: 16) {
+                        MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
+                        MarketSectionCard(group: .currency, symbols: symbols(.currency), quotes: marketQuotes)
                     }
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle("Markets")
+            // Cold launch with no cache: the static dashboard scaffold stays mounted (so
+            // `.task` keeps running) while a centered spinner covers it until the first
+            // sweep prices a row or the regime read lands.
+            .overlay {
+                if marketQuotes.loadState == .loading && regime.read == nil {
+                    marketsLoadingView
+                }
+            }
             .navigationDestination(for: MarketSymbol.self) { item in
                 OHLCVChartView(vm: OHLCVChartViewModel(
                     symbol: item.symbol,
@@ -69,57 +82,116 @@ struct MarketsView: View {
         .accessibilityIdentifier("MarketsView")
     }
 
-    // MARK: - Regime banner
+    private func symbols(_ group: MarketGroup) -> [MarketSymbol] {
+        MarketCatalog.all.filter { $0.group == group }
+    }
 
-    /// Compact regime summary at the top of the list. When a read exists it's a
-    /// `NavigationLink` to the full breakdown; before the first read lands it shows a
-    /// small spinner. Either way the markets list below stays usable and pull-to-refresh
-    /// recomputes the read.
+    // MARK: - Regime (inline)
+
+    /// The full top-down regime breakdown sits at the top of the dashboard. Before the
+    /// first read lands it shows a small spinner; the regime only computes while the IDX
+    /// session is open, so a completed sweep outside the session shows a short note
+    /// instead of vanishing. Pull-to-refresh recomputes the read either way.
     @ViewBuilder
-    private var regimeBanner: some View {
-        if let read = regime.read {
-            NavigationLink {
-                RegimeBreakdownView(read: read)
-            } label: {
-                bannerLabel(read)
+    private var regimeSection: some View {
+        switch regime.loadState {
+        case .ready:
+            if let read = regime.read {
+                RegimeBreakdownContent(read: read)
+                    .frame(maxWidth: 720, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityIdentifier("regime.section")
             }
-            .accessibilityIdentifier("regime.banner")
-        } else if regime.isLoading {
+        case .loading:
             HStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 Text("Reading the market…")
                     .foregroundStyle(.secondary)
             }
-        }
-    }
-
-    private func bannerLabel(_ read: RegimeRead) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text("Market Regime")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Text(read.stance.rawValue)
-                    .font(.headline)
-                    .foregroundStyle(RegimeColors.color(read.stance))
-                    .accessibilityIdentifier("regime.banner.stance")
-            }
-            Text(read.stance.guidance)
+            .accessibilityIdentifier("regime.loading")
+        case .empty, .failed:
+            Text("Regime updates while the market is open")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .accessibilityIdentifier("regime.empty")
         }
     }
 
-    /// Every group renders the same priced row (symbol + name + value + % change).
-    /// Navigation is decided by the caller in `body` via `group.hasChart`.
-    private func row(_ item: MarketSymbol) -> some View {
-        pricedRow(item)
+    /// Centered cold-launch placeholder for the whole dashboard, shown until the first
+    /// sweep prices a row or the regime read lands.
+    private var marketsLoadingView: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("Loading markets…").foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("markets.loading")
+    }
+}
+
+/// One market group rendered as a titled dashboard tile: a header plus its priced
+/// rows. Chartable groups (`group.hasChart`) wrap each row in a `NavigationLink` so
+/// it pushes the OHLCV chart; commodities and currencies render as plain rows.
+/// `columns > 1` lays the rows out in a fixed grid (used by the long Sectors group);
+/// the grid is deliberately non-lazy so every row stays in the view hierarchy even
+/// when scrolled out of view — UI tests query rows by identifier regardless of the
+/// scroll position.
+struct MarketSectionCard: View {
+    let group: MarketGroup
+    let symbols: [MarketSymbol]
+    let quotes: MarketQuotesViewModel
+    var columns: Int = 1
+
+    /// `symbols` chunked into rows of `columns` for the fixed grid layout.
+    private var gridRows: [[MarketSymbol]] {
+        guard columns > 1 else { return symbols.map { [$0] } }
+        return stride(from: 0, to: symbols.count, by: columns).map {
+            Array(symbols[$0 ..< min($0 + columns, symbols.count)])
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(group.rawValue)
+                .font(.headline)
+            VStack(spacing: 4) {
+                ForEach(Array(gridRows.enumerated()), id: \.offset) { _, rowItems in
+                    HStack(spacing: 12) {
+                        ForEach(rowItems) { item in
+                            rowOrLink(item).frame(maxWidth: .infinity)
+                        }
+                        // Pad an incomplete trailing row so columns stay aligned.
+                        if rowItems.count < columns {
+                            ForEach(0 ..< (columns - rowItems.count), id: \.self) { _ in
+                                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityIdentifier("MarketSectionCard.\(group.rawValue)")
+    }
+
+    /// Commodities and currencies have no historical chart data, so they render as
+    /// non-navigating rows; everything else pushes its chart.
+    @ViewBuilder
+    private func rowOrLink(_ item: MarketSymbol) -> some View {
+        if item.group.hasChart {
+            NavigationLink(value: item) {
+                pricedRow(item)
+            }
+            .buttonStyle(.plain)
+        } else {
+            pricedRow(item)
+        }
     }
 
     private func pricedRow(_ item: MarketSymbol) -> some View {
-        let quote = marketQuotes.quotes[item.symbol]
+        let quote = quotes.quotes[item.symbol]
         return HStack(spacing: 10) {
             Text(item.symbol)
                 .font(.body.weight(.medium))
@@ -141,12 +213,13 @@ struct MarketsView: View {
                             .foregroundStyle(quote.isUp ? .green : .red)
                     }
                 }
-            } else if marketQuotes.isLoading {
+            } else if !quotes.hasLoadedOnce {
                 ProgressView().controlSize(.small)
             } else {
                 Text("—").foregroundStyle(.secondary)
             }
         }
+        .contentShape(Rectangle())
         .accessibilityIdentifier("MarketsPricedRow.\(item.symbol)")
     }
 

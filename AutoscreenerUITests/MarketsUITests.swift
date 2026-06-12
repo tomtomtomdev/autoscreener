@@ -101,9 +101,10 @@ final class MarketsUITests: XCTestCase {
         }
     }
 
-    /// The Global section sits directly below the regime banner and lists world
-    /// indices (S&P 500, Nikkei, …). They're priced and chartable like the IDX
-    /// composite — proven by the section header plus an `SP500` priced row.
+    /// The Global card is the left column of the dashboard, below the inline regime
+    /// breakdown, and lists world indices (S&P 500, Nikkei, …). They're priced and
+    /// chartable like the IDX composite — proven by the section header plus an `SP500`
+    /// priced row.
     @MainActor
     func testGlobalIndicesSectionShowsPricedRows() throws {
         #if canImport(AppKit)
@@ -112,6 +113,12 @@ final class MarketsUITests: XCTestCase {
         #endif
 
         let app = openMarkets()
+
+        // The regime breakdown renders inline atop the dashboard (no banner tap).
+        let regimeStance = app.descendants(matching: .any)
+            .matching(identifier: "regime.stance").firstMatch
+        XCTAssertTrue(regimeStance.waitForExistence(timeout: 10),
+                      "Regime breakdown should render inline atop the Markets dashboard")
 
         XCTAssertTrue(app.staticTexts["Global"].waitForExistence(timeout: 5),
                       "Global section header should appear in Markets")
