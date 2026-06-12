@@ -55,7 +55,8 @@ nonisolated struct StockbitEnvelope<T: Decodable>: Decodable {
 }
 ```
 
-### 2.2 `StockbitValue` — the `{raw, formatted}` pair
+### 2.2 `StockbitValue` ✅ — the `{raw, formatted}` pair
+**Shipped (Slice 2)** at `Core/Networking/DTO/StockbitValue.swift`; `StockbitValueTests` (6).
 `order-trade/*` wraps numbers as `{ "raw": …, "formatted": "…" }`. **`raw` is inconsistently
 typed** — `Int` in `market-mover`, a numeric **`String`** in `top-stock` / `broker/top` /
 `running-trade/chart`. A tolerant decoder is mandatory (and gets its own test).
@@ -164,32 +165,37 @@ survivorship-prone). Primary value is the StockDetail UI table.
 `order-trade/broker/activity/historical` is **already wired** (`BrokerActivityService`,
 feeds `brokerAccumulationSignal`). The live feeds split by usefulness:
 
-**Tier 1 — selection-relevant (build first):**
+**Tier 1 — selection-relevant — ✅ SHIPPED (Slice 2)** as one cohesive family service,
+`Features/MarketActivity/OrderTradeFlowService.swift` (`OrderTradeFlowServicing`), `OrderTradeFlowServiceTests`:
 
-| Method | Endpoint | Key query | Drives |
-|---|---|---|---|
-| `distribution(symbol:)` | `order-trade/broker/distribution` | `symbol, data_type=…_VALUE, period=TB_PERIOD_LAST_1_DAY, investor_type, market_board` | per-ticker bandar concentration |
-| `topStocks(valueType:)` | `order-trade/top-stock` | `value_type=VALUE_TYPE_NET, market_type, investor_type, period, page` | market accumulation leaderboard |
-| `marketMovers(type:)` | `order-trade/market-mover` | `mover_type, filter_stocks×N, limit` | gainers/losers + net foreign |
+| Method | Endpoint | Key query | Drives | Status |
+|---|---|---|---|---|
+| `distribution(symbol:)` | `order-trade/broker/distribution` | `symbol, data_type=BROKER_DISTRIBUTION_DATA_TYPE_VALUE, period=TB_PERIOD_LAST_1_DAY, investor_type=…_ALL, market_board=MARKET_TYPE_REGULER` | per-ticker bandar concentration | ✅ built |
+| `topStocks(valueType:page:)` | `order-trade/top-stock` | `value_type=VALUE_TYPE_NET, market_type=MARKET_TYPE_REGULER, investor_type, period=TOP_STOCK_PERIOD_LATEST, page` | market accumulation leaderboard | ✅ built |
+| `marketMovers(type:)` | `order-trade/market-mover` | `mover_type, filter_stocks×N, limit` | gainers/losers + net foreign | ⏸ deferred (not in Slice 2) |
 
 ```swift
-// distribution — "who is accumulating THIS stock today"
+// distribution — "who is accumulating THIS stock today"  (amount is a JSON Int on the wire)
 nonisolated struct BrokerDistribution: Sendable, Equatable {
     let symbol: String, date: String
-    let topBuyers: [BrokerLeg]            // by value, descending
-    let topSellers: [BrokerLeg]
-    /// concentration signal: top-N net buyer value ÷ total — high ⇒ few brokers accumulating
+    let topBuyers: [DistributionLeg]      // by value, descending
+    let topSellers: [DistributionLeg]
+    func buyConcentration(topN: Int = 3) -> Double?   // Σ(top-N buy value) ÷ Σ(all buy); nil if no buy side
 }
-nonisolated struct BrokerLeg: Sendable, Equatable { let code: String; let type: String; let amount: Double }
-// DTO: data.by_value.top_broker_buy[].detail{code,type,amount:Int}; top_broker_sell mirror.
+// NB renamed BrokerLeg → DistributionLeg: BrokerLeg already exists (the richer /marketdetectors
+// Bandar-Detector leg in BrokerSummaryModels.swift). `type` kept as raw String ("Lokal"/"Asing"/
+// "Pemerintah") — could reuse the existing InvestorCategory enum later.
+nonisolated struct DistributionLeg: Sendable, Equatable { let code: String; let type: String; let amount: Double }
+// DTO: data.by_value.top_broker_buy[].detail{code,type,amount:Int}; top_broker_sell mirror (distribute_to ignored).
 
-// top-stock — market-wide net buy/sell leaders
+// top-stock — market-wide net buy/sell leaders  (value/lot/foreign_value are StockbitValue; raw is a numeric String)
 nonisolated struct FlowLeaderboard: Sendable, Equatable { let topBuy: [FlowRow]; let topSell: [FlowRow] }
 nonisolated struct FlowRow: Sendable, Equatable {
     let rank: Int; let code: String
     let value, foreignValue, lot: StockbitValue
 }
-// DTO: data.top_buy[].{rank, code, value{raw:String,formatted}, foreign_value{…}, lot{…}}
+nonisolated enum TopStockValueType: String, Sendable { case net = "VALUE_TYPE_NET", gross = "VALUE_TYPE_GROSS", total = "VALUE_TYPE_TOTAL" }
+// DTO: data.top_buy[].{rank, code, value{raw:String,formatted}, foreign_value{…}, lot{…}} (average/frequency/icon_url dropped)
 ```
 
 **Tier 2 — UI / analysis (defer; spec'd, not in first cut):**
@@ -281,10 +287,12 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 
 ## 7. Recommended build order
 
-1. **Shared primitives** — `StockbitEnvelope<T>`, `StockbitValue` (+ tests). Foundation for the rest.
-2. **`ComparisonRatiosService`** ✅ — highest selection value, fully captured.
-3. **Order-trade Tier 1** ✅ — `distribution` (per-ticker bandar) + `top-stock` (market flow).
-4. **`SeasonalityService`** ✅ — overlay/UI.
+(`✅ done` = built & green; `📦 captured` = wire shape verified, not yet built.)
+
+1. ✅ **Shared primitives** — `StockbitEnvelope<T>` (Slice 1) + `StockbitValue` (Slice 2), with tests. Foundation for the rest.
+2. ✅ **`ComparisonRatiosService`** (Slice 1) — highest selection value, fully captured.
+3. ✅ **Order-trade Tier 1** (Slice 2) — `distribution` (per-ticker bandar) + `top-stock` (market flow) in `OrderTradeFlowService`; `marketMovers` deferred.
+4. 📦 **`SeasonalityService`** — overlay/UI. **← next.**
 5. **Plumb 2–4 into `SecurityData`/`MarketContext`** as best-effort optional fields (no scoring change).
 6. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ — envelope handling only; finalize after a covered-large-cap re-capture.
 7. *(later)* Order-trade Tier 2 UI feeds + scorer calibration for the new factors.
