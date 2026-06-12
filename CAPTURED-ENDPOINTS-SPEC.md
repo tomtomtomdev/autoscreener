@@ -135,13 +135,17 @@ EV-EBITDA → a relative-cheapness factor. Peers are server-chosen (same sector)
 exactly the right comparison set.
 
 ### 3.2 `SeasonalityService` ✅ — monthly win-rate / avg return
-**File:** `Features/StockDetail/SeasonalityService.swift`
-**Endpoint:** `GET seasonality/{SYM}?year={Y}&back_year=0`
+**✅ SHIPPED (Slice 3, 2026-06-12).** `Features/StockDetail/SeasonalityService.swift`
+(`SeasonalityServicing → Seasonality`); `SeasonalityServiceTests` (9: endpoint / parse — incl.
+negative avg + "Year" aggregate / null-envelope throw / error mapping).
+**Endpoint:** `GET seasonality/{SYM}?year={Y}&back_year={B}` (`backYear` defaults to 0).
 
-Captured `data`: parallel "columns" arrays each keyed by month name (`x13` = 12 months +
-aggregate): `up`, `down`, `total_months`, `avg` (avg % return), `prob` (P(up) %), plus
-`price_change` (per-year rows) and `default_last_year`. Values are strings; `color` is hex
-(UI-only, dropped).
+Captured `data`: five parallel columns each wrapped as `{ "columns": [{ name, value, color }] }`
+(**not** a bare array) — `up`, `down`, `total_months`, `avg` (avg % return), `prob` (P(up) %) —
+with 13 entries (Jan … Dec + a `"Year"` aggregate, kept as a 13th `SeasonalMonth`). Also present
+but dropped: `price_change` (per-year grid), `default_last_year`, and the UI-only hex `color`.
+Values are strings; counts parse as `Int`, `avg`/`prob` via `DisplayNumber.parseDecimal`
+(handles the negative `avg` like `"-3.00"`). Zip uses `up.columns` as the canonical ordered spine.
 
 ```swift
 nonisolated struct Seasonality: Sendable, Equatable {
@@ -292,7 +296,7 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 1. ✅ **Shared primitives** — `StockbitEnvelope<T>` (Slice 1) + `StockbitValue` (Slice 2), with tests. Foundation for the rest.
 2. ✅ **`ComparisonRatiosService`** (Slice 1) — highest selection value, fully captured.
 3. ✅ **Order-trade Tier 1** (Slice 2) — `distribution` (per-ticker bandar) + `top-stock` (market flow) in `OrderTradeFlowService`; `marketMovers` deferred.
-4. 📦 **`SeasonalityService`** — overlay/UI. **← next.**
-5. **Plumb 2–4 into `SecurityData`/`MarketContext`** as best-effort optional fields (no scoring change).
+4. ✅ **`SeasonalityService`** (Slice 3) — monthly win-rate / avg-return overlay; fully captured.
+5. **Plumb 2–4 into `SecurityData`/`MarketContext`** as best-effort optional fields (no scoring change). **← next.**
 6. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ — envelope handling only; finalize after a covered-large-cap re-capture.
 7. *(later)* Order-trade Tier 2 UI feeds + scorer calibration for the new factors.
