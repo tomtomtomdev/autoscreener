@@ -41,15 +41,15 @@ struct MarketsView: View {
                             MarketSectionCard(group: .index, symbols: symbols(.index), quotes: marketQuotes)
                         }
                         .frame(maxWidth: .infinity, alignment: .top)
-                        // Sectors is the longest IDX group; a 2-column grid keeps it from
-                        // towering over the Composite/Indices stack on the left.
-                        MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes, columns: 2)
-                            .frame(maxWidth: .infinity, alignment: .top)
+                        VStack(spacing: 16) {
+                            MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
+                            MarketSectionCard(group: .currency, symbols: symbols(.currency), quotes: marketQuotes)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
-                    HStack(alignment: .top, spacing: 16) {
-                        MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
-                        MarketSectionCard(group: .currency, symbols: symbols(.currency), quotes: marketQuotes)
-                    }
+                    // Sectors is the longest IDX group; it gets its own full-width row
+                    // as a single column rather than sharing a two-column row.
+                    MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
