@@ -210,23 +210,31 @@ cumulative, ~560 KB), `trade-book` + `trade-book/chart` (price-ladder / time buc
 `broker/activity-chart` (~440 KB). These are large, display-oriented, and not selection
 inputs — wire them when the StockDetail "Bandarmology" tab is built.
 
-### 3.4 `AnalystRatingsService` ⛔ — skeleton only
-**File:** `Features/StockDetail/AnalystRatingsService.swift`
+### 3.4 `AnalystRatingsService` ⛔ — skeleton only ✅ SHIPPED (Slice 5, 2026-06-13)
+**File:** `Features/StockDetail/AnalystRatingsService.swift` (`AnalystRatingsServicing` →
+`coverage(symbol:) -> AnalystCoverage?` / `consensus(symbol:) -> [AnalystConsensusRow]`);
+`AnalystRatingsServiceTests` (10).
 **Endpoints:** `GET analyst-ratings/{SYM}` (`data:null`), `GET analyst-ratings/{SYM}/consensus`
 (`data:[]`).
 
-Build the service + protocol + envelope handling now; return `AnalystCoverage?` /
-`[AnalystConsensusRow]` where `null`/`[]` ⇒ "no coverage" (nil/empty, **not** an error). The
-inner field models (target high/low/mean, buy/hold/sell counts, # analysts, upside %) are
-**hypotheses to confirm against a covered-large-cap capture** — do not finalize CodingKeys
-until then. A test asserts the null/empty envelope degrades to "no coverage."
+Service + protocol + envelope handling built; returns `AnalystCoverage?` /
+`[AnalystConsensusRow]` where `null`/`[]`/missing ⇒ "no coverage" (nil/empty, **not** an error). The
+inner field models (target high/low/mean, buy/hold/sell counts, # analysts, upside %) ship as
+**all-optional hypotheses with `// UNVERIFIED` CodingKeys** — wrong guesses degrade to `nil` rather
+than failing the decode; finalize against a covered-large-cap re-capture (§6) before relying on any
+field. Tests assert the null/empty envelope degrades to "no coverage" + the error mapping; no
+populated-decode test (that shape is unknown — not invented). **Not plumbed into
+`SecurityData`/scoring** — the `analystCoverage` overlay waits for the §6 re-capture (wiring a
+perpetually-`null` leg into every pick would be premature).
 
-### 3.5 `ResearchService` ⚠️ — thin, display-only
-**File:** `Features/StockDetail/ResearchService.swift`
+### 3.5 `ResearchService` ⚠️ — thin, display-only ✅ SHIPPED (Slice 5, 2026-06-13)
+**File:** `Features/StockDetail/ResearchService.swift` (`ResearchServicing → CompanyResearch?`);
+`ResearchServiceTests` (7 — incl. a populated-decode test, since the shape is verified).
 **Endpoint:** `GET research/company/{SYM}` → `{ id, symbol, content, masks }`. Captured
-`content:""` (no research / paywalled). Model directly; treat empty `content` as "no research."
-`masks` is an empty object in the capture (purpose unknown — decode as opaque, ignore for now).
-**Not** a selection input — qualitative text for the StockDetail UI. Lowest priority.
+`content:""` (no research / paywalled). Modelled directly; empty `content` (or absent `data`) ⇒ `nil`
+("no research"), so a returned `CompanyResearch` always carries non-empty `content`. `masks` is left
+**undeclared** (skipped) — purpose unknown. **Not** a selection input — qualitative text for the
+StockDetail UI. Lowest priority.
 
 ---
 
@@ -310,8 +318,8 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 4. ✅ **`SeasonalityService`** (Slice 3) — monthly win-rate / avg-return overlay; fully captured.
 5. ✅ **Plumb 2–4 into `SecurityData`/`MarketContext`** (Slice 4) — best-effort optional fields, no scoring change; golden master unchanged.
 6. ✅ **Scorer calibration** (Slice 6) — feed the plumbed overlays into scoring as three capped, additive, inert-on-`nil` tilts (see §8). Golden master byte-for-byte unchanged. **← jumped ahead of skeletons (Slice 5) — it's the payoff and the data was already plumbed.**
-7. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ (Slice 5) — envelope handling only; finalize after a covered-large-cap re-capture. **← next.**
-8. *(later)* Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps.
+7. ✅ **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ (Slice 5) — envelope handling only (null/empty ⇒ "no coverage"); populated DTOs deferred to a covered-large-cap re-capture (§6). Not plumbed into scoring.
+8. *(next / later)* Re-capture a covered large-cap (§6) → finalize §3.4 DTOs + plumb `analystCoverage` into `SecurityData`. Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps. **← all data-blocked or optional; nothing else in this spec is buildable from the current capture.**
 
 ---
 
