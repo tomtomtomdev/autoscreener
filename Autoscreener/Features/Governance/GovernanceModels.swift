@@ -6,7 +6,7 @@ import Foundation
 /// (`insider/company/majorholder?period_type=…`). Mirrors `BrokerSummaryPeriod`'s
 /// query-rawValue pattern. A longer window makes sustained accumulation/distribution by
 /// insiders legible; a one-week blip is mostly noise.
-nonisolated enum GovernancePeriod: String, Sendable, CaseIterable {
+nonisolated enum GovernancePeriod: String, Sendable, Codable, CaseIterable {
     case sevenDay = "PERIOD_TYPE_7_DAY"
     case oneMonth = "PERIOD_TYPE_1_MONTH"
     case oneYear = "PERIOD_TYPE_1_YEAR"

@@ -49,6 +49,11 @@ actor StockbitDataProvider: DataProvider {
     private let comparisonService: any ComparisonRatiosServicing
     private let seasonalityService: any SeasonalityServicing
     private let orderFlowService: any OrderTradeFlowServicing
+    // Gate-3 consensus (Slice — analyst coverage): best-effort, degrades to nil "no coverage".
+    private let analyst: any AnalystRatingsServicing
+    // Gate-2 governance veto (insider/dilution): best-effort; the Pro-paywalled insider feed degrades
+    // to nil, so an un-entitled run simply never vetoes on governance.
+    private let governance: any GovernanceServicing
 
     // Market-wide regime inputs — the identical set `RegimeFactorBuilder` consumes (§3).
     private let snapshotProvider: any RegimeSnapshotProviding
@@ -91,6 +96,8 @@ actor StockbitDataProvider: DataProvider {
         comparisonService: any ComparisonRatiosServicing,
         seasonalityService: any SeasonalityServicing,
         orderFlowService: any OrderTradeFlowServicing,
+        analyst: any AnalystRatingsServicing,
+        governance: any GovernanceServicing,
         snapshotProvider: any RegimeSnapshotProviding,
         flowService: any AggregateForeignFlowServicing,
         chartService: any ChartServicing,
@@ -113,6 +120,8 @@ actor StockbitDataProvider: DataProvider {
         self.comparisonService = comparisonService
         self.seasonalityService = seasonalityService
         self.orderFlowService = orderFlowService
+        self.analyst = analyst
+        self.governance = governance
         self.snapshotProvider = snapshotProvider
         self.flowService = flowService
         self.chartService = chartService
@@ -213,6 +222,13 @@ actor StockbitDataProvider: DataProvider {
         let year = Calendar(identifier: .gregorian).component(.year, from: now())
         let seasonality = try? await paced { try await self.seasonalityService.seasonality(symbol: t, year: year) }
         let distribution = try? await paced { try await self.orderFlowService.distribution(symbol: t) }
+        // Gate-3 consensus: sell-side coverage. `coverage` already yields nil for an uncovered name,
+        // so the double-optional from `try?` is flattened to a single "no coverage / no fetch" nil.
+        let coverage: AnalystCoverage? = (try? await paced { try await self.analyst.coverage(symbol: t) }) ?? nil
+        // Gate-2 governance: assemble the facts, then assess them with the pure rules (clock injected
+        // here so the engine stays deterministic). A failed/paywalled fetch ⇒ nil ⇒ no veto.
+        let govReport = try? await paced { try await self.governance.report(symbol: t, period: config.governance.period) }
+        let governanceAssessment = govReport.map { GovernanceRules.assess($0, now: now()) }
 
         return SecurityData(
             ticker: t,
@@ -229,7 +245,9 @@ actor StockbitDataProvider: DataProvider {
             marketIndexBars: marketIndexBars,
             peerComparison: peers,
             seasonality: seasonality,
-            brokerDistribution: distribution)
+            brokerDistribution: distribution,
+            analystCoverage: coverage,
+            governance: governanceAssessment)
     }
 
     /// Daily bars for a market/sector index, fetched once per run and cached by symbol.

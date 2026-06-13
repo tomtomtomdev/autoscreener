@@ -43,7 +43,8 @@ extension AppDependencies {
             statements: financialStatementService, emitten: emittenService,
             priceFeed: companyPriceFeedService, broker: brokerActivityService,
             comparisonService: comparisonRatiosService, seasonalityService: seasonalityService,
-            orderFlowService: orderTradeFlowService,
+            orderFlowService: orderTradeFlowService, analyst: analystRatingsService,
+            governance: governanceService,
             snapshotProvider: regimeSnapshotService, flowService: aggregateForeignFlowService,
             chartService: chartService, commodityService: commodityPriceService,
             breadthService: breadthService)

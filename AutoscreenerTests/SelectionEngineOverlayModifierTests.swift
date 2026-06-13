@@ -31,6 +31,7 @@ private func overlaySecurity(
     peers: PeerComparison? = nil,
     seasonality: Seasonality? = nil,
     distribution: BrokerDistribution? = nil,
+    analystCoverage: AnalystCoverage? = nil,
     lastBarMonth: Int = 6,
     hasBars: Bool = true
 ) -> SecurityData {
@@ -44,7 +45,18 @@ private func overlaySecurity(
         dailyBars: hasBars ? [bar(utcDate(year: 2026, month: lastBarMonth, day: 15))] : [],
         foreignNetFlow: [], brokerAccumulationSignal: 0,
         sectorIndexBars: [], marketIndexBars: [],
-        peerComparison: peers, seasonality: seasonality, brokerDistribution: distribution)
+        peerComparison: peers, seasonality: seasonality, brokerDistribution: distribution,
+        analystCoverage: analystCoverage)
+}
+
+/// Builds an `AnalystCoverage` for the consensus tests. `current` defaults to the overlay/clean
+/// security price (1000) so `targetUpsidePct` = (target − 1000) / 1000.
+private func coverage(buy: Int, hold: Int, sell: Int, target: Double, current: Double = 1000) -> AnalystCoverage {
+    AnalystCoverage(
+        priceTarget: AnalystPriceTarget(best: target, low: target, high: target, current: current),
+        recommendation: buy > sell ? "Buy" : (sell > buy ? "Sell" : "Hold"),
+        totalBuy: buy, totalHold: hold, totalSell: sell, totalAnalyst: buy + hold + sell,
+        lastUpdated: "11 Jun 26")
 }
 
 private func valuationMetric(_ name: String, subject: Double, industry: Double, sector: Double) -> PeerMetric {
@@ -239,6 +251,58 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
     }
 }
 
+// MARK: - Consensus modifier (Gate-3 — fade the sell-side crowd)
+
+@Suite struct ConsensusModifierTests {
+
+    @Test func absentCoverageIsInert() {
+        let (d, why) = Modifiers.consensus(overlaySecurity(analystCoverage: nil), config: .balanced)
+        #expect(d == 0)
+        #expect(why.isEmpty)
+    }
+
+    @Test func zeroAnalystsIsInert() {
+        let none = coverage(buy: 0, hold: 0, sell: 0, target: 1500)   // totalAnalyst == 0
+        let (d, why) = Modifiers.consensus(overlaySecurity(analystCoverage: none), config: .balanced)
+        #expect(d == 0)
+        #expect(why.isEmpty)
+    }
+
+    @Test func bullishCrowdFadesToTheNegativeCap() {
+        // all-buy → rating +1; target 1500 vs 1000 → upside +0.5 / span 0.5 → +1; bullishness +1;
+        // tilt = −1 × cap 0.03.
+        let c = coverage(buy: 10, hold: 0, sell: 0, target: 1500)
+        let (d, why) = Modifiers.consensus(overlaySecurity(analystCoverage: c), config: .balanced)
+        #expect(abs(d - -0.03) < 1e-9)
+        #expect(why.contains("fade"))
+        #expect(why.contains("B/H/S 10/0/0"))
+    }
+
+    @Test func bearishNeglectedNameBoostsToThePositiveCap() {
+        // all-sell → rating −1; target 500 vs 1000 → upside −0.5 / span 0.5 → −1; bullishness −1;
+        // tilt = +cap.
+        let c = coverage(buy: 0, hold: 0, sell: 10, target: 500)
+        let (d, _) = Modifiers.consensus(overlaySecurity(analystCoverage: c), config: .balanced)
+        #expect(abs(d - 0.03) < 1e-9)
+    }
+
+    @Test func balancedConsensusNetsZeroButStillAudits() {
+        // buy == sell → rating 0; target == price → upside 0; bullishness 0 → tilt 0, but coverage is
+        // present so the line is still audited.
+        let c = coverage(buy: 5, hold: 0, sell: 5, target: 1000)
+        let (d, why) = Modifiers.consensus(overlaySecurity(analystCoverage: c), config: .balanced)
+        #expect(d == 0)
+        #expect(!why.isEmpty)
+    }
+
+    @Test func extremeBullishnessClampsToTheCap() {
+        // target 9000 (+800% upside) and all-buy: each part clamps to +1, tilt never beyond −cap.
+        let c = coverage(buy: 12, hold: 0, sell: 0, target: 9000)
+        let (d, _) = Modifiers.consensus(overlaySecurity(analystCoverage: c), config: .balanced)
+        #expect(abs(d - -0.03) < 1e-9)
+    }
+}
+
 // MARK: - Engine integration: overlays move the composite & audit, absence leaves them untouched
 
 @Suite struct SelectionEngineOverlayIntegrationTests {
@@ -259,7 +323,9 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
 
     /// A clean, cheap industrial that passes every gate and the neutral MoS (50% vs 30%), optionally
     /// carrying favorable overlays. Bars are dated in January so the seasonality month is "Jan".
-    private func cleanSecurity(withOverlays: Bool) -> SecurityData {
+    private func cleanSecurity(withOverlays: Bool,
+                               analystCoverage: AnalystCoverage? = nil,
+                               governance: GovernanceAssessment? = nil) -> SecurityData {
         let janBar = bar(utcDate(year: 2026, month: 1, day: 15), value: 10_000_000_000)
         let bars = Array(repeating: janBar, count: 250)
         let idx = Array(repeating: bar(utcDate(year: 2026, month: 1, day: 15), value: 1), count: 250)
@@ -285,7 +351,8 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
             financials: cleanFinancials(), ttm: ttm,
             dailyBars: bars, foreignNetFlow: [], brokerAccumulationSignal: 0,
             sectorIndexBars: idx, marketIndexBars: idx,
-            peerComparison: peers, seasonality: season, brokerDistribution: dist)
+            peerComparison: peers, seasonality: season, brokerDistribution: dist,
+            analystCoverage: analystCoverage, governance: governance)
     }
 
     private func neutralContext(flowLeaders: FlowLeaderboard? = nil) -> MarketContext {
@@ -334,5 +401,74 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
         #expect(rel < sea)
         #expect(sea < acc)
         #expect(acc < conviction)
+    }
+
+    @Test func bullishConsensusFadesTheCompositeAndCoverageLessNameHasNoLine() async throws {
+        // Same clean, cheap name with vs without a crowded-bullish analyst coverage attached. The
+        // FADE lowers the faded name's composite; the coverage-less baseline carries no consensus line
+        // (the golden-master byte-for-byte-unchanged property).
+        let baseline = try #require(try await StockSelectionEngine(
+            provider: StubProvider(security: cleanSecurity(withOverlays: false), context: neutralContext()),
+            config: .balanced).run().first)
+        let faded = try #require(try await StockSelectionEngine(
+            provider: StubProvider(
+                security: cleanSecurity(withOverlays: false,
+                                        analystCoverage: coverage(buy: 10, hold: 0, sell: 0, target: 1500)),
+                context: neutralContext()),
+            config: .balanced).run().first)
+
+        #expect(faded.compositeScore < baseline.compositeScore)
+        #expect(faded.audit.contains { $0.hasPrefix("consensus") })
+        #expect(!baseline.audit.contains { $0.hasPrefix("consensus") })
+    }
+
+    @Test func consensusLineIsOrderedAfterAccumulationBeforeConviction() async throws {
+        let context = neutralContext(flowLeaders: leaderboard(topBuy: ["GOOD"], topSell: []))
+        let r = try #require(try await StockSelectionEngine(
+            provider: StubProvider(
+                security: cleanSecurity(withOverlays: true,
+                                        analystCoverage: coverage(buy: 10, hold: 0, sell: 0, target: 1500)),
+                context: context),
+            config: .balanced).run().first)
+        let acc = try #require(r.audit.firstIndex { $0.hasPrefix("accumulation") })
+        let con = try #require(r.audit.firstIndex { $0.hasPrefix("consensus") })
+        let conviction = try #require(r.audit.firstIndex { $0.hasPrefix("→ conviction") })
+        #expect(acc < con)
+        #expect(con < conviction)
+    }
+
+    // MARK: Gate-2 governance veto wiring
+
+    private func governanceAssessment(_ flags: [GovernanceFlag], level: GovernanceLevel) -> GovernanceAssessment {
+        GovernanceAssessment(level: level, flags: flags, missingSections: [])
+    }
+    private func concernInsiderFlag() -> GovernanceFlag {
+        GovernanceFlag(kind: .insiderSelling, severity: .concern,
+                       evidence: "e", whyItMatters: "w", whatToCheckNext: "c")
+    }
+
+    @Test func concernGovernanceFlagEliminatesTheName() async throws {
+        // The same clean, cheap name that survives without governance is dropped when carrying a
+        // concern-severity insider-selling flag.
+        let veto = governanceAssessment([concernInsiderFlag()], level: .significant)
+        let recs = try await StockSelectionEngine(
+            provider: StubProvider(security: cleanSecurity(withOverlays: false, governance: veto),
+                                   context: neutralContext()),
+            config: .balanced).run()
+        #expect(recs.isEmpty)
+    }
+
+    @Test func cleanGovernanceSurvivesWithAuditLineAndNilIsUnchanged() async throws {
+        let clean = governanceAssessment([], level: .clean)
+        let withGov = try #require(try await StockSelectionEngine(
+            provider: StubProvider(security: cleanSecurity(withOverlays: false, governance: clean),
+                                   context: neutralContext()),
+            config: .balanced).run().first)
+        #expect(withGov.audit.contains { $0.hasPrefix("governance OK") })
+
+        let withoutGov = try #require(try await StockSelectionEngine(
+            provider: StubProvider(security: cleanSecurity(withOverlays: false), context: neutralContext()),
+            config: .balanced).run().first)
+        #expect(!withoutGov.audit.contains { $0.hasPrefix("governance") })
     }
 }

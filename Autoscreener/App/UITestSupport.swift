@@ -178,6 +178,14 @@ nonisolated struct StubResearchService: ResearchServicing {
     func research(symbol: String) async throws -> CompanyResearch? { nil }
 }
 
+/// No-coverage governance stub: an empty report assesses to `.clean`, so the Gate-2 veto never fires
+/// under fixtures (the selection engine isn't driven there anyway).
+nonisolated struct StubGovernanceService: GovernanceServicing {
+    func report(symbol: String, period: GovernancePeriod) async throws -> GovernanceData {
+        GovernanceData(symbol: symbol, period: period)
+    }
+}
+
 enum UITestFixtures {
     // `lastPrice` is seeded so the paper-trading allocator has a price to size against
     // under fixtures (the screener tabs render the Last column from it too).

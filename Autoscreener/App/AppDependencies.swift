@@ -48,6 +48,8 @@ final class AppDependencies {
     // for the future StockDetail UI; not yet consumed by any screen or the selection engine.
     let analystRatingsService: any AnalystRatingsServicing
     let researchService: any ResearchServicing
+    // Gate-2 governance veto feed (insider/dilution) the selection engine consumes via StockbitDataProvider.
+    let governanceService: any GovernanceServicing
     // Single source of truth for screener + markets data, filled by the continuous
     // market-hours sweep. Every screener tab and the composite Watchlist read the
     // screener store; the Markets screen reads the market store. Nothing else fetches.
@@ -113,6 +115,7 @@ final class AppDependencies {
         self.orderTradeFlowService = useFixtures ? StubOrderTradeFlowService() : OrderTradeFlowService(apiClient: client)
         self.analystRatingsService = useFixtures ? StubAnalystRatingsService() : AnalystRatingsService(apiClient: client)
         self.researchService = useFixtures ? StubResearchService() : ResearchService(apiClient: client)
+        self.governanceService = useFixtures ? StubGovernanceService() : GovernanceService(apiClient: client)
 
         // Screener cache + sweep. Under fixtures/tests we start from an empty cache
         // (don't read a real user's file) and disable the continuous loop — the

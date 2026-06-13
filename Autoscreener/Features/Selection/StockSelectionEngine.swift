@@ -182,6 +182,20 @@ struct SelectionConfig: Sendable, Codable {
         var cap: Double                     // max |modifier|
         var topConcentrationN: Int          // top-N buying brokers for the surfaced buy-concentration read
     }
+    /// Gate-3 consensus tilt surface — FADES sell-side agreement (see `Modifiers.consensus`): a name
+    /// the engine already found cheap is haircut when analysts are also bullish, boosted when they are
+    /// bearish/neglecting it. Capped, sweepable, inert without coverage.
+    struct ConsensusParams: Sendable, Codable {
+        var cap: Double                     // max |modifier|
+        var targetUpsideSpanPct: Double     // consensus target upside (ratio) mapped onto a full signal
+    }
+    /// Gate-2 governance veto surface — which `.concern`-severity governance flags eliminate a name
+    /// (see `governanceVeto`). `period` is the insider-movement window the provider requests.
+    struct GovernanceParams: Sendable, Codable {
+        var period: GovernancePeriod
+        var vetoInsiderSelling: Bool        // veto on a concern-severity insider net-selling flag
+        var vetoDilution: Bool              // veto on a concern-severity recent/chronic dilution flag
+    }
     struct RegimeParams: Sendable, Codable {
         struct RiskWeights: Sendable, Codable {
             var valuationPercentile: Double // multiplied by 0..1 percentile
@@ -218,6 +232,8 @@ struct SelectionConfig: Sendable, Codable {
     var relativeValue: RelativeValueParams
     var seasonality: SeasonalityParams
     var accumulation: AccumulationParams
+    var consensus: ConsensusParams
+    var governance: GovernanceParams
 }
 
 /// What the regime is ALLOWED to set — never which stock to buy. Now Codable so
@@ -276,7 +292,9 @@ extension SelectionConfig {
         relativeValue: .init(cap: 0.03, cheaperMetricNames: [
             "Current PE Ratio (Annualised)", "Current Price to Book Value", "EV to EBITDA (TTM)"]),
         seasonality: .init(cap: 0.02, avgReturnSpanPct: 5.0),
-        accumulation: .init(cap: 0.03, topConcentrationN: 3))
+        accumulation: .init(cap: 0.03, topConcentrationN: 3),
+        consensus: .init(cap: 0.03, targetUpsideSpanPct: 0.5),
+        governance: .init(period: .oneYear, vetoInsiderSelling: true, vetoDilution: true))
 
     /// Stricter on quality/trust, lower exposure, fewer names.
     static var defensive: SelectionConfig {
@@ -344,6 +362,13 @@ struct SecurityData: Sendable {
     var peerComparison: PeerComparison? = nil        // comparison/v2/ratios — vs INDUSTRY/SECTOR
     var seasonality: Seasonality? = nil              // seasonality/{SYM} — monthly win-rate overlay
     var brokerDistribution: BrokerDistribution? = nil // order-trade/broker/distribution — bandar concentration
+    // Gate-3 consensus: sell-side analyst coverage (analyst-ratings/{SYM}). Absent (no coverage /
+    // paywall / fetch failure) ⇒ nil ⇒ the consensus tilt is inert, leaving the name unchanged.
+    var analystCoverage: AnalystCoverage? = nil
+    // Gate-2 governance veto: the assembled insider/dilution assessment. The provider computes it via
+    // the pure `GovernanceRules` (passing its own clock), so the engine stays deterministic/clock-free.
+    // Absent (Pro-paywalled insider feed / fetch failure) ⇒ nil ⇒ no veto, name byte-for-byte unchanged.
+    var governance: GovernanceAssessment? = nil
 }
 
 struct AnnualFinancials: Sendable {
@@ -759,6 +784,24 @@ enum Modifiers {
         let mean = parts.reduce(0, +) / Double(parts.count)
         return (max(-p.cap, min(p.cap, mean * p.cap)), why.joined(separator: " · "))
     }
+
+    /// Gate-3 consensus tilt — FADE the sell-side crowd (Howard Marks "different AND right"). A name
+    /// that already passed the MoS gate is HAIRCUT when sell-side consensus is also bullish (the rating
+    /// tally and the price-target upside agree ⇒ the value is likely already recognized, less edge
+    /// left) and BOOSTED when analysts are bearish or neglecting it (a contrarian bargain). The rating
+    /// tally and target upside are each mapped to [−1, 1] and averaged into a bullishness reading, which
+    /// is negated and scaled by the cap. Inert `(0, "")` — no audit line — when the name carries no
+    /// coverage (Stockbit `data: null`), so an un-covered name stays byte-for-byte unchanged.
+    static func consensus(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
+        let p = config.consensus
+        guard let c = s.analystCoverage, c.totalAnalyst > 0 else { return (0, "") }
+        let ratingPart = clampSigned(Double(c.totalBuy - c.totalSell) / Double(c.totalAnalyst))
+        let targetPart = clampSigned((c.targetUpsidePct ?? 0) / max(p.targetUpsideSpanPct, 1e-9))
+        let bullishness = clampSigned((ratingPart + targetPart) / 2)
+        let tilt = max(-p.cap, min(p.cap, -bullishness * p.cap))   // negative bullishness ⇒ fade
+        let upside = c.targetUpsidePct ?? 0
+        return (tilt, "\(c.recommendation) B/H/S \(c.totalBuy)/\(c.totalHold)/\(c.totalSell) · tgt \(pct(upside)) · fade")
+    }
 }
 
 // MARK: - 8b. Company archetype & selection profile (Phase 2 seam, §14)
@@ -825,6 +868,28 @@ struct Recommendation: Sendable {
     let audit: [String]
 }
 
+// MARK: - 9b. Governance veto (Gate-2 extension)
+
+/// The Gate-2 insider/dilution veto reason for a governance assessment, or `nil` to let the name
+/// through. Vetoes ONLY on a `.concern`-severity flag whose kind is enabled in config — insider
+/// net-selling past the concern threshold, or dilution (recent private placement / chronic raises).
+/// Lighter `.watch` flags, and the thin-float / concentration / related-party kinds, are deliberately
+/// NOT vetoes here: `LiquidityGate` already guards float, and per `GovernanceRules`' own discipline
+/// "one flag is a question, a pattern is a thesis" — those stay context, not an elimination.
+func governanceVeto(_ assessment: GovernanceAssessment, config: SelectionConfig.GovernanceParams) -> String? {
+    for flag in assessment.flags where flag.severity == .concern {
+        switch flag.kind {
+        case .insiderSelling:
+            if config.vetoInsiderSelling { return flag.kind.rawValue }
+        case .recentDilution, .chronicDilution:
+            if config.vetoDilution { return flag.kind.rawValue }
+        default:
+            break
+        }
+    }
+    return nil
+}
+
 // MARK: - 10. Engine
 
 protocol DataProvider: Sendable {
@@ -885,6 +950,16 @@ struct StockSelectionEngine: Sendable {
             }
             if eliminated { continue }
 
+            // Gate-2 governance veto (insider selling / dilution). Present-only, like the inline MoS
+            // gate below: a name with no governance data is neither vetoed nor audited, so it stays
+            // byte-for-byte unchanged. Runs before the MoS gate so a governance fail short-circuits.
+            if let gov = s.governance {
+                if let reason = governanceVeto(gov, config: config.governance) {
+                    audit.append("✗ Governance: \(reason)"); continue
+                }
+                audit.append("governance OK [\(gov.level.rawValue) · \(gov.flags.count) flag(s)]")
+            }
+
             let mos = profile.valuator.marginOfSafety(s, config: config)
             audit.append("MoS \(pct(mos)) vs req \(pct(policy.minMarginOfSafety))")
             if mos < policy.minMarginOfSafety { continue }
@@ -907,6 +982,9 @@ struct StockSelectionEngine: Sendable {
             if !se.1.isEmpty { composite += se.0; audit.append("seasonality \(signed(se.0)) [\(se.1)]") }
             let ac = Modifiers.accumulation(s, leaders: context.flowLeaders, config: config)
             if !ac.1.isEmpty { composite += ac.0; audit.append("accumulation \(signed(ac.0)) [\(ac.1)]") }
+            // Gate-3 consensus check — fade the sell-side crowd. Present-only like the overlays above.
+            let cs = Modifiers.consensus(s, config: config)
+            if !cs.1.isEmpty { composite += cs.0; audit.append("consensus \(signed(cs.0)) [\(cs.1)]") }
             composite = clamp01(composite)
             scored.append(Scored(data: s, composite: composite, marginOfSafety: mos,
                                  audit: audit, valuator: profile.valuator))

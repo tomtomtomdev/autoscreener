@@ -287,6 +287,8 @@ private func makeProvider(
     seasonality: any SeasonalityServicing = StubSeasonality(value: happySeasonality),
     orderFlow: any OrderTradeFlowServicing = StubOrderFlow(distributionValue: happyDistribution,
                                                            leaderboardValue: happyLeaderboard),
+    analyst: any AnalystRatingsServicing = StubAnalystRatingsService(),
+    governance: any GovernanceServicing = StubGovernanceService(),
     snapshot: any RegimeSnapshotProviding = StubSnapshot(value: makeSnapshot(valuation: 0.42, rate: .hike)),
     flow: any AggregateForeignFlowServicing = StubAggFlow(value: makeFlow(net: -1_500_000_000)),
     chart: any ChartServicing = StubChart(),
@@ -298,7 +300,7 @@ private func makeProvider(
         universe: universe, keystats: keystats, fundachart: fundachart, statements: statements,
         emitten: emitten, priceFeed: priceFeed, broker: broker,
         comparisonService: comparison, seasonalityService: seasonality, orderFlowService: orderFlow,
-        snapshotProvider: snapshot,
+        analyst: analyst, governance: governance, snapshotProvider: snapshot,
         flowService: flow, chartService: chart, commodityService: commodity, breadthService: breadth,
         breadthConstituents: ["BBCA"], sleeper: sleeper)
 }
