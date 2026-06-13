@@ -166,6 +166,18 @@ nonisolated struct StubOrderTradeFlowService: OrderTradeFlowServicing {
     }
 }
 
+// Slice 5 skeleton services (data-blocked). Both endpoints return empty payloads for every captured
+// symbol, so the stubs return the "no coverage" answer — matching the real degradation.
+
+nonisolated struct StubAnalystRatingsService: AnalystRatingsServicing {
+    func coverage(symbol: String) async throws -> AnalystCoverage? { nil }
+    func consensus(symbol: String) async throws -> [AnalystConsensusRow] { [] }
+}
+
+nonisolated struct StubResearchService: ResearchServicing {
+    func research(symbol: String) async throws -> CompanyResearch? { nil }
+}
+
 enum UITestFixtures {
     // `lastPrice` is seeded so the paper-trading allocator has a price to size against
     // under fixtures (the screener tabs render the Last column from it too).

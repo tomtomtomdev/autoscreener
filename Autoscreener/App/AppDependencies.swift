@@ -44,6 +44,10 @@ final class AppDependencies {
     let comparisonRatiosService: any ComparisonRatiosServicing
     let seasonalityService: any SeasonalityServicing
     let orderTradeFlowService: any OrderTradeFlowServicing
+    // Slice 5 skeleton services (data-blocked: empty payloads for every captured symbol). Registered
+    // for the future StockDetail UI; not yet consumed by any screen or the selection engine.
+    let analystRatingsService: any AnalystRatingsServicing
+    let researchService: any ResearchServicing
     // Single source of truth for screener + markets data, filled by the continuous
     // market-hours sweep. Every screener tab and the composite Watchlist read the
     // screener store; the Markets screen reads the market store. Nothing else fetches.
@@ -102,6 +106,8 @@ final class AppDependencies {
         self.comparisonRatiosService = useFixtures ? StubComparisonRatiosService() : ComparisonRatiosService(apiClient: client)
         self.seasonalityService = useFixtures ? StubSeasonalityService() : SeasonalityService(apiClient: client)
         self.orderTradeFlowService = useFixtures ? StubOrderTradeFlowService() : OrderTradeFlowService(apiClient: client)
+        self.analystRatingsService = useFixtures ? StubAnalystRatingsService() : AnalystRatingsService(apiClient: client)
+        self.researchService = useFixtures ? StubResearchService() : ResearchService(apiClient: client)
 
         // Screener cache + sweep. Under fixtures/tests we start from an empty cache
         // (don't read a real user's file) and disable the continuous loop — the
