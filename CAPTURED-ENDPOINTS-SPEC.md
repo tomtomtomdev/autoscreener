@@ -12,9 +12,10 @@ test / UITest conventions verbatim.
   `DataProvider` seam in `StockSelectionEngine.swift`, `StubSession`-driven Swift Testing
   tests, `UITestSupport` stub structs.
 - **Scope boundary:** this spec covers **services + DTOs + tests + plumbing into
-  `SecurityData`/`MarketContext` as optional best-effort fields**. It does **not** change
-  scorer weights or gates — feeding the new factors into scoring is a follow-up
-  calibration task (see `INTEGRATION.md` Phase 4 / `FactorRegression`).
+  `SecurityData`/`MarketContext` as optional best-effort fields** (Slices 1–4), **plus** the
+  scorer calibration that feeds those overlays into scoring as capped, inert-on-`nil` tilts
+  (Slice 6 — see §8). It deliberately does **not** add hard gates from these signals, and leaves
+  the cap values as paper-trading sweep targets.
 
 ---
 
@@ -308,5 +309,41 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 3. ✅ **Order-trade Tier 1** (Slice 2) — `distribution` (per-ticker bandar) + `top-stock` (market flow) in `OrderTradeFlowService`; `marketMovers` deferred.
 4. ✅ **`SeasonalityService`** (Slice 3) — monthly win-rate / avg-return overlay; fully captured.
 5. ✅ **Plumb 2–4 into `SecurityData`/`MarketContext`** (Slice 4) — best-effort optional fields, no scoring change; golden master unchanged.
-6. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ — envelope handling only; finalize after a covered-large-cap re-capture. **← next.**
-7. *(later)* Order-trade Tier 2 UI feeds + scorer calibration for the new factors.
+6. ✅ **Scorer calibration** (Slice 6) — feed the plumbed overlays into scoring as three capped, additive, inert-on-`nil` tilts (see §8). Golden master byte-for-byte unchanged. **← jumped ahead of skeletons (Slice 5) — it's the payoff and the data was already plumbed.**
+7. **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ (Slice 5) — envelope handling only; finalize after a covered-large-cap re-capture. **← next.**
+8. *(later)* Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps.
+
+---
+
+## 8. Scorer calibration — ✅ SHIPPED (Slice 6, 2026-06-13)
+
+The four plumbed overlays now feed scoring as **capped, additive modifiers** on the composite —
+parallel to the existing `flow` / `timing` tilts, **not** new scorers. Rationale: a new `Scorer`
+adds its weight to the composite's `num/den` denominator, diluting *every* name's score even at
+value 0 → it would move the golden master for all names. A modifier adds 0 when its overlay is
+absent and the engine appends **no audit line** for it, so any name without the data stays
+**byte-for-byte unchanged** (same ethos as Slice 4). The strict golden-master audit snapshot test
+passed **unmodified**; the calibration is proven by *new* tests that populate the overlays.
+
+All knobs live in `SelectionConfig` (the single calibration surface), added to `.balanced` and
+inherited by the derived presets:
+
+| Modifier (`Modifiers.*`) | Overlay | Signal | Default cap |
+|---|---|---|---|
+| `relativeValue` | `peerComparison` | subject vs `INDUSTRY`+`SECTOR` on PE / PBV / EV-EBITDA (verified `fitem_name`s); cheaper-than-both votes +1, richer −1, mixed 0; mean × cap | ±0.03 |
+| `seasonality` | `seasonality` | current month's `probabilityUpPct` (centred at 50) blended equally with `avgReturnPct`/`avgReturnSpanPct`; **soft, never a gate** | ±0.02 |
+| `accumulation` | `brokerDistribution` + `MarketContext.flowLeaders` | per-ticker net buy/sell imbalance (buy-concentration surfaced in the audit) + leaderboard membership (top-buy +1 / top-sell −1), averaged | ±0.03 |
+
+- **Determinism:** the seasonality "current month" is the **latest daily bar's month (UTC)** — no
+  wall clock, so the read is testable and never flaky.
+- **Threading:** `run()` fetches `marketContext` once and passes `context.flowLeaders` into
+  `accumulation`; the per-ticker overlays ride on `SecurityData` (Slice 4).
+- **Contract:** each modifier returns `(0, "")` exactly when its overlay is absent/unscoreable; a
+  present overlay always yields a non-empty rationale (audited even at a net-zero tilt).
+- **Config params:** `SelectionConfig.{relativeValue,seasonality,accumulation}` (new) — `cap`,
+  `cheaperMetricNames`, `avgReturnSpanPct`, `topConcentrationN`. Caps are starting points to sweep
+  against paper-trading, exactly like the `flow`/`timing`/bank betas.
+- **Tests:** `AutoscreenerTests/SelectionEngineOverlayModifierTests.swift` (20) — per-modifier units
+  (inert-on-`nil`, ±cap, clamp, missing-cell tolerance) + 2 engine-integration tests (favorable
+  overlays raise the composite and add ordered audit lines; overlay-less name has no tilt lines).
+  Full bundle green; golden master unchanged.
