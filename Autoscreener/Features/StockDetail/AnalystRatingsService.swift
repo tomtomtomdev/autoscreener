@@ -2,36 +2,50 @@ import Foundation
 
 // MARK: - Domain
 
-/// Sell-side analyst coverage for a symbol from Stockbit's `analyst-ratings/{SYM}` endpoint.
+/// Sell-side analyst coverage for a symbol from Stockbit's `analyst-ratings/{SYM}` endpoint:
+/// the consensus price target (mean / low / high vs current price), the headline recommendation,
+/// and the buy/hold/sell analyst tally.
 ///
-/// ⚠️ **Skeleton — populated shape UNVERIFIED.** In the 2026-06-11 capture this endpoint returned
-/// `data: null` for every captured symbol (TPIA, IHSG — neither carries sell-side coverage), so the
-/// service is built to degrade that `null` cleanly to "no coverage" (`nil`), **not** an error. The
-/// fields below mirror the *typical* analyst-rating block (price-target high/low/mean, the
-/// buy/hold/sell tally, analyst count, implied upside) but are **hypotheses**: their `CodingKeys` are
-/// not finalized. Confirm them against a re-capture from a covered large-cap (BBCA / BBRI / TLKM /
-/// ASII — see CAPTURED-ENDPOINTS-SPEC.md §6) before relying on any field. Every field is optional so a
-/// partial or differently-shaped payload still decodes to a non-`nil` "coverage exists" value.
+/// Shape verified against a covered large-cap re-capture (BBCA, 2026-06-12 — see
+/// CAPTURED-ENDPOINTS-SPEC.md §6). An uncovered name replies `data: null`, which the service degrades
+/// to `nil` ("no coverage"), so a `AnalystCoverage` value is always fully populated.
 nonisolated struct AnalystCoverage: Sendable, Equatable {
-    let targetHigh: Double?
-    let targetLow: Double?
-    let targetMean: Double?
-    let buyCount: Int?
-    let holdCount: Int?
-    let sellCount: Int?
-    let analystCount: Int?
-    let upsidePct: Double?
+    let priceTarget: AnalystPriceTarget
+    let recommendation: String          // "Buy" / "Hold" / "Sell" / "Strong Buy" … (verbatim)
+    let totalBuy: Int
+    let totalHold: Int
+    let totalSell: Int
+    let totalAnalyst: Int
+    let lastUpdated: String             // display date, e.g. "11 Jun 26"
+
+    /// Implied upside of the consensus (best) target over the current price, as a ratio
+    /// (`0.49` = +49%); `nil` when there is no positive current price to divide by.
+    var targetUpsidePct: Double? {
+        guard priceTarget.current > 0 else { return nil }
+        return (priceTarget.best - priceTarget.current) / priceTarget.current
+    }
 }
 
-/// One row of the analyst-consensus history from `analyst-ratings/{SYM}/consensus`.
-///
-/// ⚠️ **Skeleton — element shape UNVERIFIED.** The captured `data` was `[]` (no coverage), so the
-/// element fields are hypotheses pending a covered-large-cap re-capture (§6). All optional.
-nonisolated struct AnalystConsensusRow: Sendable, Equatable {
-    let date: String?
-    let rating: String?
-    let targetPrice: Double?
-    let analyst: String?
+/// The consensus price-target band and the price it is measured against (rupiah).
+nonisolated struct AnalystPriceTarget: Sendable, Equatable {
+    let best: Double                    // best_target — consensus / mean target
+    let low: Double                     // best_low_target
+    let high: Double                    // best_high_target
+    let current: Double                 // current_price at capture time
+}
+
+/// One forward-estimate series from `analyst-ratings/{SYM}/consensus` — a single line item
+/// (Revenue / Op. Profit / Net Income / EPS) with its actual-then-estimated values by year.
+nonisolated struct AnalystEstimateSeries: Sendable, Equatable {
+    let name: String                    // "Revenue", "Op. Profit", "Net Income", "EPS"
+    let items: [AnalystEstimate]
+}
+
+/// One year's figure within an `AnalystEstimateSeries`.
+nonisolated struct AnalystEstimate: Sendable, Equatable {
+    let year: Int
+    let isEstimate: Bool                // false = reported actual, true = forward analyst estimate
+    let value: Double?                  // parsed from the display string; `nil` if non-numeric
 }
 
 // MARK: - Service
@@ -47,17 +61,15 @@ nonisolated protocol AnalystRatingsServicing: Sendable {
     /// The symbol's analyst-rating block, or `nil` when the name carries no sell-side coverage
     /// (Stockbit replies `data: null`).
     func coverage(symbol: String) async throws -> AnalystCoverage?
-    /// The symbol's analyst-consensus history, or `[]` when there is no coverage (`data: []`/`null`).
-    func consensus(symbol: String) async throws -> [AnalystConsensusRow]
+    /// The symbol's forward consensus-estimate series, or `[]` when there is no coverage
+    /// (`data: []`/`null`).
+    func consensus(symbol: String) async throws -> [AnalystEstimateSeries]
 }
 
-/// Reads Stockbit's analyst coverage (`GET analyst-ratings/{SYM}` and `…/consensus`).
-///
-/// ⚠️ **Skeleton service.** Both endpoints returned empty payloads (`null` / `[]`) for every symbol
-/// in the source capture, so this wires the request shape + envelope handling + error mapping only:
-/// an empty payload is the legitimate "no coverage" answer (`nil` / `[]`), never a thrown error. The
-/// populated DTOs are finalized after a covered-large-cap re-capture (§3.4 / §6). Error mapping
-/// mirrors `KeystatsRatioService` / `SeasonalityService` (`401`→`.unauthorized`, `402|403`→`.paywall`).
+/// Reads Stockbit's analyst coverage (`GET analyst-ratings/{SYM}` and `…/consensus`). An empty
+/// payload (`null` / `[]`) is the legitimate "no coverage" answer (`nil` / `[]`), never a thrown
+/// error. Error mapping mirrors `KeystatsRatioService` / `SeasonalityService` (`401`→`.unauthorized`,
+/// `402|403`→`.paywall`).
 nonisolated final class AnalystRatingsService: AnalystRatingsServicing {
     private let apiClient: APIClient
     init(apiClient: APIClient) { self.apiClient = apiClient }
@@ -71,7 +83,7 @@ nonisolated final class AnalystRatingsService: AnalystRatingsServicing {
         }
     }
 
-    func consensus(symbol: String) async throws -> [AnalystConsensusRow] {
+    func consensus(symbol: String) async throws -> [AnalystEstimateSeries] {
         let data = try await rawData(Self.makeConsensusEndpoint(symbol: symbol))
         do {
             return try Self.parseConsensus(data)
@@ -103,69 +115,91 @@ nonisolated final class AnalystRatingsService: AnalystRatingsServicing {
         Endpoint(method: .get, path: "analyst-ratings/\(symbol)/consensus")
     }
 
-    /// Decodes the envelope; `data: null` ⇒ `nil` ("no coverage"). A present object maps through the
-    /// (unverified) DTO — fields that don't match the eventual real keys simply stay `nil`.
+    /// Decodes the envelope; `data: null` ⇒ `nil` ("no coverage").
     static func parseCoverage(_ data: Data) throws -> AnalystCoverage? {
         let envelope = try JSONDecoder().decode(StockbitEnvelope<CoverageDTO>.self, from: data)
         return envelope.data.map { dto in
             AnalystCoverage(
-                targetHigh: dto.targetHigh,
-                targetLow: dto.targetLow,
-                targetMean: dto.targetMean,
-                buyCount: dto.buyCount,
-                holdCount: dto.holdCount,
-                sellCount: dto.sellCount,
-                analystCount: dto.analystCount,
-                upsidePct: dto.upsidePct)
+                priceTarget: AnalystPriceTarget(
+                    best: dto.priceTarget.bestTarget,
+                    low: dto.priceTarget.bestLowTarget,
+                    high: dto.priceTarget.bestHighTarget,
+                    current: dto.priceTarget.currentPrice),
+                recommendation: dto.recommendation,
+                totalBuy: dto.totalBuy,
+                totalHold: dto.totalHold,
+                totalSell: dto.totalSell,
+                totalAnalyst: dto.totalAnalyst,
+                lastUpdated: dto.lastUpdated)
         }
     }
 
-    /// Decodes the envelope; `data: []` or `null` ⇒ `[]` ("no coverage").
-    static func parseConsensus(_ data: Data) throws -> [AnalystConsensusRow] {
-        let envelope = try JSONDecoder().decode(StockbitEnvelope<[ConsensusRowDTO]>.self, from: data)
-        return (envelope.data ?? []).map { dto in
-            AnalystConsensusRow(date: dto.date, rating: dto.rating,
-                                targetPrice: dto.targetPrice, analyst: dto.analyst)
+    /// Decodes the envelope; `data: []` or `null` ⇒ `[]` ("no coverage"). The real figure is the
+    /// display-string `value` (the wire `raw_value` is `0`), parsed via `DisplayNumber.parseScaledDecimal`
+    /// (handles `"118,573 B"` → `118_573e9` and bare decimals like EPS `"466.74"`).
+    static func parseConsensus(_ data: Data) throws -> [AnalystEstimateSeries] {
+        let envelope = try JSONDecoder().decode(StockbitEnvelope<[SeriesDTO]>.self, from: data)
+        return (envelope.data ?? []).map { series in
+            AnalystEstimateSeries(name: series.name, items: series.items.map { item in
+                AnalystEstimate(year: item.year,
+                                isEstimate: item.isEstimate,
+                                value: DisplayNumber.parseScaledDecimal(item.value))
+            })
         }
     }
 }
 
-// MARK: - DTO (Stockbit `GET /analyst-ratings/{SYM}` — UNVERIFIED, see §6)
+// MARK: - DTO (Stockbit `GET /analyst-ratings/{SYM}` — verified vs BBCA, §6)
 
-/// ⚠️ **Hypothesis.** Captured `data` was `null`, so these keys are best-guess and not finalized.
-/// All optional, so wrong guesses degrade to `nil` rather than failing the decode. Re-capture a
-/// covered large-cap (§6) before trusting any of these.
+/// `data` = `{ price_target{ best_target, best_low_target, best_high_target, current_price },
+/// recommendation, total_buy, total_sell, total_hold, total_analyst, last_updated }`. Targets are
+/// JSON ints (decoded as `Double` for the upside arithmetic).
 private struct CoverageDTO: Decodable {
-    let targetHigh: Double?
-    let targetLow: Double?
-    let targetMean: Double?
-    let buyCount: Int?
-    let holdCount: Int?
-    let sellCount: Int?
-    let analystCount: Int?
-    let upsidePct: Double?
+    let priceTarget: PriceTargetDTO
+    let recommendation: String
+    let totalBuy: Int
+    let totalSell: Int
+    let totalHold: Int
+    let totalAnalyst: Int
+    let lastUpdated: String
     enum CodingKeys: String, CodingKey {
-        case targetHigh = "target_high"
-        case targetLow = "target_low"
-        case targetMean = "target_mean"
-        case buyCount = "buy"
-        case holdCount = "hold"
-        case sellCount = "sell"
-        case analystCount = "total_analyst"
-        case upsidePct = "upside"
+        case priceTarget = "price_target"
+        case recommendation
+        case totalBuy = "total_buy"
+        case totalSell = "total_sell"
+        case totalHold = "total_hold"
+        case totalAnalyst = "total_analyst"
+        case lastUpdated = "last_updated"
+    }
+
+    struct PriceTargetDTO: Decodable {
+        let bestTarget: Double
+        let bestLowTarget: Double
+        let bestHighTarget: Double
+        let currentPrice: Double
+        enum CodingKeys: String, CodingKey {
+            case bestTarget = "best_target"
+            case bestLowTarget = "best_low_target"
+            case bestHighTarget = "best_high_target"
+            case currentPrice = "current_price"
+        }
     }
 }
 
-/// ⚠️ **Hypothesis.** Captured `data` was `[]`; element keys are best-guess (§6). All optional.
-private struct ConsensusRowDTO: Decodable {
-    let date: String?
-    let rating: String?
-    let targetPrice: Double?
-    let analyst: String?
-    enum CodingKeys: String, CodingKey {
-        case date
-        case rating
-        case targetPrice = "target_price"
-        case analyst
+/// `data[]` = `{ name, items: [{ year, is_estimate, value: String, raw_value }] }`. `raw_value` is
+/// `0` on the wire (the figure lives in the display-string `value`), so it is left undeclared.
+private struct SeriesDTO: Decodable {
+    let name: String
+    let items: [ItemDTO]
+
+    struct ItemDTO: Decodable {
+        let year: Int
+        let isEstimate: Bool
+        let value: String
+        enum CodingKeys: String, CodingKey {
+            case year
+            case isEstimate = "is_estimate"
+            case value
+        }
     }
 }

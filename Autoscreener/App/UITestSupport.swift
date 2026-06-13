@@ -171,7 +171,7 @@ nonisolated struct StubOrderTradeFlowService: OrderTradeFlowServicing {
 
 nonisolated struct StubAnalystRatingsService: AnalystRatingsServicing {
     func coverage(symbol: String) async throws -> AnalystCoverage? { nil }
-    func consensus(symbol: String) async throws -> [AnalystConsensusRow] { [] }
+    func consensus(symbol: String) async throws -> [AnalystEstimateSeries] { [] }
 }
 
 nonisolated struct StubResearchService: ResearchServicing {
