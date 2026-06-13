@@ -169,6 +169,31 @@ nonisolated enum MacroParsing {
         return out
     }
 
+    // MARK: - JSON (FRED API)
+
+    /// FRED `series/observations?…&file_type=json` — the keyed API path. Decodes the
+    /// `observations` array into the same `Observation` shape the CSV path yields, so the
+    /// sort/trend logic and builders (`toMacroSeries`) are shared. Each `value` is a
+    /// *string* (`"."` = missing, dropped by `parseFREDValue`). Returns `[]` on any decode
+    /// failure — including FRED's `{ "error_code", "error_message" }` body for a bad/absent
+    /// key — so a bad response degrades one series rather than throwing.
+    static func parseFREDJSON(_ text: String) -> [Observation] {
+        guard let data = text.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(FREDObservationsResponse.self, from: data)
+        else { return [] }
+        return decoded.observations.compactMap { row in
+            guard let value = parseFREDValue(row.value) else { return nil }
+            return (raw: row.date, value: value)
+        }
+    }
+
+    /// The slice of the `series/observations` JSON payload we read — `date` + the string
+    /// `value`. Other top-level fields (`count`, `realtime_*`, units, …) are ignored.
+    private struct FREDObservationsResponse: Decodable {
+        struct Row: Decodable { let date: String; let value: String }
+        let observations: [Row]
+    }
+
     // MARK: - BI-rate HTML
 
     /// Scrape the BI-Rate history table (bi.go.id — server-rendered HTML, no Cloudflare).

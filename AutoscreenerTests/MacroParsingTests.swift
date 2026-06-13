@@ -55,6 +55,23 @@ import Testing
         #expect(obs.map(\.value) == [4.30, 4.35])
     }
 
+    // MARK: - JSON (FRED API)
+
+    @Test func fredJSONParsesObservationsAndDropsMissing() {
+        // String values, `"."` = missing — exactly the API's shape.
+        let json = #"{"observations":[{"date":"2026-06-01","value":"4.30"},{"date":"2026-06-02","value":"."},{"date":"2026-06-03","value":"4.35"}]}"#
+        let obs = MacroParsing.parseFREDJSON(json)
+        #expect(obs.map(\.raw) == ["2026-06-01", "2026-06-03"])
+        #expect(obs.map(\.value) == [4.30, 4.35])
+    }
+
+    @Test func fredJSONIsEmptyOnErrorBody() {
+        // FRED's bad-key response has no `observations` key → empty, never throws.
+        let err = #"{"error_code":400,"error_message":"Bad Request. The value for variable api_key is not registered."}"#
+        #expect(MacroParsing.parseFREDJSON(err).isEmpty)
+        #expect(MacroParsing.parseFREDJSON("not json").isEmpty)
+    }
+
     // MARK: - Direction & trend
 
     @Test func directionClassifiesLastMove() {

@@ -93,7 +93,12 @@ final class AppDependencies {
         // fetched on-device — public, unauthenticated feeds off the same logging session,
         // replacing the daily Python `refresh_bi` patch and the scraper's `macro` block.
         self.biRateService = useFixtures ? StubBIRateService() : BIRateService(session: session)
-        self.fredMacroService = useFixtures ? StubFREDMacroService() : FREDMacroService(session: session)
+        // FRED macro now prefers the keyed JSON API when a key is seeded in the Keychain
+        // (`FREDKeyStore`, seeded once via the `security` CLI — see that type); absent, it
+        // falls back to the keyless CSV endpoint, so the leg still works without a key.
+        self.fredMacroService = useFixtures
+            ? StubFREDMacroService()
+            : FREDMacroService(session: session, apiKey: FREDKeyStore().apiKey)
         // Breadth fans out per-constituent chart calls, so it wraps whichever chart
         // service we resolved (real or the deterministic stub under UI fixtures).
         self.breadthService = useFixtures ? StubBreadthService() : BreadthService(chartService: self.chartService)
