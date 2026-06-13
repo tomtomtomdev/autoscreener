@@ -382,23 +382,56 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     explicit NON-triggers asserted as HOLD — a −68% paper drawdown with intact gates, and a price ABOVE
     IV but inside the band — plus the config toggles, bank-archetype routing, and the reviewer
     end-to-end). **Full `AutoscreenerTests`: 679 passed, 0 failures**, golden master byte-for-byte.
-  - **Phase 1 deliberately re-evaluates CURRENT data only.** Deferred: **Phase 2** persist an
-    `EntryThesis` snapshot on the held position (true "thesis-was-wrong" / "IV collapsed since entry" +
-    Lynch category-aware bands); **Phase 3** `PaperTradingStore: HoldingsProvider` conformance + feed
-    `ExitDecision`s into the paper-trading plan (today it only sells via rebalance-down, never a *thesis*
-    exit) + a "Positions to review" surface. Committed `28cbe1c` on
-    `feat/gate3-consensus-gate2-governance` (UNPUSHED, atop the Gate-2/3 commit `75499cc`).
+  - **Phase 1 re-evaluates CURRENT data only.** **Phase 2 is now DONE (below).** Still deferred:
+    **Phase 3** `PaperTradingStore: HoldingsProvider` conformance + feed `ExitDecision`s into the
+    paper-trading plan (today it only sells via rebalance-down, never a *thesis* exit) + a "Positions to
+    review" surface. Committed `0fd315e` on `feat/gate3-consensus-gate2-governance` (UNPUSHED, atop the
+    Gate-2/3 commit `75499cc`).
+
+- **Gate-5 exit/sell — Phase 2 ✅ (2026-06-13) — THESIS-BREAK + LYNCH CATEGORY-AWARE BANDS.** The
+  evaluator can now see what current data alone cannot, by reading a persisted entry snapshot. Purely
+  additive (every Phase-1 path is byte-for-byte unchanged; golden master untouched), all inside
+  `ExitEvaluator.swift` + three trailing-defaulted `ExitParams` fields. Skills consulted in-session
+  (`common-stocks-uncommon-profits` "When to Sell", `one-up-on-wall-street` six categories), not priors:
+  - **`EntryThesis`** `{ entryDate, entryIntrinsicValue, entryMarginOfSafety, lynchCategory? }` + an
+    `EntryThesis.snapshot(of:profile:config:lynchCategory:entryDate:)` factory (the clean seam Phase 3's
+    store calls on a fill — pure/clock-free, records the archetype valuator's IV/MoS at entry). Optional
+    `thesis` field added to `HeldPosition` (trailing default `nil` ⇒ Phase-1 positions review as before).
+  - **TIER 1c — thesis break (Fisher Reason 1/2):** inserted between the governance veto and the Graham
+    valuation tier. If the re-computed IV has fallen ≤ `ExitParams.ivCollapseFloor` (default **−0.35**)
+    vs `entryIntrinsicValue` ⇒ `.exit "thesis broke: …"`. **Price-INDEPENDENT** — a name down on price
+    with an intact/higher IV holds; a name up on price with a collapsed IV sells. Distinct from the
+    Graham tier (price-vs-current-IV); checked first so it owns the headline when both fire. Skipped when
+    entry IV ≤ 0 (no baseline).
+  - **Lynch category-aware band:** the Graham valuation tier's floor is now `exitMarginFloor ×
+    multiplier(category)`, from `ExitParams.lynchExitFloorMultiplier` (default `fastGrower 1.5 / assetPlay
+    1.3 / turnaround 1.0 / stalwart 0.7 / cyclical 0.6 / slowGrower 0.5`). >1 WIDENS (let winners run),
+    <1 TIGHTENS (recycle on a modest gain; don't ride a cyclical past the peak). No category ⇒ ×1.0 ⇒ the
+    flat Phase-1 floor. The whole layer (Tier 1c + band) is gated by `ExitParams.honorEntryThesis`
+    (default true; false ⇒ Phase-1 behaviour even with a thesis attached — symmetric with the honor* flags).
+  - **Tests:** 10 new cases in `ExitEvaluatorTests.swift` (`EntryThesisExitTests`): intact-thesis = hold,
+    IV-collapse exit, mild-dip hold, IV-rose (winner) hold, fastGrower widens→hold, slowGrower
+    tightens→exit, Tier-1c precedence over the price tier, honorEntryThesis=false suppression, the
+    snapshot factory, and bank-archetype (JustifiedP/B) IV collapse. **Full `AutoscreenerTests`: TEST
+    SUCCEEDED** (689 cases), golden master (`SelectionEngineCharacterizationTests`) byte-for-byte unchanged.
+  - **Still deferred to Phase 3:** wiring the snapshot into `PaperTradingStore` (recording it on a fill)
+    + feeding `ExitDecision`s into the plan + a "Positions to review" surface. A Lynch *classifier*
+    (auto-deriving `lynchCategory`) is also out of scope — the category is carried in the snapshot today.
 
 **Next action:** **Tier-A is feature-complete, calibrated, user-visible, and now has Gate-5 sell
-discipline (Phase 1).** Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
+discipline (Phase 1 + Phase 2).** Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
 feed):** open the **Today's Picks** screen (or call `AppDependencies.selectionRunner.run(config:
 .balanced)`) against a live Stockbit session and eyeball the audit trail for a real industrial + a
 real bank. This couldn't be done in-session (no auth/network); the deterministic end-to-end (4.3) is
 the offline stand-in. (2) **Optional bank-rate calibration:** source live Rf/ERP and decide
 single-factor CAPM β vs the two-factor timing β for the bank valuator (see Phase 4 scope note). (3)
 **Optional polish:** run the `TodaysPicksUITests` on a single-display / CI box (it's blocked only by
-this machine's XCUITest automation-mode timeout); add a config/preset picker to the screen. Phase 5
-(Tier-B backtest) stays blocked on persistence (§9). Read this Status header to resume.
+this machine's XCUITest automation-mode timeout); add a config/preset picker to the screen. (4)
+**Gate-5 Phase 3 (deferred, no auth needed):** `PaperTradingStore: HoldingsProvider` conformance —
+record an `EntryThesis` snapshot on each buy fill (via `EntryThesis.snapshot(…)`), feed
+`PositionReviewer` decisions into the paper-trading plan, and add a "Positions to review" surface; also
+surface Gates 2/3/5 in `TodaysPicksView`. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
+Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root
 (`proxseer_collection.json`, **gitignored**) so it's reachable; `-2.json` (BBCA) + `-3.json` are in

@@ -257,3 +257,146 @@ private func neutralContext() -> MarketContext {
         #expect(decisions.isEmpty)
     }
 }
+
+// MARK: - 3. Gate-5 PHASE 2 — EntryThesis (thesis-break + Lynch category-aware bands)
+//
+// Phase 1 re-evaluates CURRENT data only. Phase 2 persists an `EntryThesis` snapshot at purchase so the
+// evaluator can also see two things current data alone cannot — both grounded in the buy-side skills
+// REVERSED (consulted in-session, not from priors):
+//
+//   • Fisher, "When to Sell" — Reason 1 (a mistake was made in the original analysis) and Reason 2 (the
+//     business has deteriorated) both surface as the re-computed intrinsic value FALLING materially below
+//     the IV that justified the purchase. This is independent of price (distinct from the Graham
+//     overvaluation tier): a name can be DOWN on price with an intact/higher IV (hold), or UP on price
+//     with a collapsed IV (sell). Fisher's Reason 3 (a superior opportunity) stays the buy engine's job.
+//   • Lynch, six categories — each has its own sell discipline, modelled as a multiplier on the exit
+//     band: fast growers / asset plays run (>1, wider band); stalwarts / cyclicals / slow growers get
+//     recycled on modest gains (<1, tighter band). Absent category ⇒ ×1.0 ⇒ the flat Phase-1 floor.
+//
+// Test List (one behaviour per test, simplest first):
+//  17. thesis present, IV unchanged, no category        → .hold   (thesis path defaults to Phase 1)
+//  18. IV collapsed ≥ floor since entry, price < cur IV  → .exit   (Fisher reason 1/2, price-independent)
+//  19. IV dipped only slightly since entry               → .hold   (a temporary dip is NOT a break)
+//  20. IV ROSE since entry (winner), price < cur IV      → .hold   (entry IV is a floor, not a ceiling)
+//  21. Lynch fastGrower widens the band                  → .hold   (a flat-floor exit now holds)
+//  22. Lynch slowGrower tightens the band                → .exit   (a flat-floor hold now exits)
+//  23. IV-collapse fires BEFORE the price tier           → reason is the thesis-break, not "ran past IV"
+//  24. honorEntryThesis = false                          → thesis ignored (Phase-1 behaviour)
+//  25. EntryThesis.snapshot factory                      → builds entryIV/entryMoS from the valuator
+//  26. bank: justified-P/B IV collapses (ROE fell)       → .exit   (financial-archetype routing)
+
+private func thesis(entryIV: Double, mos: Double = 0.30, category: LynchCategory? = nil) -> EntryThesis {
+    EntryThesis(entryDate: day, entryIntrinsicValue: entryIV, entryMarginOfSafety: mos, lynchCategory: category)
+}
+
+private func heldWithThesis(_ t: EntryThesis, ticker: Ticker = "HELD", avgCost: Double = 1000) -> HeldPosition {
+    HeldPosition(ticker: ticker, shares: 1000, avgCost: avgCost, thesis: t)
+}
+
+// Industrial Graham IV for makeSecurity = √(22.5 · eps · 1200), capped by NCAV/share 2500.
+//   eps 150 → √(22.5·150·1200) ≈ 2012   (the baseline "entry" IV)
+//   eps  60 → √(22.5· 60·1200) ≈ 1273   (≈ −37% vs 2012: a collapse)
+//   eps 130 → √(22.5·130·1200) ≈ 1873   (≈  −7% vs 2012: a mild dip)
+//   eps 200 → √(22.5·200·1200) ≈ 2324   (≈ +15% vs 2012: a compounding winner)
+
+@Suite struct EntryThesisExitTests {
+
+    @Test func intactThesisHoldsLikePhase1() {
+        // A position that carries a thesis but is otherwise intact (IV unchanged, no Lynch category)
+        // must behave exactly like the Phase-1 no-thesis path: hold.
+        let pos = heldWithThesis(thesis(entryIV: 2012))
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 900), policy: neutral)
+        #expect(d.action == .hold)
+    }
+
+    @Test func intrinsicValueCollapseSinceEntryExits() {
+        // Current IV ≈ 1273 vs entry 2012 ⇒ −37% ≤ the −35% collapse floor ⇒ the thesis broke. Price 900
+        // is BELOW current IV (MoS positive) so the Graham overvaluation tier would HOLD — only the
+        // entry-relative collapse can sell this, which is the whole point of Phase 2.
+        let pos = heldWithThesis(thesis(entryIV: 2012))
+        let s = makeSecurity(price: 900, eps: 60)
+        let d = ExitEvaluator().evaluate(pos, data: s, policy: neutral)
+        #expect(d.action == .exit)
+        #expect(d.reason.hasPrefix("thesis broke"))
+    }
+
+    @Test func smallIntrinsicValueDipSinceEntryHolds() {
+        // Current IV ≈ 1873 vs entry 2012 ⇒ only −7%, well inside the −35% floor ⇒ a temporary dip, not
+        // a broken thesis (Fisher's non-trigger). Hold.
+        let pos = heldWithThesis(thesis(entryIV: 2012))
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 900, eps: 130), policy: neutral)
+        #expect(d.action == .hold)
+    }
+
+    @Test func intrinsicValueRoseSinceEntryHolds() {
+        // The compounding winner: current IV ≈ 2324 > entry 2012. Entry IV is a FLOOR for the break test,
+        // never a ceiling — a higher IV is the opposite of a thesis break. Hold (even bought expensive).
+        let pos = heldWithThesis(thesis(entryIV: 2012), avgCost: 1800)
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 1000, eps: 200), policy: neutral)
+        #expect(d.action == .hold)
+    }
+
+    @Test func lynchFastGrowerWidensTheBand() {
+        // Price 2700 vs IV ≈ 2012 ⇒ MoS ≈ −0.34, which exits at the flat −0.30 floor (see Phase-1 test
+        // #7). As a fast grower the band widens to −0.30 × 1.5 = −0.45, so −0.34 is now inside it ⇒ hold:
+        // Lynch lets a fast grower run while the story holds. IV is unchanged, so Tier 1c does not fire.
+        let pos = heldWithThesis(thesis(entryIV: 2012, category: .fastGrower))
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 2700), policy: neutral)
+        #expect(d.action == .hold)
+    }
+
+    @Test func lynchSlowGrowerTightensTheBand() {
+        // Price 2400 vs IV ≈ 2012 ⇒ MoS ≈ −0.19, which HOLDS at the flat −0.30 floor. As a slow grower
+        // the band tightens to −0.30 × 0.5 = −0.15, so −0.19 now breaches it ⇒ exit: Lynch takes the
+        // modest gain and recycles rather than riding a slow grower into overvaluation.
+        let pos = heldWithThesis(thesis(entryIV: 2012, category: .slowGrower))
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 2400), policy: neutral)
+        #expect(d.action == .exit)
+        #expect(d.reason.contains("intrinsic value"))
+    }
+
+    @Test func intrinsicValueCollapseTakesPrecedenceOverPriceTier() {
+        // Both would exit: IV collapsed (1273 vs 2012, −37%) AND price 2000 has run past current IV
+        // (MoS ≈ −0.57 ≤ −0.30). Tier 1c is checked first, so the reason is the thesis-break — the more
+        // fundamental signal — not the price-overvaluation headline.
+        let pos = heldWithThesis(thesis(entryIV: 2012))
+        let d = ExitEvaluator().evaluate(pos, data: makeSecurity(price: 2000, eps: 60), policy: neutral)
+        #expect(d.action == .exit)
+        #expect(d.reason.hasPrefix("thesis broke"))
+    }
+
+    @Test func honorEntryThesisFalseSuppressesTheThesisLayer() {
+        // With the toggle off, a collapsed-IV position behaves like Phase 1: Tier 1c is skipped, and at
+        // price 900 (< current IV 1273) the Graham tier holds. Symmetric with the other honor* toggles.
+        var cfg = SelectionConfig.balanced
+        cfg.exit.honorEntryThesis = false
+        let pos = heldWithThesis(thesis(entryIV: 2012))
+        let d = ExitEvaluator(config: cfg).evaluate(pos, data: makeSecurity(price: 900, eps: 60), policy: neutral)
+        #expect(d.action == .hold)
+    }
+
+    @Test func snapshotFactoryRecordsValuatorIVAndMoSAtEntry() {
+        // The seam Phase 3's paper-trading store calls on a fill: snapshot the archetype valuator's IV +
+        // MoS at entry. Clock-free — the caller injects entryDate.
+        let cfg = SelectionConfig.balanced
+        let s = makeSecurity(price: 1000)
+        let profile = StockSelectionEngine.defaultProfile(for: s, config: cfg)
+        let t = EntryThesis.snapshot(of: s, profile: profile, config: cfg, lynchCategory: .stalwart, entryDate: day)
+        #expect(abs(t.entryIntrinsicValue - profile.valuator.intrinsicValue(s, config: cfg)) < 1e-6)
+        #expect(abs(t.entryMarginOfSafety - profile.valuator.marginOfSafety(s, config: cfg)) < 1e-9)
+        #expect(t.lynchCategory == .stalwart)
+        #expect(t.entryDate == day)
+    }
+
+    @Test func bankJustifiedPBCollapseSinceEntryExits() {
+        // Financial archetype (sector "Keuangan") routes Tier 1c through JustifiedPBValuator. ROE has
+        // fallen from the strong level at entry to 0.08, collapsing the ROE-justified P/B (and thus IV)
+        // far below the entry snapshot ⇒ thesis broke. bvps 200 keeps CapitalStrength passing (equity
+        // 200B / assets 2,000B = 10% ≥ 6% floor) so Tier 1a does not pre-empt the thesis tier.
+        let bank = makeSecurity(ticker: "BANK", sector: "Keuangan", price: 300, bvps: 200, roe: 0.08)
+        let pos = heldWithThesis(thesis(entryIV: 300, category: .stalwart), ticker: "BANK")
+        let d = ExitEvaluator().evaluate(pos, data: bank, policy: neutral)
+        #expect(d.action == .exit)
+        #expect(d.reason.hasPrefix("thesis broke"))
+    }
+}

@@ -1,6 +1,7 @@
 import Foundation
 
 private func pctString(_ x: Double) -> String { String(format: "%.0f%%", x * 100) }
+private func ivString(_ x: Double) -> String { String(format: "%.0f", x) }
 
 // MARK: - Gate-5 — exit / sell discipline
 //
@@ -23,8 +24,14 @@ private func pctString(_ x: Double) -> String { String(format: "%.0f%%", x * 100
 // winner earns a higher IV and is not sold on price alone — exactly Fisher's rule.
 //
 // Pure and clock-free, like the buy engine: "now" enters only at the provider edge (which already
-// injects the clock when it assembles `GovernanceAssessment`). Phase 1 re-evaluates CURRENT data only;
-// a persisted entry-thesis snapshot (true "thesis-was-wrong" / "IV collapsed since entry") is Phase 2.
+// injects the clock when it assembles `GovernanceAssessment`).
+//
+// Phase 2 adds a persisted `EntryThesis` snapshot (see below), so the review also sees what current
+// data alone cannot: Tier 1c flags a thesis break when the re-computed IV has COLLAPSED vs the entry IV
+// (Fisher Reason 1/2 — "a mistake was made" / the business deteriorated, price-independent), and the
+// Graham valuation band is tilted per the held name's Lynch category. Both are inert when no thesis is
+// attached, so a Phase-1 position reviews byte-for-byte as before. Wiring the snapshot into the
+// paper-trading store (recording it on a fill, surfacing the decisions) remains Phase 3.
 
 // MARK: - Boundary DTOs
 
@@ -36,6 +43,45 @@ struct HeldPosition: Sendable, Equatable {
     let ticker: Ticker
     let shares: Double
     let avgCost: Double
+    /// Phase 2: the snapshot of WHY this name was bought, taken at entry. Absent (the Phase-1 shape, and
+    /// any position whose store predates Phase 2) ⇒ the evaluator falls back to current-data-only review.
+    var thesis: EntryThesis? = nil
+}
+
+/// A persisted snapshot of the buy thesis, taken at entry. It lets Gate-5 see what current data alone
+/// cannot — the two Fisher sell reasons Phase 1 was blind to:
+///   • Reason 1 (a mistake in the original analysis) and Reason 2 (the business has deteriorated) both
+///     show up as the re-computed intrinsic value FALLING materially below `entryIntrinsicValue` —
+///     independent of price (a winner whose price rose but IV held is NOT this).
+///   • Lynch's category-specific sell discipline (`lynchCategory`): how much overvaluation to tolerate
+///     before recycling differs by category (fast growers run; slow growers / stalwarts get recycled).
+/// Clock-free like the evaluator: `entryDate` is carried data for the audit, never read as "now".
+struct EntryThesis: Sendable, Equatable {
+    let entryDate: Date
+    /// IV the position's archetype valuator computed at purchase — the baseline the break test measures
+    /// against. The break tier is inert unless this is > 0 (a bought name should have had a positive IV).
+    let entryIntrinsicValue: Double
+    /// The margin of safety we bought at (the buy floor was cleared). Audit-only today; a future
+    /// "MoS-deteriorated-since-entry" refinement can read it. Carried so the snapshot is faithful.
+    let entryMarginOfSafety: Ratio
+    /// The Lynch category the name was bought as. nil ⇒ the flat exit band (no category-aware tilt).
+    let lynchCategory: LynchCategory?
+}
+
+extension EntryThesis {
+    /// Snapshot a name's thesis at entry using its archetype valuator — the clean seam Phase 3's
+    /// paper-trading store calls when a buy fills. Pure / clock-free: the caller injects `entryDate`
+    /// (and, until a classifier exists, the `lynchCategory` it recorded for the name).
+    static func snapshot(of s: SecurityData,
+                         profile: SelectionProfile,
+                         config: SelectionConfig,
+                         lynchCategory: LynchCategory? = nil,
+                         entryDate: Date) -> EntryThesis {
+        EntryThesis(entryDate: entryDate,
+                    entryIntrinsicValue: profile.valuator.intrinsicValue(s, config: config),
+                    entryMarginOfSafety: profile.valuator.marginOfSafety(s, config: config),
+                    lynchCategory: lynchCategory)
+    }
 }
 
 /// What Gate-5 decides for one held name.
@@ -110,13 +156,41 @@ struct ExitEvaluator: Sendable {
             return decide(.exit, "Governance: \(reason)")
         }
 
-        // TIER 2 — VALUATION (Graham). Price has run PAST the re-computed intrinsic value by the exit
-        // band. Asymmetric vs the buy MoS floor on purpose (Fisher): a rising price alone is not a
-        // sell, so this fires only at a NEGATIVE margin. A loss-maker / no-value name computes IV 0 ⇒
-        // MoS −1 ⇒ exit, symmetric with the buy side that would never have bought it.
+        // Phase 2: optionally read the persisted entry thesis. Absent thesis OR honorEntryThesis = false
+        // ⇒ the two thesis-aware behaviours below (Tier 1c + the Lynch band) are inert and the evaluator
+        // is byte-for-byte Phase 1.
+        let thesis = config.exit.honorEntryThesis ? position.thesis : nil
+
+        // TIER 1c — THESIS BREAK (Fisher Reasons 1 & 2). The valuator's CURRENT intrinsic value has
+        // fallen materially below the IV that justified the purchase: either the original analysis was
+        // too rosy (Reason 1) or the business has deteriorated (Reason 2). PRICE-INDEPENDENT — a name can
+        // be down on price with an intact/higher IV (hold), or up on price with a collapsed IV (sell), so
+        // this is distinct from the Graham overvaluation tier below. Skipped when entry IV ≤ 0 (no
+        // baseline to measure against). Checked BEFORE valuation: a broken thesis is the more fundamental
+        // sell reason, so it should own the headline when both fire.
+        if let t = thesis, t.entryIntrinsicValue > 0 {
+            let currentIV = profile.valuator.intrinsicValue(s, config: config)
+            let ivChange = (currentIV - t.entryIntrinsicValue) / t.entryIntrinsicValue
+            audit.append("entry IV \(ivString(t.entryIntrinsicValue)) → current IV \(ivString(currentIV)) (\(pctString(ivChange)))")
+            if ivChange <= config.exit.ivCollapseFloor {
+                return decide(.exit, "thesis broke: intrinsic value \(pctString(ivChange)) since entry")
+            }
+        }
+
+        // TIER 2 — VALUATION (Graham), with Lynch's category-aware band. Price has run PAST the
+        // re-computed intrinsic value by the exit band. Asymmetric vs the buy MoS floor on purpose
+        // (Fisher): a rising price alone is not a sell, so this fires only at a NEGATIVE margin. Lynch's
+        // sell discipline tilts the band by category — a fast grower's band WIDENS (let the winner run), a
+        // slow grower's / stalwart's TIGHTENS (recycle on a modest gain). No category ⇒ ×1.0 ⇒ the flat
+        // floor. A loss-maker / no-value name computes IV 0 ⇒ MoS −1 ⇒ exit, symmetric with the buy side.
         let mos = profile.valuator.marginOfSafety(s, config: config)
-        audit.append("MoS \(pctString(mos)) vs exit floor \(pctString(config.exit.exitMarginFloor))")
-        if mos <= config.exit.exitMarginFloor {
+        let multiplier = thesis?.lynchCategory.flatMap { config.exit.lynchExitFloorMultiplier[$0] } ?? 1.0
+        let floor = config.exit.exitMarginFloor * multiplier
+        if let cat = thesis?.lynchCategory {
+            audit.append("Lynch \(cat.rawValue): band \(pctString(config.exit.exitMarginFloor)) ×\(String(format: "%.2f", multiplier)) = \(pctString(floor))")
+        }
+        audit.append("MoS \(pctString(mos)) vs exit floor \(pctString(floor))")
+        if mos <= floor {
             return decide(.exit, "price ran past intrinsic value (MoS \(pctString(mos)))")
         }
 

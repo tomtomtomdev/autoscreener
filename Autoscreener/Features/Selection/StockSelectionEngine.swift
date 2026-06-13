@@ -214,6 +214,24 @@ struct SelectionConfig: Sendable, Codable {
         /// risk-off is owned by the paper-trading `AllocationEngine`'s exposure bands — this is only the
         /// deep-risk-off acknowledgement, not a duplicate of that sizing.
         var regimeTrimOnRiskOff: Bool = true
+        // --- Phase 2: entry-thesis–aware exits (see `EntryThesis` / `ExitEvaluator` Tier 1c). All three
+        // are inert unless the held position carries an `EntryThesis`, so Phase-1 behaviour is unchanged.
+        /// Master gate for the whole entry-thesis layer (the IV-collapse tier AND the Lynch band). false
+        /// ⇒ behave exactly like Phase 1 even when a thesis is present. Symmetric with the honor* flags.
+        var honorEntryThesis: Bool = true
+        /// Sell when the re-computed intrinsic value has fallen this far BELOW the entry IV — the earning
+        /// power / asset value that justified the purchase has eroded (Fisher Reason 1: the original
+        /// analysis was wrong; Reason 2: the business deteriorated). NEGATIVE ratio, price-independent;
+        /// −0.35 ⇒ IV is ≥35% below entry. Distinct from `exitMarginFloor`, which is price-vs-current-IV.
+        var ivCollapseFloor: Ratio = -0.35
+        /// Per-Lynch-category multiplier on `exitMarginFloor` — each category has its own sell discipline
+        /// (Lynch). >1 WIDENS the band (let fast growers / asset plays run); <1 TIGHTENS it (recycle
+        /// stalwarts on 30–50% gains, take slow-grower gains, don't ride a cyclical past the peak). An
+        /// absent category or missing key ⇒ ×1.0 ⇒ the flat floor (Phase-1 behaviour).
+        var lynchExitFloorMultiplier: [LynchCategory: Double] = [
+            .fastGrower: 1.5, .assetPlay: 1.3, .turnaround: 1.0,
+            .stalwart: 0.7, .cyclical: 0.6, .slowGrower: 0.5,
+        ]
     }
     struct RegimeParams: Sendable, Codable {
         struct RiskWeights: Sendable, Codable {
