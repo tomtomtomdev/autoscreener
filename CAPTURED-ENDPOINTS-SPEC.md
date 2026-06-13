@@ -32,7 +32,8 @@ derived from this capture and must not be invented.
 | `GET /order-trade/*` (distribution, top-stock, market-mover, running-trade, trade-book, broker/top, broker/activity) | full | ✅ **Yes** |
 | `GET /analyst-ratings/{SYM}` | orig `null`; **BBCA re-capture: full** | ✅ **Yes** — DTO finalized vs BBCA (§3.4) |
 | `GET /analyst-ratings/{SYM}/consensus` | orig `[]`; **BBCA re-capture: full** | ✅ **Yes** — forward-estimate series, finalized (§3.4) |
-| `GET /research/company/{SYM}` | `{id:0, symbol:"", content:"", masks:{}}` — **empty even for BBCA** | ⚠️ **Shape known, payload empty everywhere** (genuinely no per-symbol note; "Research" in-app = Snips HTML, §3.5) |
+| `GET /research/company/{SYM}` | `{id:0, symbol:"", content:"", masks:{}}` — **empty even for BBCA** | ⚠️ **Shape known, payload empty everywhere** (genuinely dead per-symbol note, §3.5) |
+| `GET /research?keyword=` + `/research/indicator/new` | full (25 Snips articles + `{has_new,count}` badge) | ✅ **Yes** — the real "Research" tab feed (`stockbit.com.har`); §3.6, not yet built |
 
 **Implication:** all five families now have verified shapes. The original capture left analyst-ratings
 `null`/`[]`; a **covered-large-cap re-capture (BBCA, `proxseer_collection (2).json`)** unblocked both
@@ -244,11 +245,32 @@ empty `content` (or absent `data`) ⇒ `nil` ("no research"), so a returned `Com
 carries non-empty `content`. `masks` is left **undeclared** (skipped) — purpose unknown.
 
 **`content` is empty for EVERY symbol captured, incl. the BBCA re-capture** (TPIA, IHSG, BBCA all
-`content:""`) → this per-symbol research note appears genuinely unused/paywalled. **Not** secretly
-served elsewhere: the "Research" detail seen in the app is **Stockbit Snips** — `snips.stockbit.com`,
-a Squarespace-hosted **HTML** news/editorial site (article slugs like `snips-terbaru/…`, reached via
-`?source=research`), **not** this `exodus` JSON endpoint and **not** symbol-keyed. Surfacing Snips would
-be a separate HTML article/news-feed feature, out of scope here. **Not** a selection input. Lowest priority.
+`content:""`) → this per-symbol research note appears genuinely **unused/dead**. The app's actual
+"Research" tab is **not** this endpoint — it's the **research feed** (`GET /research?keyword=`,
+§3.6), a keyword-searchable list of **Stockbit Snips** articles. `CompanyResearch` stays modelled (so
+a populated note degrades cleanly if it ever returns one), but expect `nil` indefinitely. **Not** a
+selection input. Lowest priority.
+
+### 3.6 `ResearchFeedService` ✅ — research feed / Snips index (DISCOVERED 2026-06-13, NOT yet built)
+**Source:** `~/Downloads/stockbit.com.har`. This is the **real backing for the app's "Research" tab**
+— a keyword-searchable feed of Snips articles (NOT the empty per-symbol §3.5 note). Two endpoints,
+both on `exodus` (authed), both verified-populated:
+
+- **`GET research?keyword={kw}`** → `StockbitEnvelope<[ResearchArticle]>`; captured 25 articles, all
+  `category_label:"Snips"`. Element = `{ id:Int, title:String, category_label:String, url:String
+  (→ snips.stockbit.com/snips-terbaru/…?source=research, the HTML article), icon_url, image_url,
+  compressed_image_url:String, description:String (display date "12 June 2026"), created:String
+  (ISO8601) }`. *(The HAR stored the body base64 via `content.encoding:"base64"` — HAR storage only;
+  the live API returns plain JSON.)*
+- **`GET research/indicator/new`** → `{ message, data:{ has_new:Bool, count:Int } }` — the "new
+  research" badge counter.
+
+**Status / scope:** editorial / news, keyword-searchable, **NOT symbol-keyed, NOT a selection input**
+(same scope conclusion as §3.5 — but now cleanly modelable). Proposed as a **standalone display
+service** `ResearchFeedService` — `feed(keyword:) -> [ResearchArticle]` + `indicatorNew() ->
+ResearchIndicator` (DTOs + tests, same `APIClient`/`StockbitEnvelope`/error-map conventions). No
+scoring / `SecurityData` / golden-master impact. Backs a future "Research / Snips news" feed UI.
+**Awaiting go/no-go before building.**
 
 ---
 
@@ -342,7 +364,7 @@ target-upside/recommendation feeds scoring as a capped modifier (Slice-6 style).
 5. ✅ **Plumb 2–4 into `SecurityData`/`MarketContext`** (Slice 4) — best-effort optional fields, no scoring change; golden master unchanged.
 6. ✅ **Scorer calibration** (Slice 6) — feed the plumbed overlays into scoring as three capped, additive, inert-on-`nil` tilts (see §8). Golden master byte-for-byte unchanged. **← jumped ahead of skeletons (Slice 5) — it's the payoff and the data was already plumbed.**
 7. ✅ **`AnalystRatingsService` / `ResearchService`** (Slice 5) — shipped as skeletons (envelope handling, null/empty ⇒ "no coverage"), then **analyst-ratings DTOs finalized** against the BBCA re-capture (§3.4/§6). Research stays verified-but-empty (§3.5). Not plumbed into scoring.
-8. *(later — all optional)* Plumb `analystCoverage` into `SecurityData` + decide on a target-upside/recommendation scoring tilt (Slice-6 style). Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps. **← everything buildable from current captures is now done.**
+8. *(later — all optional, no selection impact)* `ResearchFeedService` for the real Research tab (`research?keyword=` + `indicator/new`, §3.6 — shape verified, awaiting go/no-go). Plumb `analystCoverage` into `SecurityData` + decide on a target-upside/recommendation scoring tilt (Slice-6 style). Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps.
 
 ---
 
