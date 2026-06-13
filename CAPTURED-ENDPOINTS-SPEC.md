@@ -30,15 +30,16 @@ derived from this capture and must not be invented.
 | `GET /comparison/v2/ratios?symbol=X` | full (10 metric groups × symbol matrix) | ✅ **Yes** |
 | `GET /seasonality/{SYM}?year=&back_year=` | full (monthly up/down/avg/prob table) | ✅ **Yes** |
 | `GET /order-trade/*` (distribution, top-stock, market-mover, running-trade, trade-book, broker/top, broker/activity) | full | ✅ **Yes** |
-| `GET /analyst-ratings/{SYM}` | `null` | ⛔ **Envelope only** — populated shape unknown |
-| `GET /analyst-ratings/{SYM}/consensus` | `[]` | ⛔ **Envelope only** — element shape unknown |
-| `GET /research/company/{SYM}` | `{id:0, symbol:"", content:"", masks:{}}` | ⚠️ **Shape known, payload empty** (no coverage / paywalled) |
+| `GET /analyst-ratings/{SYM}` | orig `null`; **BBCA re-capture: full** | ✅ **Yes** — DTO finalized vs BBCA (§3.4) |
+| `GET /analyst-ratings/{SYM}/consensus` | orig `[]`; **BBCA re-capture: full** | ✅ **Yes** — forward-estimate series, finalized (§3.4) |
+| `GET /research/company/{SYM}` | `{id:0, symbol:"", content:"", masks:{}}` — **empty even for BBCA** | ⚠️ **Shape known, payload empty everywhere** (genuinely no per-symbol note; "Research" in-app = Snips HTML, §3.5) |
 
-**Implication:** ship the three ✅ families now. For the ⛔/⚠️ three, build the service
-skeleton + envelope handling (so "no coverage" is a clean `nil`/`[]`, not a crash) and
-**gate the DTO modeling on a fresh capture from a covered large-cap** (e.g. BBCA, BBRI,
-TLKM, ASII — names that actually carry sell-side coverage and research notes). Modeling
-their inner fields off naming guesses would be unverifiable.
+**Implication:** all five families now have verified shapes. The original capture left analyst-ratings
+`null`/`[]`; a **covered-large-cap re-capture (BBCA, `proxseer_collection (2).json`)** unblocked both
+analyst endpoints — DTOs finalized in §3.4. `research/company` stayed `content:""` even for BBCA, so it
+remains a verified-but-empty endpoint (the in-app research detail is the separate Snips content site —
+HTML, not this JSON; §3.5). Modeling fields off naming guesses would be unverifiable — so analyst-ratings
+shipped as a skeleton first, then was finalized only once the BBCA payload existed.
 
 ---
 
@@ -210,31 +211,44 @@ cumulative, ~560 KB), `trade-book` + `trade-book/chart` (price-ladder / time buc
 `broker/activity-chart` (~440 KB). These are large, display-oriented, and not selection
 inputs — wire them when the StockDetail "Bandarmology" tab is built.
 
-### 3.4 `AnalystRatingsService` ⛔ — skeleton only ✅ SHIPPED (Slice 5, 2026-06-13)
+### 3.4 `AnalystRatingsService` ✅ — DTOs FINALIZED vs BBCA re-capture (Slice 5, 2026-06-13)
 **File:** `Features/StockDetail/AnalystRatingsService.swift` (`AnalystRatingsServicing` →
-`coverage(symbol:) -> AnalystCoverage?` / `consensus(symbol:) -> [AnalystConsensusRow]`);
-`AnalystRatingsServiceTests` (10).
-**Endpoints:** `GET analyst-ratings/{SYM}` (`data:null`), `GET analyst-ratings/{SYM}/consensus`
-(`data:[]`).
+`coverage(symbol:) -> AnalystCoverage?` / `consensus(symbol:) -> [AnalystEstimateSeries]`);
+`AnalystRatingsServiceTests` (13).
+**Endpoints:** `GET analyst-ratings/{SYM}` and `…/consensus`. Empty (`null`/`[]`/missing) ⇒
+"no coverage" (`nil`/`[]`), **not** an error.
 
-Service + protocol + envelope handling built; returns `AnalystCoverage?` /
-`[AnalystConsensusRow]` where `null`/`[]`/missing ⇒ "no coverage" (nil/empty, **not** an error). The
-inner field models (target high/low/mean, buy/hold/sell counts, # analysts, upside %) ship as
-**all-optional hypotheses with `// UNVERIFIED` CodingKeys** — wrong guesses degrade to `nil` rather
-than failing the decode; finalize against a covered-large-cap re-capture (§6) before relying on any
-field. Tests assert the null/empty envelope degrades to "no coverage" + the error mapping; no
-populated-decode test (that shape is unknown — not invented). **Not plumbed into
-`SecurityData`/scoring** — the `analystCoverage` overlay waits for the §6 re-capture (wiring a
-perpetually-`null` leg into every pick would be premature).
+**Unblocked & finalized** against a covered-large-cap re-capture (BBCA, `proxseer_collection (2).json`,
+2026-06-12 — the §1/§6 re-capture). The earlier skeleton's *hypothesized* fields were both wrong;
+the verified shapes are:
+- **Coverage** = `{ price_target{ best_target, best_low_target, best_high_target, current_price },
+  recommendation:String, total_buy, total_sell, total_hold, total_analyst, last_updated }` → domain
+  `AnalystCoverage` (nested `AnalystPriceTarget` + counts + `recommendation` + computed
+  `targetUpsidePct` = (best−current)/current; BBCA ≈ +49%).
+- **Consensus** is **not** rating rows — it's a **forward-estimate series**: `[{ name, items:[{ year,
+  is_estimate, value:String, raw_value }] }]` for Revenue / Op. Profit / Net Income / EPS → domain
+  `AnalystEstimateSeries`/`AnalystEstimate`. `raw_value` is `0` on the wire (figure lives in the
+  display-string `value`), parsed via `DisplayNumber.parseScaledDecimal` (`"118,573 B"`→`118_573e9`,
+  EPS `"466.74"` unscaled).
 
-### 3.5 `ResearchService` ⚠️ — thin, display-only ✅ SHIPPED (Slice 5, 2026-06-13)
+Tests cover the populated decode (both endpoints) + the null/empty degradation + error mapping.
+**Still NOT plumbed into `SecurityData`/scoring** (user scoped this to "DTOs + tests only") — the
+`analystCoverage` overlay + any target-upside/recommendation tilt remain a separate, opinionated
+calibration pass (Slice-6 style), deferred.
+
+### 3.5 `ResearchService` ⚠️ — thin, display-only ✅ SHIPPED (Slice 5, 2026-06-13); content STILL data-blocked
 **File:** `Features/StockDetail/ResearchService.swift` (`ResearchServicing → CompanyResearch?`);
 `ResearchServiceTests` (7 — incl. a populated-decode test, since the shape is verified).
-**Endpoint:** `GET research/company/{SYM}` → `{ id, symbol, content, masks }`. Captured
-`content:""` (no research / paywalled). Modelled directly; empty `content` (or absent `data`) ⇒ `nil`
-("no research"), so a returned `CompanyResearch` always carries non-empty `content`. `masks` is left
-**undeclared** (skipped) — purpose unknown. **Not** a selection input — qualitative text for the
-StockDetail UI. Lowest priority.
+**Endpoint:** `GET research/company/{SYM}` → `{ id, symbol, content, masks }`. Modelled directly;
+empty `content` (or absent `data`) ⇒ `nil` ("no research"), so a returned `CompanyResearch` always
+carries non-empty `content`. `masks` is left **undeclared** (skipped) — purpose unknown.
+
+**`content` is empty for EVERY symbol captured, incl. the BBCA re-capture** (TPIA, IHSG, BBCA all
+`content:""`) → this per-symbol research note appears genuinely unused/paywalled. **Not** secretly
+served elsewhere: the "Research" detail seen in the app is **Stockbit Snips** — `snips.stockbit.com`,
+a Squarespace-hosted **HTML** news/editorial site (article slugs like `snips-terbaru/…`, reached via
+`?source=research`), **not** this `exodus` JSON endpoint and **not** symbol-keyed. Surfacing Snips would
+be a separate HTML article/news-feed feature, out of scope here. **Not** a selection input. Lowest priority.
 
 ---
 
@@ -300,11 +314,20 @@ though `DisplayNumber` is already covered — the new call sites are what's unde
 
 ---
 
-## 6. Unblocking the ⛔/⚠️ endpoints
+## 6. Unblocking the ⛔/⚠️ endpoints — ✅ DONE (analyst); research still empty
 
-Re-run the proxy capture against a **covered large-cap** so `analyst-ratings` / `research`
-return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload. Good candidates:
-**BBCA, BBRI, BMRI, TLKM, ASII**. Until then those services exist but yield "no coverage."
+Re-ran the capture against **BBCA** (`proxseer_collection (2).json`, 2026-06-12):
+- **`analyst-ratings/{SYM}` + `…/consensus` → populated.** §3.4 DTOs **finalized** against the real
+  BBCA payload (coverage block + forward-estimate series). The skeleton's guessed fields were both
+  wrong; the verified shapes are now modelled and tested. ✅
+- **`research/company/BBCA` → still `content:""`.** Empty for every symbol captured, so there is no
+  populated per-symbol research payload to model — `ResearchService` stays correct-but-empty. The
+  in-app "Research" detail is **Stockbit Snips** (`snips.stockbit.com`, HTML/Squarespace), a separate
+  content site, not this endpoint (§3.5). No further DTO work possible/needed here.
+
+Remaining optional follow-on (NOT done — user scoped analyst to "DTOs + tests only"): plumb
+`analystCoverage` into `SecurityData` + a best-effort provider leg, and decide whether
+target-upside/recommendation feeds scoring as a capped modifier (Slice-6 style).
 
 ---
 
@@ -318,8 +341,8 @@ return populated `data`, then finalize §3.4/§3.5 DTOs against the real payload
 4. ✅ **`SeasonalityService`** (Slice 3) — monthly win-rate / avg-return overlay; fully captured.
 5. ✅ **Plumb 2–4 into `SecurityData`/`MarketContext`** (Slice 4) — best-effort optional fields, no scoring change; golden master unchanged.
 6. ✅ **Scorer calibration** (Slice 6) — feed the plumbed overlays into scoring as three capped, additive, inert-on-`nil` tilts (see §8). Golden master byte-for-byte unchanged. **← jumped ahead of skeletons (Slice 5) — it's the payoff and the data was already plumbed.**
-7. ✅ **`AnalystRatingsService` / `ResearchService`** skeletons ⛔⚠️ (Slice 5) — envelope handling only (null/empty ⇒ "no coverage"); populated DTOs deferred to a covered-large-cap re-capture (§6). Not plumbed into scoring.
-8. *(next / later)* Re-capture a covered large-cap (§6) → finalize §3.4 DTOs + plumb `analystCoverage` into `SecurityData`. Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps. **← all data-blocked or optional; nothing else in this spec is buildable from the current capture.**
+7. ✅ **`AnalystRatingsService` / `ResearchService`** (Slice 5) — shipped as skeletons (envelope handling, null/empty ⇒ "no coverage"), then **analyst-ratings DTOs finalized** against the BBCA re-capture (§3.4/§6). Research stays verified-but-empty (§3.5). Not plumbed into scoring.
+8. *(later — all optional)* Plumb `analystCoverage` into `SecurityData` + decide on a target-upside/recommendation scoring tilt (Slice-6 style). Order-trade Tier 2 UI feeds; per-preset tilt tuning + a live paper-trading sweep of the §8 caps. **← everything buildable from current captures is now done.**
 
 ---
 
