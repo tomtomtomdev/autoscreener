@@ -25,6 +25,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case markets
     case watchlist
     case paperTrading
+    case positionsReview
     case appSettings
 
     var id: Self { self }
@@ -54,6 +55,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "Markets"
         case .watchlist:          return "Watchlist"
         case .paperTrading:       return "Paper Trading"
+        case .positionsReview:    return "Positions to Review"
         case .appSettings:        return "Settings"
         }
     }
@@ -83,6 +85,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "chart.bar.xaxis"
         case .watchlist:          return "star.circle.fill"
         case .paperTrading:       return "banknote"
+        case .positionsReview:    return "stethoscope"
         case .appSettings:        return "gearshape"
         }
     }
@@ -112,6 +115,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return nil
         case .watchlist:          return nil
         case .paperTrading:       return nil
+        case .positionsReview:    return nil
         case .appSettings:        return nil
         }
     }
@@ -154,6 +158,10 @@ struct MainSidebarView: View {
     // Paper trading projects the same shared stores (portfolio + regime + screeners);
     // held here so switching tabs preserves the pending plan binding.
     @State private var paperTradingVM: PaperTradingViewModel
+    // Tier-A selection surfaces: the buy-side picks and the Gate-5 sell-side review. Held here (like the
+    // screeners) so switching tabs preserves their loaded state and doesn't re-run the engine each time.
+    @State private var todaysPicksVM: TodaysPicksViewModel
+    @State private var positionsReviewVM: PositionReviewViewModel
 
     init() {
         let deps = AppDependencies.shared
@@ -188,12 +196,22 @@ struct MainSidebarView: View {
         _paperTradingVM = State(initialValue: PaperTradingViewModel(
             store: deps.paperTradingStore, screenerStore: store,
             marketStore: deps.marketDataStore, coordinator: coordinator))
+        // Default-wired to the shared sources/stores (incl. the shared RecommendationsStore the paper
+        // flow reads at fill time), so the buy picks and the sell review stay in lock-step.
+        _todaysPicksVM = State(initialValue: TodaysPicksViewModel())
+        _positionsReviewVM = State(initialValue: PositionReviewViewModel())
     }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                // Today's Picks is hidden for now (still wired in code, just not surfaced).
+                // The Tier-A selection surfaces. Default landing stays the composite Watchlist (below);
+                // these are reachable, with Today's Picks (buy side) and Positions to Review (Gate-5 sell side).
+                Section("Today") {
+                    Label(SidebarItem.todaysPicks.title,
+                          systemImage: SidebarItem.todaysPicks.systemImage)
+                        .tag(SidebarItem.todaysPicks)
+                }
                 Section("Screeners") {
                     ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
                         Label(item.title, systemImage: item.systemImage).tag(item)
@@ -211,6 +229,9 @@ struct MainSidebarView: View {
                     Label(SidebarItem.paperTrading.title,
                           systemImage: SidebarItem.paperTrading.systemImage)
                         .tag(SidebarItem.paperTrading)
+                    Label(SidebarItem.positionsReview.title,
+                          systemImage: SidebarItem.positionsReview.systemImage)
+                        .tag(SidebarItem.positionsReview)
                 }
                 Section {
                     Label(SidebarItem.appSettings.title,
@@ -229,9 +250,8 @@ struct MainSidebarView: View {
     private var detail: some View {
         switch selection {
         case .todaysPicks:
-            // Hidden from the sidebar for now; if reached, fall back to Watchlist.
-            WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
-                .id(SidebarItem.watchlist)
+            TodaysPicksView(vm: todaysPicksVM)
+                .id(SidebarItem.todaysPicks)
         case .bandarAccumulating:
             ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
                 .id(SidebarItem.bandarAccumulating)
@@ -301,6 +321,9 @@ struct MainSidebarView: View {
         case .paperTrading:
             PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
                 .id(SidebarItem.paperTrading)
+        case .positionsReview:
+            PositionsReviewView(vm: positionsReviewVM)
+                .id(SidebarItem.positionsReview)
         case .appSettings:
             AppSettingsView()
                 .id(SidebarItem.appSettings)

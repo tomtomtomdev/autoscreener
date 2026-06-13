@@ -31,7 +31,12 @@ final class PaperTradingStore {
 
     /// Books a confirmed plan: sells first (to free cash), then buys, pricing each fill
     /// through `config.execution` (slippage + side fees). Persists and bumps `version`.
-    func apply(plan: AllocationPlan, config: AllocationConfig = .standard, at date: Date = Date()) {
+    ///
+    /// `theses` (Gate-5 Phase 3) carries the entry rationale per symbol, captured one layer up (the
+    /// store never fetches). A thesis is stamped only when a buy *opens* a lot; adds preserve the
+    /// original. Defaulted empty so existing callers and the harness stay source-compatible.
+    func apply(plan: AllocationPlan, theses: [String: EntryThesis] = [:],
+               config: AllocationConfig = .standard, at date: Date = Date()) {
         guard plan.hasTrades else { return }
         let exec = config.execution
         // Sells before buys so proceeds are available to the buys.
@@ -42,7 +47,8 @@ final class PaperTradingStore {
             let slip = line.side == .buy ? (1 + exec.slippagePct) : (1 - exec.slippagePct)
             let feePct = line.side == .buy ? exec.buyFeePct : exec.sellFeePct
             state.apply(side: line.side, symbol: line.symbol, shares: qty,
-                        price: line.price * slip, feePct: feePct, date: date)
+                        price: line.price * slip, feePct: feePct, date: date,
+                        thesis: theses[line.symbol])
         }
         version &+= 1
         persist()
@@ -90,5 +96,20 @@ final class PaperTradingStore {
         return dir
             .appendingPathComponent("Autoscreener", isDirectory: true)
             .appendingPathComponent("paper-trading-cache.json")
+    }
+}
+
+// MARK: - Gate-5 holdings gateway (DIP)
+
+/// The paper portfolio IS the live source of held positions for the Gate-5 review (`PositionReviewer`).
+/// Mapping the persisted `PaperPosition`s into the engine's boundary DTO keeps the dependency pointing
+/// inward — the use case owns `HoldingsProvider`; this infrastructure store implements it. Synchronous
+/// and non-throwing (it only reads in-memory state), which legally witnesses the `async throws`
+/// requirement; the @MainActor isolation is satisfied by the awaiting caller hopping on.
+extension PaperTradingStore: HoldingsProvider {
+    func heldPositions() -> [HeldPosition] {
+        state.positions.map { symbol, pos in
+            HeldPosition(ticker: symbol, shares: pos.shares, avgCost: pos.avgCost, thesis: pos.thesis)
+        }
     }
 }

@@ -36,10 +36,12 @@ import Testing
     }
 
     private func makeVM(_ screener: ScreenerStore, _ market: MarketDataStore,
-                        _ paper: PaperTradingStore) -> PaperTradingViewModel {
+                        _ paper: PaperTradingStore,
+                        recommendations: RecommendationsStore? = nil) -> PaperTradingViewModel {
         let coordinator = SweepTestKit.coordinator(store: screener, marketStore: market)
         return PaperTradingViewModel(store: paper, screenerStore: screener,
-                                     marketStore: market, coordinator: coordinator)
+                                     marketStore: market, coordinator: coordinator,
+                                     recommendationsStore: recommendations ?? RecommendationsStore())
     }
 
     @Test func startsSeededAndCanPlanOnceWatchlistAndPricesAreLoaded() {
@@ -84,5 +86,31 @@ import Testing
         #expect(vm.equity == 100_000_000)
         #expect(!vm.hasPositions)
         #expect(vm.pendingPlan == nil)
+    }
+
+    // MARK: - Gate-5 Phase 3: entry-thesis capture at execute()
+
+    @Test func executeStampsAnEntryThesisForBuysInTheRankedSet() {
+        let (s, m, p) = makeStores()
+        let recs = RecommendationsStore()
+        // Only BBCA was ranked by the engine; its IV/MoS are reused as the entry thesis (no re-fetch).
+        recs.update([Recommendation(ticker: "BBCA", compositeScore: 0.6, intrinsicValue: 12_000,
+                                    marginOfSafety: 0.3, conviction: 0.6, suggestedWeight: 0.1, audit: [])])
+        let vm = makeVM(s, m, p, recommendations: recs)
+        vm.generatePlan(); vm.execute()
+
+        #expect(p.state.positions["BBCA"]?.thesis?.entryIntrinsicValue == 12_000)
+        #expect(p.state.positions["BBCA"]?.thesis?.entryMarginOfSafety == 0.3)
+        // TLKM was bought too, but it wasn't ranked → no thesis (reviews on current data alone).
+        #expect(p.state.positions["TLKM"] != nil)
+        #expect(p.state.positions["TLKM"]?.thesis == nil)
+    }
+
+    @Test func executeWithoutAnyRankedRecommendationsStampsNoThesis() {
+        let (s, m, p) = makeStores()
+        let vm = makeVM(s, m, p)                 // empty recommendations store (the default fresh one)
+        vm.generatePlan(); vm.execute()
+        #expect(vm.hasPositions)                 // behaviour unchanged — buys still book
+        #expect(p.state.positions.values.allSatisfy { $0.thesis == nil })
     }
 }

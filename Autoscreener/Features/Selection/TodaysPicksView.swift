@@ -84,12 +84,33 @@ struct TodaysPicksView: View {
                 metric("Margin of safety", Self.pct(pick.marginOfSafety))
                 metric("Intrinsic value", Self.amount(pick.intrinsicValue))
             }
+            gateChips(pick)
             rationale(pick)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityIdentifier("todayspicks.row.\(pick.ticker)")
+    }
+
+    /// Surfaces Gate-2 (governance) and Gate-3 (consensus) as first-class chips, parsed from the audit
+    /// the engine already produced (no engine change — the locked golden master stays byte-for-byte).
+    @ViewBuilder
+    private func gateChips(_ pick: Recommendation) -> some View {
+        let badges = Self.gateBadges(pick.audit)
+        if !badges.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(badges, id: \.label) { badge in
+                    Text(badge.label)
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(badge.color.opacity(0.15), in: Capsule())
+                        .foregroundStyle(badge.color)
+                }
+            }
+            .accessibilityIdentifier("todayspicks.gates.\(pick.ticker)")
+        }
     }
 
     private func metric(_ label: String, _ value: String) -> some View {
@@ -123,10 +144,42 @@ struct TodaysPicksView: View {
     }
 
     private var footnote: some View {
-        Text("Candidates the engine would size under the chosen discipline — not a recommendation to buy. Weights are pre-liquidity-capped suggestions; the rationale shows every gate, score, and modifier that produced each pick.")
+        Text("Candidates the engine would size under the chosen discipline — not a recommendation to buy. Weights are pre-liquidity-capped suggestions; the rationale shows every gate, score, and modifier that produced each pick. Sell-side discipline (Gate 5) lives in Positions to Review.")
             .font(.caption2)
             .foregroundStyle(.tertiary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    // MARK: - Gate badges (Gate-2 governance / Gate-3 consensus), parsed from the audit
+
+    /// A labelled chip derived from a `Recommendation`'s audit lines. `kind` drives the colour.
+    struct GateBadge: Equatable {
+        enum Kind { case governance, consensus }
+        let kind: Kind
+        let label: String
+
+        var color: Color {
+            switch kind {
+            case .governance: return .green
+            case .consensus:  return .orange
+            }
+        }
+    }
+
+    /// Reads the engine's audit trail for the Gate-2 / Gate-3 lines and turns them into chips. Pure and
+    /// independent of SwiftUI (returns plain data), so it is unit-tested directly:
+    ///   • `"governance OK […]"`  ⇒ a green "Governance ✓" chip (a survivor passed the Gate-2 veto).
+    ///   • `"consensus ±x% […]"`  ⇒ an amber "Consensus fade ±x%" chip (Gate-3 faded the sell-side crowd).
+    static func gateBadges(_ audit: [String]) -> [GateBadge] {
+        var badges: [GateBadge] = []
+        if audit.contains(where: { $0.hasPrefix("governance OK") }) {
+            badges.append(GateBadge(kind: .governance, label: "Governance ✓"))
+        }
+        if let line = audit.first(where: { $0.hasPrefix("consensus ") }) {
+            let tilt = line.dropFirst("consensus ".count).prefix { $0 != " " }
+            badges.append(GateBadge(kind: .consensus, label: "Consensus fade \(tilt)"))
+        }
+        return badges
     }
 
     // MARK: - Formatting (kept in the view; the engine models stay UI-free)

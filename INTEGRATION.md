@@ -414,23 +414,59 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     tightens→exit, Tier-1c precedence over the price tier, honorEntryThesis=false suppression, the
     snapshot factory, and bank-archetype (JustifiedP/B) IV collapse. **Full `AutoscreenerTests`: TEST
     SUCCEEDED** (689 cases), golden master (`SelectionEngineCharacterizationTests`) byte-for-byte unchanged.
-  - **Still deferred to Phase 3:** wiring the snapshot into `PaperTradingStore` (recording it on a fill)
-    + feeding `ExitDecision`s into the plan + a "Positions to review" surface. A Lynch *classifier*
-    (auto-deriving `lynchCategory`) is also out of scope — the category is carried in the snapshot today.
+  - **Phase 3 is now DONE (below).**
 
-**Next action:** **Tier-A is feature-complete, calibrated, user-visible, and now has Gate-5 sell
-discipline (Phase 1 + Phase 2).** Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
-feed):** open the **Today's Picks** screen (or call `AppDependencies.selectionRunner.run(config:
-.balanced)`) against a live Stockbit session and eyeball the audit trail for a real industrial + a
-real bank. This couldn't be done in-session (no auth/network); the deterministic end-to-end (4.3) is
-the offline stand-in. (2) **Optional bank-rate calibration:** source live Rf/ERP and decide
-single-factor CAPM β vs the two-factor timing β for the bank valuator (see Phase 4 scope note). (3)
-**Optional polish:** run the `TodaysPicksUITests` on a single-display / CI box (it's blocked only by
-this machine's XCUITest automation-mode timeout); add a config/preset picker to the screen. (4)
-**Gate-5 Phase 3 (deferred, no auth needed):** `PaperTradingStore: HoldingsProvider` conformance —
-record an `EntryThesis` snapshot on each buy fill (via `EntryThesis.snapshot(…)`), feed
-`PositionReviewer` decisions into the paper-trading plan, and add a "Positions to review" surface; also
-surface Gates 2/3/5 in `TodaysPicksView`. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
+- **Gate-5 exit/sell — Phase 3 ✅ (2026-06-13) — WIRED INTO PAPER TRADING + SURFACED.** The exit
+  discipline is no longer just a library: a paper buy now records WHY it was bought, the store is the live
+  holdings gateway, and a new screen shows the verdicts. **Locked design choice (asked):** the entry
+  thesis is captured CHEAPLY by reusing the IV/MoS the selection engine already computed (no per-fill
+  engine re-run), since the buy universe is the same composite Watchlist Today's Picks ranks; integration
+  is **surface-only** (the allocator is unchanged); the Gate-2/3 badges are **parsed from the existing
+  audit** so the golden master stays byte-for-byte. Pieces:
+  - **Cheap thesis seam:** `EntryThesis` is now `Codable`/`Hashable` + gained
+    `init(recommendation:entryDate:lynchCategory:)` (reuses `Recommendation.intrinsicValue`/`.marginOfSafety`;
+    no `SecurityData`). New `RecommendationsStore` (`@MainActor @Observable`, keyed by ticker) on
+    `AppDependencies`; `TodaysPicksViewModel` refreshes it on every load — the only writer.
+  - **Record on fill (store stays fetch-free):** `PaperPosition` gained `thesis: EntryThesis?` (additive
+    Codable migration); `PaperPortfolioState.apply(…thesis:)` stamps it only when a buy OPENS a lot and
+    PRESERVES the original on adds (Fisher); `PaperTradingStore.apply(plan:theses:…)` threads it.
+    `PaperTradingViewModel.execute()` builds the theses from `RecommendationsStore` for buy-opens
+    (absent ⇒ no thesis ⇒ Phase-1 review). **`extension PaperTradingStore: HoldingsProvider`** maps the
+    portfolio into `[HeldPosition]` (the DIP gateway; a sync/non-throwing method legally witnesses the
+    `async throws` requirement).
+  - **Review surface:** `SelectionRunner.swift` extracted a private `makeProvider(universe:config:)` (DRY)
+    and added `makePositionReviewer(config:)` + `reviewPositions(config:)` (fixtures-aware, empty-book
+    short-circuit) — the sell-side mirror of `makeSelectionEngine`/`todaysPicks`. New
+    `PositionReviewViewModel` + `PositionsReviewView` (NavigationStack, loading/loaded/empty/error,
+    per-name hold/trim/exit card with a colour-coded action badge + audit disclosure; `positionsreview.*`
+    a11y ids). New `SidebarItem.positionsReview` ("Positions to Review", `stethoscope`) wired in
+    `MainSidebarView`; **Today's Picks un-hidden** (default landing still `.watchlist`).
+  - **Gate-2/3 badges:** `TodaysPicksView.gateBadges(_:)` (pure, unit-tested) parses the `governance OK …`
+    / `consensus ±x% …` audit lines into green/amber chips on each card; footnote points to Positions to
+    Review for Gate-5. **No engine change.**
+  - **Tests:** +27 unit cases across `ExitEvaluatorTests` (recommendation factory + Codable),
+    `RecommendationsStoreTests`, `PaperTradingStoreTests` (thesis stamp/preserve/drop/round-trip +
+    `heldPositions`), `PaperTradingViewModelTests` (execute captures theses), `TodaysPicksViewModelTests`
+    (feeds cache), `TodaysPicksBadgeTests` (parsing), `PositionReviewViewModelTests`. **Full
+    `AutoscreenerTests`: TEST SUCCEEDED**, golden master byte-for-byte. New
+    `AutoscreenerUITests/PositionsReviewUITests` + the now-un-skipped `TodaysPicksUITests` **both PASS
+    live** (single-display; verified via `*.row.<TICKER>` ids per the project's id-based UI policy — leaf
+    badge/disclosure ids are absorbed by the identified card containers, so they aren't asserted).
+  - **Still open / out of scope:** feeding `.exit` verdicts into `AllocationEngine` (force target-0) was
+    deliberately deferred (surface-only choice); a Lynch *classifier* (auto-`lynchCategory`) stays
+    deferred — the category rides in the snapshot. `ResearchService` still dead. Phase 5 (Tier-B
+    backtest) stays blocked on persistence (§9).
+
+**Next action:** **Tier-A is feature-complete, calibrated, user-visible, and has the full Gate-5 sell
+discipline (Phases 1–3) wired into paper trading + surfaced.** Remaining, all optional/non-blocking:
+(1) **LIVE audit (manual — needs the authenticated feed):** open **Today's Picks** / **Positions to
+Review** (or call `AppDependencies.selectionRunner.run(config: .balanced)` / `.reviewPositions(config:)`)
+against a live Stockbit session and eyeball the audit trails for a real industrial + a real bank + a held
+name. Couldn't be done in-session (no auth/network); the deterministic suites are the offline stand-in.
+(2) **Optional bank-rate calibration:** source live Rf/ERP and decide single-factor CAPM β vs two-factor
+timing β for the bank valuator (Phase 4 scope note). (3) **Optional:** feed Gate-5 `.exit` verdicts into
+`AllocationEngine` (force target-0 so a flagged name can't be re-bought); add a config/preset picker to
+the screens; a Lynch auto-classifier. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
 Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root

@@ -8,6 +8,10 @@ import Foundation
 nonisolated struct PaperPosition: Codable, Hashable, Sendable {
     var shares: Double
     var avgCost: Double
+    /// The buy thesis recorded when this lot was first opened (Gate-5 Phase 3). `nil` for lots opened
+    /// before Phase 3, or bought outside a recently-ranked set — those review on current data alone.
+    /// Preserved across adds (the entry rationale is the *original* one) and dropped when the lot closes.
+    var thesis: EntryThesis? = nil
 }
 
 /// An executed paper fill, appended to the trade log. `realizedPnL` is non-nil only
@@ -73,16 +77,18 @@ nonisolated struct PaperPortfolioState: Codable, Sendable {
     /// `nil` for a no-op (zero shares, or a sell with nothing held).
     @discardableResult
     mutating func apply(side: TradeSide, symbol: String, shares: Double, price: Double,
-                        feePct: Double, date: Date) -> PaperTrade? {
+                        feePct: Double, date: Date, thesis: EntryThesis? = nil) -> PaperTrade? {
         guard shares > 0, price > 0 else { return nil }
         switch side {
         case .buy:
             let fee = shares * price * feePct
             cash -= shares * price + fee
             var lot = positions[symbol] ?? PaperPosition(shares: 0, avgCost: 0)
+            let opening = lot.shares == 0                  // fresh entry (new or re-bought after a full exit)
             let newShares = lot.shares + shares
             lot.avgCost = newShares > 0 ? (lot.avgCost * lot.shares + price * shares) / newShares : 0
             lot.shares = newShares
+            if opening, let thesis { lot.thesis = thesis }  // record the entry rationale once; preserve on adds
             positions[symbol] = lot
             let trade = PaperTrade(date: date, side: .buy, symbol: symbol, shares: shares,
                                    price: price, fee: fee)

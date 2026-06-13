@@ -17,17 +17,20 @@ final class PaperTradingViewModel {
     private let screenerStore: ScreenerStore
     private let marketStore: MarketDataStore
     private let coordinator: DataSweepCoordinator
+    private let recommendationsStore: RecommendationsStore
     private let config: AllocationConfig
 
     init(store: PaperTradingStore,
          screenerStore: ScreenerStore,
          marketStore: MarketDataStore,
          coordinator: DataSweepCoordinator,
+         recommendationsStore: RecommendationsStore = AppDependencies.shared.recommendationsStore,
          config: AllocationConfig = .standard) {
         self.store = store
         self.screenerStore = screenerStore
         self.marketStore = marketStore
         self.coordinator = coordinator
+        self.recommendationsStore = recommendationsStore
         self.config = config
     }
 
@@ -101,10 +104,22 @@ final class PaperTradingViewModel {
                                             regime: regime, prices: prices, config: config)
     }
 
-    /// Book the pending plan into the portfolio, then clear it.
+    /// Book the pending plan into the portfolio, then clear it. Each buy that OPENS a position is
+    /// stamped with an `EntryThesis` (Gate-5 Phase 3) reusing the IV/MoS the selection engine already
+    /// computed for that name — read cheaply from `recommendationsStore` (no engine re-run). A name
+    /// absent from the latest ranked set simply gets no thesis, so it later reviews on current data alone.
     func execute() {
         guard let plan = pendingPlan else { return }
-        store.apply(plan: plan, config: config)
+        let now = Date()
+        let theses = Dictionary(
+            plan.lines.lazy
+                .filter { $0.side == .buy }
+                .compactMap { line -> (String, EntryThesis)? in
+                    guard let rec = self.recommendationsStore.byTicker[line.symbol] else { return nil }
+                    return (line.symbol, EntryThesis(recommendation: rec, entryDate: now))
+                },
+            uniquingKeysWith: { first, _ in first })
+        store.apply(plan: plan, theses: theses, config: config, at: now)
         pendingPlan = nil
     }
 

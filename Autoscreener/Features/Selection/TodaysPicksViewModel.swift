@@ -24,12 +24,17 @@ final class TodaysPicksViewModel {
 
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> [Recommendation]
+    /// Where the ranked picks are cached so the paper-trading flow can snapshot an `EntryThesis` cheaply
+    /// on a fill (Gate-5 Phase 3). This VM is the only writer; it refreshes the cache on each load.
+    private let recommendationsStore: RecommendationsStore
 
     init(config: SelectionConfig = .balanced,
          source: @escaping (SelectionConfig) async throws -> [Recommendation]
-            = { try await AppDependencies.shared.todaysPicks(config: $0) }) {
+            = { try await AppDependencies.shared.todaysPicks(config: $0) },
+         recommendationsStore: RecommendationsStore = AppDependencies.shared.recommendationsStore) {
         self.config = config
         self.source = source
+        self.recommendationsStore = recommendationsStore
     }
 
     func load(force: Bool = false) async {
@@ -39,6 +44,7 @@ final class TodaysPicksViewModel {
         defer { isLoading = false }
         do {
             picks = try await source(config)
+            recommendationsStore.update(picks)   // feed the Gate-5 entry-thesis cache (Phase 3)
             hasLoaded = true            // an empty result is still a successful load
         } catch {
             self.error = error.localizedDescription

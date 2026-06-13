@@ -61,6 +61,9 @@ final class AppDependencies {
     let marketClock: MarketClock
     let dataSweepCoordinator: DataSweepCoordinator
     let authState = AuthState()
+    // Latest ranked recommendations, cached by `TodaysPicksViewModel` on load. The paper-trading flow
+    // reads it at fill time to snapshot an `EntryThesis` cheaply (Gate-5 Phase 3) — no engine re-run.
+    let recommendationsStore = RecommendationsStore()
 
     static let shared = AppDependencies()
 

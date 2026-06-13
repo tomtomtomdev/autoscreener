@@ -56,7 +56,9 @@ struct HeldPosition: Sendable, Equatable {
 ///   • Lynch's category-specific sell discipline (`lynchCategory`): how much overvaluation to tolerate
 ///     before recycling differs by category (fast growers run; slow growers / stalwarts get recycled).
 /// Clock-free like the evaluator: `entryDate` is carried data for the audit, never read as "now".
-struct EntryThesis: Sendable, Equatable {
+/// `Codable` + `Hashable` so the paper-trading store can persist it inside each open `PaperPosition`
+/// (which is itself `Hashable`) and round-trip it to disk (Phase 3).
+struct EntryThesis: Sendable, Hashable, Codable {
     let entryDate: Date
     /// IV the position's archetype valuator computed at purchase — the baseline the break test measures
     /// against. The break tier is inert unless this is > 0 (a bought name should have had a positive IV).
@@ -81,6 +83,18 @@ extension EntryThesis {
                     entryIntrinsicValue: profile.valuator.intrinsicValue(s, config: config),
                     entryMarginOfSafety: profile.valuator.marginOfSafety(s, config: config),
                     lynchCategory: lynchCategory)
+    }
+
+    /// Snapshot a thesis straight from a ranked `Recommendation` — the cheap Phase-3 seam the paper
+    /// portfolio uses when a buy fills. The engine already computed this name's archetype intrinsic
+    /// value and margin of safety to produce the recommendation, so reusing them costs no extra fetch
+    /// (the buy universe is the same composite Watchlist the engine ranks). Pure / clock-free: the
+    /// caller injects `entryDate` (the fill date) and, until a classifier exists, the `lynchCategory`.
+    init(recommendation r: Recommendation, entryDate: Date, lynchCategory: LynchCategory? = nil) {
+        self.init(entryDate: entryDate,
+                  entryIntrinsicValue: r.intrinsicValue,
+                  entryMarginOfSafety: r.marginOfSafety,
+                  lynchCategory: lynchCategory)
     }
 }
 

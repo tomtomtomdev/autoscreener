@@ -388,6 +388,32 @@ private func heldWithThesis(_ t: EntryThesis, ticker: Ticker = "HELD", avgCost: 
         #expect(t.entryDate == day)
     }
 
+    @Test func recommendationFactoryReusesRankedIVAndMoS() {
+        // Gate-5 Phase 3's cheap seam: snapshot the thesis straight from a ranked Recommendation the
+        // engine already produced (no SecurityData, no re-fetch). IV/MoS are copied verbatim; the
+        // category is whatever the caller carries (no classifier yet ⇒ default nil); entryDate injected.
+        let rec = Recommendation(ticker: "WIFI", compositeScore: 0.74, intrinsicValue: 6_364,
+                                 marginOfSafety: 0.31, conviction: 0.74, suggestedWeight: 0.089,
+                                 audit: ["regime=Neutral"])
+        let t = EntryThesis(recommendation: rec, entryDate: day)
+        #expect(t.entryIntrinsicValue == 6_364)
+        #expect(t.entryMarginOfSafety == 0.31)
+        #expect(t.lynchCategory == nil)
+        #expect(t.entryDate == day)
+
+        let tagged = EntryThesis(recommendation: rec, entryDate: day, lynchCategory: .fastGrower)
+        #expect(tagged.lynchCategory == .fastGrower)
+    }
+
+    @Test func entryThesisRoundTripsThroughCodable() {
+        // It is persisted inside each open lot (PaperPosition), so it must survive a JSON round-trip.
+        let t = EntryThesis(entryDate: day, entryIntrinsicValue: 6_364,
+                            entryMarginOfSafety: 0.31, lynchCategory: .stalwart)
+        let data = try! JSONEncoder().encode(t)
+        let decoded = try! JSONDecoder().decode(EntryThesis.self, from: data)
+        #expect(decoded == t)
+    }
+
     @Test func bankJustifiedPBCollapseSinceEntryExits() {
         // Financial archetype (sector "Keuangan") routes Tier 1c through JustifiedPBValuator. ROE has
         // fallen from the strong level at entry to 0.08, collapsing the ROE-justified P/B (and thus IV)

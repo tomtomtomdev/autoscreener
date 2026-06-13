@@ -106,4 +106,30 @@ import Testing
         await vm.load()                 // retries without force
         #expect(spy.callCount == 2)
     }
+
+    // MARK: - Gate-5 Phase 3: feed the entry-thesis cache
+
+    @Test func aSuccessfulLoadFeedsTheRecommendationsCache() async {
+        let spy = SourceSpy()
+        spy.result = [makeRecommendation("WIFI"), makeRecommendation("BBCA", composite: 0.61)]
+        let recs = RecommendationsStore()
+        let vm = TodaysPicksViewModel(source: spy.source, recommendationsStore: recs)
+
+        await vm.load()
+
+        // The paper-trading flow reads this cache at fill time to snapshot an EntryThesis cheaply.
+        #expect(recs.byTicker["WIFI"]?.ticker == "WIFI")
+        #expect(recs.byTicker["BBCA"]?.ticker == "BBCA")
+    }
+
+    @Test func aFailedLoadLeavesTheRecommendationsCacheUntouched() async {
+        let spy = SourceSpy()
+        spy.error = Boom()
+        let recs = RecommendationsStore()
+        let vm = TodaysPicksViewModel(source: spy.source, recommendationsStore: recs)
+
+        await vm.load()
+
+        #expect(recs.byTicker.isEmpty)
+    }
 }

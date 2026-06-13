@@ -32,12 +32,11 @@ struct SelectionRunner {
 
 extension AppDependencies {
 
-    /// Assembles the live Tier-A provider + engine over an explicit candidate universe (§8). Pure
-    /// composition of the already-wired services — the orchestration/throttle/cache concerns live in
-    /// `StockbitDataProvider`, the scoring in `StockSelectionEngine`.
-    func makeSelectionEngine(universe: [Ticker],
-                             config: SelectionConfig = .balanced) -> StockSelectionEngine {
-        let provider = StockbitDataProvider(
+    /// The shared live `StockbitDataProvider` assembly — the single composition of the already-wired
+    /// services that both the buy engine (`makeSelectionEngine`) and the Gate-5 reviewer
+    /// (`makePositionReviewer`) build on. Orchestration/throttle/cache live in the provider.
+    private func makeProvider(universe: [Ticker], config: SelectionConfig) -> StockbitDataProvider {
+        StockbitDataProvider(
             universe: universe, config: config,
             keystats: keystatsRatioService, fundachart: fundachartService,
             statements: financialStatementService, emitten: emittenService,
@@ -48,7 +47,34 @@ extension AppDependencies {
             snapshotProvider: regimeSnapshotService, flowService: aggregateForeignFlowService,
             chartService: chartService, commodityService: commodityPriceService,
             breadthService: breadthService)
-        return StockSelectionEngine(provider: provider, config: config)
+    }
+
+    /// Assembles the live Tier-A provider + engine over an explicit candidate universe (§8). Pure
+    /// composition of the already-wired services — the scoring lives in `StockSelectionEngine`.
+    func makeSelectionEngine(universe: [Ticker],
+                             config: SelectionConfig = .balanced) -> StockSelectionEngine {
+        StockSelectionEngine(provider: makeProvider(universe: universe, config: config), config: config)
+    }
+
+    /// Assembles the live Gate-5 reviewer (the sell-side mirror of `makeSelectionEngine`). The paper
+    /// portfolio is the `HoldingsProvider`; the shared provider re-fetches each held name's CURRENT
+    /// data + the regime; `ExitEvaluator` applies the hold/trim/exit discipline. The held tickers form
+    /// the provider universe (`data(for:)` fetches any ticker, so membership is moot — it keeps
+    /// `universe()` honest).
+    func makePositionReviewer(config: SelectionConfig = .balanced) -> PositionReviewer {
+        let held = Array(paperTradingStore.state.positions.keys)
+        return PositionReviewer(holdings: paperTradingStore,
+                                provider: makeProvider(universe: held, config: config),
+                                evaluator: ExitEvaluator(config: config))
+    }
+
+    /// The "Positions to Review" screen source: hold/trim/exit verdicts for the current paper book under
+    /// `config`. Under `-UITestFixtures` returns canned decisions so the screen renders offline; an empty
+    /// book short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
+    func reviewPositions(config: SelectionConfig = .balanced) async throws -> [ExitDecision] {
+        if ProcessInfo.processInfo.isUITestFixtures { return UITestFixtures.exitDecisions }
+        guard !paperTradingStore.state.positions.isEmpty else { return [] }
+        return try await makePositionReviewer(config: config).review()
     }
 
     /// §10 universe: the composite Watchlist (the ranked union of the 20 screeners), read

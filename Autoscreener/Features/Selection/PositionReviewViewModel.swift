@@ -1,0 +1,49 @@
+import Foundation
+import Observation
+
+/// Drives the "Positions to Review" screen — the user-facing surface over the Gate-5 exit discipline
+/// (`PositionReviewer`). It loads hold/trim/exit verdicts (each with the same audited reasoning style as
+/// a buy `Recommendation`) from an injected async source (the live reviewer, wired by
+/// `AppDependencies.reviewPositions`) and exposes the loading / loaded / empty / error states.
+///
+/// The holdings fan-out, regime read, and per-name re-valuation all live below the source closure
+/// (`PositionReviewer` + `StockbitDataProvider`); this type only owns presentation. An empty result is a
+/// *successful* "nothing to review" state (no open positions, or everything holds), not an error. A
+/// failed load is left uncached so the next appearance retries (mirrors `TodaysPicksViewModel`).
+@MainActor
+@Observable
+final class PositionReviewViewModel {
+    private(set) var decisions: [ExitDecision] = []
+    var isLoading = false
+    var error: String?
+
+    /// True once a load has *succeeded* (even with zero decisions). Lets the view distinguish "reviewed,
+    /// nothing to do" (the empty state) from "haven't loaded yet". A failed load leaves it false.
+    private(set) var hasLoaded = false
+
+    let config: SelectionConfig
+    private let source: (SelectionConfig) async throws -> [ExitDecision]
+
+    init(config: SelectionConfig = .balanced,
+         source: @escaping (SelectionConfig) async throws -> [ExitDecision]
+            = { try await AppDependencies.shared.reviewPositions(config: $0) }) {
+        self.config = config
+        self.source = source
+    }
+
+    /// The names flagged to act on (exit or trim), surfaced first; holds are the rest.
+    var actionable: [ExitDecision] { decisions.filter { $0.action != .hold } }
+
+    func load(force: Bool = false) async {
+        if !force, hasLoaded { return }
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+        do {
+            decisions = try await source(config)
+            hasLoaded = true            // an empty result is still a successful review
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+}

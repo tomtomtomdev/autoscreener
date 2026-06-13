@@ -344,6 +344,8 @@ enum UITestFixtures {
                 "✓ Solvency",
                 "✓ Liquidity",
                 "MoS 31% vs req 25%",
+                "governance OK [significant · 1 flag(s)]",
+                "consensus -3% [Buy B/H/S 6/2/1 · tgt +12% · fade]",
                 "value 0.81 — Graham discount",
                 "quality 0.66 — ROE 18%",
                 "flow +0.020 [foreign accumulating]",
@@ -362,6 +364,36 @@ enum UITestFixtures {
                 "bankValue 0.62 — P/B below ROE-justified",
                 "bankQuality 0.55 — ROE 14%, ROA 2%",
                 "→ conviction 0.58 weight 6%",
+            ]),
+    ]
+
+    /// Canned Gate-5 exit verdicts for the "Positions to Review" screen under UI tests — a thesis-intact
+    /// HOLD, a deteriorated EXIT, and a risk-off TRIM — each carrying an audit trail shaped like the real
+    /// `ExitEvaluator` output, so the screen's rows and expandable rationale render deterministically
+    /// offline (no holdings fan-out runs under fixtures). Read via `AppDependencies.reviewPositions`.
+    static let exitDecisions: [ExitDecision] = [
+        ExitDecision(
+            ticker: "XXXX", action: .exit, reason: "Forensic: CFO persistently << NI",
+            audit: [
+                "review XXXX: price 880 vs cost 1500",
+                "✗ Forensic: CFO persistently << NI",
+            ]),
+        ExitDecision(
+            ticker: "BBNI", action: .trim, reason: "risk-off de-risking",
+            audit: [
+                "review BBNI: price 5200 vs cost 4800",
+                "✓ gates [financial]",
+                "MoS 18% vs exit floor -30%",
+                "regime RiskOff: target exposure 0 → trim",
+            ]),
+        ExitDecision(
+            ticker: "WIFI", action: .hold, reason: "thesis intact",
+            audit: [
+                "review WIFI: price 2350 vs cost 2100",
+                "✓ gates [industrial]",
+                "entry IV 6364 → current IV 6420 (+1%)",
+                "MoS 63% vs exit floor -30%",
+                "thesis intact → hold",
             ]),
     ]
 }
