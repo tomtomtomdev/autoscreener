@@ -166,6 +166,22 @@ struct SelectionConfig: Sendable, Codable {
         var payoutCeiling: Double           // payout above this is treated as less sustainable
         var payoutSubWeight: Double
     }
+    /// Slice 6 captured-endpoint tilt surfaces — small, capped overlays layered on the fundamental
+    /// composite (parallel to `flow`/`timing`), each inert when its overlay is absent. All sweepable.
+    struct RelativeValueParams: Sendable, Codable {
+        var cap: Double                     // max |modifier|
+        // Lower-is-cheaper valuation metrics (verified `fitem_name`s from the comparison/v2/ratios
+        // capture). The subject is compared against its INDUSTRY and SECTOR benchmark columns on each.
+        var cheaperMetricNames: [String]
+    }
+    struct SeasonalityParams: Sendable, Codable {
+        var cap: Double                     // max |modifier|
+        var avgReturnSpanPct: Double        // avg monthly % return mapped onto a full-magnitude signal
+    }
+    struct AccumulationParams: Sendable, Codable {
+        var cap: Double                     // max |modifier|
+        var topConcentrationN: Int          // top-N buying brokers for the surfaced buy-concentration read
+    }
     struct RegimeParams: Sendable, Codable {
         struct RiskWeights: Sendable, Codable {
             var valuationPercentile: Double // multiplied by 0..1 percentile
@@ -199,6 +215,9 @@ struct SelectionConfig: Sendable, Codable {
     var sizing: Sizing
     var regime: RegimeParams
     var bank: BankParams
+    var relativeValue: RelativeValueParams
+    var seasonality: SeasonalityParams
+    var accumulation: AccumulationParams
 }
 
 /// What the regime is ALLOWED to set — never which stock to buy. Now Codable so
@@ -253,7 +272,11 @@ extension SelectionConfig {
                     pbDiscountFullCreditAt: 0.5,
                     roeFloor: 0.10, roeSpan: 0.15, roeSubWeight: 0.5,
                     roaFloor: 0.005, roaSpan: 0.02, roaSubWeight: 0.3,
-                    earningsYears: 5, stabilitySubWeight: 0.5, payoutCeiling: 0.8, payoutSubWeight: 0.5))
+                    earningsYears: 5, stabilitySubWeight: 0.5, payoutCeiling: 0.8, payoutSubWeight: 0.5),
+        relativeValue: .init(cap: 0.03, cheaperMetricNames: [
+            "Current PE Ratio (Annualised)", "Current Price to Book Value", "EV to EBITDA (TTM)"]),
+        seasonality: .init(cap: 0.02, avgReturnSpanPct: 5.0),
+        accumulation: .init(cap: 0.03, topConcentrationN: 3))
 
     /// Stricter on quality/trust, lower exposure, fewer names.
     static var defensive: SelectionConfig {
@@ -666,6 +689,76 @@ enum Modifiers {
         let betaSrc = "β \(round2(bm))/\(round2(bs)) \(measured != nil ? "measured" : "default")"
         return (max(-t.cap, min(t.cap, d)), "idio \(pct(idio)) · ext \(pct(ext)) · \(betaSrc)")
     }
+
+    // Slice 6 captured-endpoint tilts. Each returns `(0, "")` — an EMPTY rationale — exactly when its
+    // overlay is absent or unscoreable, which the engine reads as "don't apply, don't audit". A present
+    // overlay always yields a non-empty rationale (even at a net-zero tilt), so the audit trail records
+    // that the signal was considered. This keeps every overlay-less name byte-for-byte unchanged.
+
+    /// Relative-value tilt from `peerComparison`: how cheap the subject is versus its INDUSTRY and
+    /// SECTOR benchmark columns on lower-is-cheaper valuation metrics (PE / PBV / EV-EBITDA). Cheaper
+    /// than BOTH benchmarks on a metric votes +1, richer than both −1, in-between 0; the mean vote
+    /// across the metrics that are present and numeric scales the cap.
+    static func relativeValue(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
+        let p = config.relativeValue
+        guard let peers = s.peerComparison, let subject = peers.subject else { return (0, "") }
+        var votes: [Double] = []
+        for name in p.cheaperMetricNames {
+            guard let m = peers.metric(named: name),
+                  let sv = m.numeric[subject],
+                  let bench = m.numeric["INDUSTRY"] ?? m.numeric["SECTOR"] else { continue }
+            let other = m.numeric["SECTOR"] ?? bench
+            if sv < bench, sv < other { votes.append(1) }
+            else if sv > bench, sv > other { votes.append(-1) }
+            else { votes.append(0) }
+        }
+        guard !votes.isEmpty else { return (0, "") }
+        let mean = votes.reduce(0, +) / Double(votes.count)
+        return (max(-p.cap, min(p.cap, mean * p.cap)), "rel-value \(votes.count)m vote \(round2(mean))")
+    }
+
+    /// Seasonality timing tilt from `seasonality`: the current month's historical win-rate
+    /// (`probabilityUpPct`, centred at 50) blended equally with its average return (`avgReturnPct`,
+    /// normalised by `avgReturnSpanPct`). "Current month" is the latest daily bar's calendar month (UTC)
+    /// — deterministic, no wall clock. A SOFT overlay only; never a gate (thin, survivorship-prone).
+    static func seasonality(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
+        let p = config.seasonality
+        guard let seas = s.seasonality, let last = s.dailyBars.last?.date else { return (0, "") }
+        let abbr = monthAbbrev(last)
+        guard let m = seas.month(abbr) else { return (0, "") }
+        let probSignal = clampSigned((m.probabilityUpPct - 50) / 50)
+        let retSignal = clampSigned(m.avgReturnPct / max(p.avgReturnSpanPct, 1e-9))
+        let blend = (probSignal + retSignal) / 2
+        return (max(-p.cap, min(p.cap, blend * p.cap)),
+                "\(abbr) P(up) \(Int(m.probabilityUpPct))% avg \(round2(m.avgReturnPct))%")
+    }
+
+    /// Smart-money accumulation tilt: per-ticker broker distribution (net buy-vs-sell imbalance, with the
+    /// top-N buy concentration surfaced for context) combined with market-wide leaderboard membership
+    /// (in today's top net-buy ⇒ +1, top net-sell ⇒ −1). Each available source contributes a value in
+    /// [−1, 1]; their mean scales the cap.
+    static func accumulation(_ s: SecurityData, leaders: FlowLeaderboard?,
+                             config: SelectionConfig) -> (Double, String) {
+        let p = config.accumulation
+        var parts: [Double] = []
+        var why: [String] = []
+        if let dist = s.brokerDistribution {
+            let tb = dist.totalBuyValue, ts = dist.totalSellValue
+            if tb + ts > 0 {
+                let imbalance = clampSigned((tb - ts) / (tb + ts))
+                parts.append(imbalance)
+                let conc = dist.buyConcentration(topN: p.topConcentrationN).map { round2($0) } ?? "n/a"
+                why.append("net \(round2(imbalance)) · top\(p.topConcentrationN)-conc \(conc)")
+            }
+        }
+        if let lb = leaders {
+            if lb.topBuy.contains(where: { $0.code == s.ticker }) { parts.append(1); why.append("top-buy") }
+            else if lb.topSell.contains(where: { $0.code == s.ticker }) { parts.append(-1); why.append("top-sell") }
+        }
+        guard !parts.isEmpty else { return (0, "") }
+        let mean = parts.reduce(0, +) / Double(parts.count)
+        return (max(-p.cap, min(p.cap, mean * p.cap)), why.joined(separator: " · "))
+    }
 }
 
 // MARK: - 8b. Company archetype & selection profile (Phase 2 seam, §14)
@@ -773,7 +866,8 @@ struct StockSelectionEngine: Sendable {
     }
 
     func run() async throws -> [Recommendation] {
-        let policy = RegimeAssessor.assess(try await provider.marketContext(), config: config)
+        let context = try await provider.marketContext()
+        let policy = RegimeAssessor.assess(context, config: config)
         if policy.maxTotalExposure <= 0 { return [] }
 
         var scored: [Scored] = []
@@ -805,6 +899,14 @@ struct StockSelectionEngine: Sendable {
             var composite = den > 0 ? num / den : 0
             let f = Modifiers.flow(s, config: config); composite += f.0; audit.append("flow \(signed(f.0)) [\(f.1)]")
             let tm = Modifiers.timing(s, config: config); composite += tm.0; audit.append("timing \(signed(tm.0)) [\(tm.1)]")
+            // Slice 6 captured-endpoint tilts — applied (and audited) only when the overlay contributed,
+            // so a name without the data is byte-for-byte unchanged.
+            let rv = Modifiers.relativeValue(s, config: config)
+            if !rv.1.isEmpty { composite += rv.0; audit.append("relValue \(signed(rv.0)) [\(rv.1)]") }
+            let se = Modifiers.seasonality(s, config: config)
+            if !se.1.isEmpty { composite += se.0; audit.append("seasonality \(signed(se.0)) [\(se.1)]") }
+            let ac = Modifiers.accumulation(s, leaders: context.flowLeaders, config: config)
+            if !ac.1.isEmpty { composite += ac.0; audit.append("accumulation \(signed(ac.0)) [\(ac.1)]") }
             composite = clamp01(composite)
             scored.append(Scored(data: s, composite: composite, marginOfSafety: mos,
                                  audit: audit, valuator: profile.valuator))
@@ -846,6 +948,16 @@ struct StockSelectionEngine: Sendable {
 // MARK: - 11. Helpers (pure)
 
 private func clamp01(_ x: Double) -> Double { max(0, min(1, x)) }
+private func clampSigned(_ x: Double) -> Double { max(-1, min(1, x)) }
+private let monthAbbrevs = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+/// Three-letter English month for a date in UTC — matches the seasonality table's row names ("Jan"…
+/// "Dec"). UTC-pinned so the read is deterministic and timezone-independent (tests rely on this).
+private func monthAbbrev(_ date: Date) -> String {
+    var cal = Calendar(identifier: .gregorian)
+    cal.timeZone = TimeZone(identifier: "UTC")!
+    let m = cal.component(.month, from: date)
+    return (1...12).contains(m) ? monthAbbrevs[m - 1] : ""
+}
 private func nsDouble(_ d: Decimal) -> Double { (d as NSDecimalNumber).doubleValue }
 private func pctChange(_ new: Decimal, _ old: Decimal) -> Double { old == 0 ? 0 : nsDouble(new - old) / nsDouble(old) }
 private func pct(_ x: Double) -> String { String(format: "%.0f%%", x * 100) }
