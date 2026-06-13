@@ -354,8 +354,43 @@ canonical build order)** from the next-unbuilt item. All other sections are back
   caps (see SPEC §18.1). New tests: `AllocationEngineTests`, `PaperTradingStoreTests`,
   `PaperTradingViewModelTests`, `PaperTradingUITests`. **Full `AutoscreenerTests` bundle green.**
 
-**Next action:** **Tier-A is feature-complete, calibrated, and now user-visible** (Today's Picks UI,
-above). Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
+- **Gate-5 exit/sell — Phase 1 ✅ (2026-06-13) — THE BUY-ONLY LOOP NOW HAS A SELL SIDE.** The engine
+  was buy-only (`run()`: universe → recommendations); Gate-5 adds the mirror — holdings → hold/trim/exit
+  — as a **sibling use case**, not a stage inside `run()` (different input/output/reason-to-change;
+  SRP/ISP). Purely additive: the locked `SelectionEngineCharacterizationTests` golden master is
+  **byte-for-byte unchanged**. New `Autoscreener/Features/Selection/ExitEvaluator.swift`. Pieces:
+  - **Sell taxonomy** grounded in the buy-side skills *reversed* (Fisher "When to Sell" + Graham Mr.
+    Market + Marks defense — consulted in-session, not from priors): **Tier 1a** a buy-side hard gate
+    now FAILS on current data (Forensic/Solvency/CapitalStrength/DataIntegrity) ⇒ `.exit`
+    (deterioration); **Tier 1b** the Gate-2 `governanceVeto` fires on current `.concern` flags ⇒
+    `.exit` (integrity); **Tier 2** current MoS ≤ `exit.exitMarginFloor` ⇒ `.exit` (Graham valuation);
+    **Tier 3** `policy.maxTotalExposure ≤ 0` ⇒ `.trim` (deep risk-off; normal risk-off sizing stays the
+    paper-trading `AllocationEngine`'s job — not duplicated); **Tier 4** else `.hold`.
+  - **The hysteresis** (the Fisher/Graham reconciliation): you BUY at `policy.minMarginOfSafety`
+    (positive); you SELL only at `exit.exitMarginFloor` (NEGATIVE, default **−0.30** "let winners run").
+    The band between is HOLD. The valuator **recomputes IV from CURRENT fundamentals every review**, so a
+    compounding winner earns a higher IV and is never sold on a risen price alone — Fisher's rule, in code.
+  - **Reuse, not rebuild:** each held name is re-run through its OWN `SelectionProfile` (archetype seam —
+    a held bank uses CapitalStrength + JustifiedPB), the existing `governanceVeto`, and the valuator's
+    `marginOfSafety`. Pure + clock-free like the buy engine (the clock enters only at the provider edge).
+  - **New config** `SelectionConfig.ExitParams` (trailing-defaulted field — `.balanced`/every preset
+    source-compatible, like `TimingParams.betaLookback`): `exitMarginFloor −0.30`, `honorGovernanceVeto`,
+    `honorHardGates`, `regimeTrimOnRiskOff`. **New gateway** `HoldingsProvider` (DIP — use case owns it,
+    paper-trading store/brokerage implement it later). **Sibling** `PositionReviewer.review()` = holdings
+    → decisions (reads regime once, like `run()`).
+  - **Tests:** `AutoscreenerTests/ExitEvaluatorTests.swift` (16 cases, one trigger each, incl. Fisher's
+    explicit NON-triggers asserted as HOLD — a −68% paper drawdown with intact gates, and a price ABOVE
+    IV but inside the band — plus the config toggles, bank-archetype routing, and the reviewer
+    end-to-end). **Full `AutoscreenerTests`: 679 passed, 0 failures**, golden master byte-for-byte.
+  - **Phase 1 deliberately re-evaluates CURRENT data only.** Deferred: **Phase 2** persist an
+    `EntryThesis` snapshot on the held position (true "thesis-was-wrong" / "IV collapsed since entry" +
+    Lynch category-aware bands); **Phase 3** `PaperTradingStore: HoldingsProvider` conformance + feed
+    `ExitDecision`s into the paper-trading plan (today it only sells via rebalance-down, never a *thesis*
+    exit) + a "Positions to review" surface. Committed `28cbe1c` on
+    `feat/gate3-consensus-gate2-governance` (UNPUSHED, atop the Gate-2/3 commit `75499cc`).
+
+**Next action:** **Tier-A is feature-complete, calibrated, user-visible, and now has Gate-5 sell
+discipline (Phase 1).** Remaining, all optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated
 feed):** open the **Today's Picks** screen (or call `AppDependencies.selectionRunner.run(config:
 .balanced)`) against a live Stockbit session and eyeball the audit trail for a real industrial + a
 real bank. This couldn't be done in-session (no auth/network); the deterministic end-to-end (4.3) is

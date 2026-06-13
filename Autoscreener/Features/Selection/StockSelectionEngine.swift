@@ -196,6 +196,25 @@ struct SelectionConfig: Sendable, Codable {
         var vetoInsiderSelling: Bool        // veto on a concern-severity insider net-selling flag
         var vetoDilution: Bool              // veto on a concern-severity recent/chronic dilution flag
     }
+    /// Gate-5 exit/sell surface — the discipline for SELLING a held name (see `ExitEvaluator`). The
+    /// buy side asks "is this cheap and clean enough to buy?"; this asks the reverse: "has the thesis
+    /// broken badly enough to sell?". Deliberately ASYMMETRIC vs the buy MoS floor — Fisher's rule
+    /// that a rising price alone is never a reason to sell — so the valuation exit fires only when
+    /// price runs PAST the (re-computed) intrinsic value by `exitMarginFloor`, never when MoS merely
+    /// shrinks. The hard/governance exits reuse the buy-side hard gates and the Gate-2 veto verbatim.
+    struct ExitParams: Sendable, Codable {
+        /// Sell when current MoS ≤ this (NEGATIVE: price has run this far past intrinsic value). At
+        /// −0.30 a winner is sold only on egregious overvaluation, so it compounds in between (Fisher).
+        var exitMarginFloor: Ratio = -0.30
+        /// Reuse the Gate-2 insider/dilution veto as a hard exit when its `.concern` flags fire today.
+        var honorGovernanceVeto: Bool = true
+        /// Re-run the buy-side hard gates on CURRENT data; a name that now fails one has deteriorated.
+        var honorHardGates: Bool = true
+        /// Flag held names to TRIM when the regime de-risks to zero target exposure. Position SIZING in
+        /// risk-off is owned by the paper-trading `AllocationEngine`'s exposure bands — this is only the
+        /// deep-risk-off acknowledgement, not a duplicate of that sizing.
+        var regimeTrimOnRiskOff: Bool = true
+    }
     struct RegimeParams: Sendable, Codable {
         struct RiskWeights: Sendable, Codable {
             var valuationPercentile: Double // multiplied by 0..1 percentile
@@ -234,6 +253,8 @@ struct SelectionConfig: Sendable, Codable {
     var accumulation: AccumulationParams
     var consensus: ConsensusParams
     var governance: GovernanceParams
+    var exit: ExitParams = .init()          // Gate-5 sell discipline; trailing-defaulted so every
+                                            // existing `.init(...)` preset call stays source-compatible.
 }
 
 /// What the regime is ALLOWED to set — never which stock to buy. Now Codable so
@@ -294,7 +315,9 @@ extension SelectionConfig {
         seasonality: .init(cap: 0.02, avgReturnSpanPct: 5.0),
         accumulation: .init(cap: 0.03, topConcentrationN: 3),
         consensus: .init(cap: 0.03, targetUpsideSpanPct: 0.5),
-        governance: .init(period: .oneYear, vetoInsiderSelling: true, vetoDilution: true))
+        governance: .init(period: .oneYear, vetoInsiderSelling: true, vetoDilution: true),
+        exit: .init(exitMarginFloor: -0.30, honorGovernanceVeto: true,
+                    honorHardGates: true, regimeTrimOnRiskOff: true))
 
     /// Stricter on quality/trust, lower exposure, fewer names.
     static var defensive: SelectionConfig {
