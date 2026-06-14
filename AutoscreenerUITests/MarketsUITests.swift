@@ -102,9 +102,9 @@ final class MarketsUITests: XCTestCase {
     }
 
     /// The Global card is the left column of the dashboard, below the inline regime
-    /// breakdown, and lists world indices (S&P 500, Nikkei, …). They're priced and
-    /// chartable like the IDX composite — proven by the section header plus an `SP500`
-    /// priced row.
+    /// breakdown, and lists world indices (S&P 500, Nikkei, …). They're priced like
+    /// the IDX composite (but snapshot-only — they don't navigate) — proven by the
+    /// section header plus an `SP500` priced row.
     @MainActor
     func testGlobalIndicesSectionShowsPricedRows() throws {
         #if canImport(AppKit)
@@ -160,5 +160,43 @@ final class MarketsUITests: XCTestCase {
         composite.click()
         XCTAssertTrue(chartDetail(app).waitForExistence(timeout: 5),
                       "Tapping a chartable row should push the OHLCV chart detail")
+    }
+
+    /// Global indices and the IDX-IC sectors keep their chart history but are now
+    /// snapshot-only on the dashboard — their rows must NOT push the OHLCV chart.
+    /// A headline-index row (LQ45) is the positive control proving navigation still
+    /// works for the IDX composite/indices.
+    @MainActor
+    func testGlobalAndSectorRowsDoNotNavigateToChart() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = openMarkets()
+
+        // A global-index row (SP500) clicks but does not push the chart detail.
+        let sp500 = app.descendants(matching: .any)
+            .matching(identifier: "MarketsPricedRow.SP500").firstMatch
+        XCTAssertTrue(sp500.waitForExistence(timeout: 5), "SP500 global-index row should be listed")
+        sp500.click()
+        XCTAssertFalse(chartDetail(app).waitForExistence(timeout: 2),
+                       "Tapping a global-index row must not push the OHLCV chart")
+
+        // A sector row (IDXENERGY) likewise does not navigate.
+        let energy = app.descendants(matching: .any)
+            .matching(identifier: "MarketsPricedRow.IDXENERGY").firstMatch
+        XCTAssertTrue(energy.waitForExistence(timeout: 5), "IDXENERGY sector row should be listed")
+        energy.click()
+        XCTAssertFalse(chartDetail(app).waitForExistence(timeout: 2),
+                       "Tapping a sector row must not push the OHLCV chart")
+
+        // Positive control: a headline-index row (LQ45) still navigates.
+        let lq45 = app.descendants(matching: .any)
+            .matching(identifier: "MarketsPricedRow.LQ45").firstMatch
+        XCTAssertTrue(lq45.waitForExistence(timeout: 5), "LQ45 index row should be listed")
+        lq45.click()
+        XCTAssertTrue(chartDetail(app).waitForExistence(timeout: 5),
+                      "Tapping a headline-index row should still push the OHLCV chart detail")
     }
 }

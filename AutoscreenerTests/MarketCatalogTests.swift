@@ -45,6 +45,27 @@ import Testing
         #expect(MarketGroup.global.hasChart)
     }
 
+    /// Only the IDX composite and headline indices push a detail chart from the
+    /// Markets dashboard. Global indices and the IDX-IC sectors stay snapshot-only
+    /// even though they have chart history (`hasChart`); commodities and currencies
+    /// have no chart at all.
+    @Test func onlyCompositeAndIndexNavigateToDetail() {
+        #expect(MarketGroup.composite.navigatesToDetail)
+        #expect(MarketGroup.index.navigatesToDetail)
+        #expect(!MarketGroup.global.navigatesToDetail)
+        #expect(!MarketGroup.sector.navigatesToDetail)
+        #expect(!MarketGroup.commodity.navigatesToDetail)
+        #expect(!MarketGroup.currency.navigatesToDetail)
+    }
+
+    /// Sectors keep their chart history even though their rows no longer navigate —
+    /// navigation intent (`navigatesToDetail`) is now distinct from data availability
+    /// (`hasChart`).
+    @Test func sectorsRemainChartableButDoNotNavigate() {
+        #expect(MarketGroup.sector.hasChart)
+        #expect(!MarketGroup.sector.navigatesToDetail)
+    }
+
     @Test func includesAllCommodityAndCurrencySymbols() {
         let commoditiesAndFX = Set(
             MarketCatalog.all

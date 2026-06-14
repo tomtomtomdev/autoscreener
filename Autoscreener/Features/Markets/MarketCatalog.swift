@@ -11,11 +11,24 @@ nonisolated enum MarketGroup: String, CaseIterable, Sendable {
 
     /// Whether symbols in this group have historical OHLCV data to chart.
     /// Commodities and currencies only expose a live price snapshot — there's no
-    /// `charts/{symbol}/daily` history for them — so their rows don't navigate.
+    /// `charts/{symbol}/daily` history for them. Note this is a data-availability
+    /// fact, not a navigation rule: see `navigatesToDetail` for which rows tap
+    /// through to the chart.
     var hasChart: Bool {
         switch self {
         case .global, .composite, .index, .sector: true
         case .commodity, .currency: false
+        }
+    }
+
+    /// Whether tapping a row in this group pushes its OHLCV chart detail. Only the
+    /// IDX composite and the headline indices navigate; global indices and the
+    /// IDX-IC sectors stay snapshot-only on the dashboard even though they have
+    /// chart history (`hasChart`), and commodities/currencies have no chart at all.
+    var navigatesToDetail: Bool {
+        switch self {
+        case .composite, .index: true
+        case .global, .sector, .commodity, .currency: false
         }
     }
 

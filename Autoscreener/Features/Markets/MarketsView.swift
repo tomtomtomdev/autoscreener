@@ -10,9 +10,9 @@ import SwiftUI
 ///
 /// Every row shows a live price + % change snapshot (from `emitten/{symbol}/info`
 /// via `MarketQuotesViewModel`), loaded on appear and refreshable by
-/// pull-to-refresh. Commodities and currencies have no historical chart data, so
-/// only they stay non-navigating; the composite, indices, sectors, and global
-/// indices are both priced and tappable into their chart.
+/// pull-to-refresh. Only the composite and headline indices tap through to their
+/// chart; global indices and the IDX-IC sectors stay snapshot-only on the
+/// dashboard (as do commodities and currencies, which have no chart history).
 struct MarketsView: View {
     private let chartService: any ChartServicing
     @State private var regime: RegimeViewModel
@@ -134,8 +134,9 @@ struct MarketsView: View {
 }
 
 /// One market group rendered as a titled dashboard tile: a header plus its priced
-/// rows. Chartable groups (`group.hasChart`) wrap each row in a `NavigationLink` so
-/// it pushes the OHLCV chart; commodities and currencies render as plain rows.
+/// rows. Navigating groups (`group.navigatesToDetail` — the composite and headline
+/// indices) wrap each row in a `NavigationLink` so it pushes the OHLCV chart; global
+/// indices, sectors, commodities, and currencies render as plain rows.
 /// `columns > 1` lays the rows out in a fixed grid (used by the long Sectors group);
 /// the grid is deliberately non-lazy so every row stays in the view hierarchy even
 /// when scrolled out of view — UI tests query rows by identifier regardless of the
@@ -180,11 +181,12 @@ struct MarketSectionCard: View {
         .accessibilityIdentifier("MarketSectionCard.\(group.rawValue)")
     }
 
-    /// Commodities and currencies have no historical chart data, so they render as
-    /// non-navigating rows; everything else pushes its chart.
+    /// Only the composite and headline indices push a chart; global indices and the
+    /// IDX-IC sectors stay snapshot-only on the dashboard (as do commodities and
+    /// currencies, which have no chart at all), so they render as plain rows.
     @ViewBuilder
     private func rowOrLink(_ item: MarketSymbol) -> some View {
-        if item.group.hasChart {
+        if item.group.navigatesToDetail {
             NavigationLink(value: item) {
                 pricedRow(item)
             }
