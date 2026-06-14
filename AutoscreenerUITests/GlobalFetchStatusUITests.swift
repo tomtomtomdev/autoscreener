@@ -40,26 +40,27 @@ final class GlobalFetchStatusUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // Screen 1 — the default Watchlist. The global status indicator lives in the shared title bar.
-        XCTAssertTrue(element(app, "WatchlistView").waitForExistence(timeout: 15),
-                      "Watchlist screen should render on launch")
+        // Screen 1 — the default landing is the unified Recommendations inbox. The global status
+        // indicator lives in the shared title bar.
+        XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
+                      "Recommendations screen should render on launch")
         XCTAssertTrue(element(app, "globalfetchstatus").waitForExistence(timeout: 10),
-                      "The global fetch-status indicator should show on the Watchlist")
+                      "The global fetch-status indicator should show on Recommendations")
 
         // The per-screen Refresh control is gone — the status bar is the single fetch surface now.
         XCTAssertFalse(app.buttons["Refresh"].exists,
                        "The per-screen Refresh button should have been removed")
 
-        // Screen 2 — Today's Picks. The same single indicator persists across the shared NavigationStack.
-        let picks = sidebarItem(app, "Today's Picks")
-        XCTAssertTrue(picks.waitForExistence(timeout: 10), "Today's Picks sidebar item should appear")
-        picks.click()
+        // Screen 2 — the Watchlist. The same single indicator persists across the shared NavigationStack.
+        let watchlist = sidebarItem(app, "Watchlist")
+        XCTAssertTrue(watchlist.waitForExistence(timeout: 10), "Watchlist sidebar item should appear")
+        watchlist.click()
 
-        XCTAssertTrue(element(app, "TodaysPicksView").waitForExistence(timeout: 10),
-                      "Today's Picks screen should render")
+        XCTAssertTrue(element(app, "WatchlistView").waitForExistence(timeout: 10),
+                      "Watchlist screen should render")
         XCTAssertTrue(element(app, "globalfetchstatus").waitForExistence(timeout: 10),
-                      "The global fetch-status indicator should also show on Today's Picks")
+                      "The global fetch-status indicator should also show on the Watchlist")
         XCTAssertFalse(app.buttons["Refresh"].exists,
-                       "Today's Picks should no longer expose a Refresh button")
+                       "The Watchlist should no longer expose a Refresh button")
     }
 }

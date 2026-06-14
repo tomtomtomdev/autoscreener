@@ -7,6 +7,15 @@ Autoscreener.
 
 ## Status & how to resume (READ FIRST) — locked 2026-06-06
 
+> **⚠️ UI superseded 2026-06-14 — unified "Recommendations" screen.** The separate **Today's Picks**
+> (`TodaysPicksView`) and **Positions to Review** (`PositionsReviewView`) screens described below were
+> **merged into one `RecommendationsView`** (default landing; `SidebarItem.recommendations`). Both view
+> files are deleted; their VMs (`TodaysPicksViewModel` / `PositionReviewViewModel`) are **kept and owned**
+> by a thin `RecommendationsViewModel`, so every store/allocator wiring and the golden master are
+> unchanged. The Gate-2/3 badge parser moved `TodaysPicksView.gateBadges` → `RecommendationFormatting`.
+> Treat the per-screen UI notes below as historical; the engine/Gate-5 build order is still current. See
+> SPEC.md "unified Recommendations screen (2026-06-14)".
+
 **Planning is complete and locked. Build is in progress.** This doc is the single source of truth;
 it was authored to survive a context clear. To resume, read this section, then continue **§8 (the
 canonical build order)** from the next-unbuilt item. All other sections are background/rationale.

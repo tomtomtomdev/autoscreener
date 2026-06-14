@@ -8,6 +8,13 @@ fresh, so manual refresh is redundant chrome; the status bar makes the *automati
 
 ## Status & how to resume (READ FIRST) — locked 2026-06-14
 
+> **⚠️ Partially superseded 2026-06-14 — unified "Recommendations" screen.** `TodaysPicksView` and
+> `PositionsReviewView` (referenced throughout below) were merged into one `RecommendationsView` and
+> deleted. The global fetch-status bar + no-per-screen-refresh decisions still hold and carry over to the
+> merged screen (it keeps the single `.onChange(of: …lastSweepAt)` auto-reload). `GlobalFetchStatusUITests`
+> was rewritten to land on **Recommendations** (the new default) then navigate to the Watchlist. See
+> SPEC.md "unified Recommendations screen (2026-06-14)".
+
 **BUILT & COMMITTED 2026-06-14 — branch `feat/ui-chrome-global-fetch-status` (off `main`@`0bd1b1c`), UNPUSHED.**
 All 7 §4 steps done; decisions 1/2/3 below all honoured.
 - **Step 1** — `Features/Main/FetchStatus.swift` (pure `enum` + `resolve(…)` + `displayLabel`/`tint`/`showsSpinner`),

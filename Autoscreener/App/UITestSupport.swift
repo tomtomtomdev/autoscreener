@@ -329,11 +329,13 @@ enum UITestFixtures {
             value: value, volume: volume, frequency: frequency)
     }
 
-    /// Canned Tier-A recommendations for the "Today's Picks" screen under UI tests. Two ranked picks
-    /// — an industrial (Graham path) and a bank (justified-P/B path) — each carrying an audit trail
+    /// Canned Tier-A recommendations for the unified "Recommendations" screen under UI tests. Three
+    /// ranked picks — an industrial (Graham path, WIFI), a bank (justified-P/B path, BBNI), and a
+    /// buy-only candidate (BBCA, NOT among the held positions below) — each carrying an audit trail
     /// shaped like the engine's real output, so the screen's rows and expandable rationale render
-    /// deterministically offline. No engine fan-out runs under fixtures (the per-ticker leaf services
-    /// are empty stubs); this is the stand-in the screen reads via `AppDependencies.todaysPicks`.
+    /// deterministically offline. WIFI and BBNI are also held (see `exitDecisions`), so the unified
+    /// merge surfaces them as verdicts and BBCA as the lone pure BUY. No engine fan-out runs under
+    /// fixtures (the per-ticker leaf services are empty stubs); read via `AppDependencies.todaysPicks`.
     static let recommendations: [Recommendation] = [
         Recommendation(
             ticker: "WIFI", compositeScore: 0.74, intrinsicValue: 6_364,
@@ -364,6 +366,18 @@ enum UITestFixtures {
                 "bankValue 0.62 — P/B below ROE-justified",
                 "bankQuality 0.55 — ROE 14%, ROA 2%",
                 "→ conviction 0.58 weight 6%",
+            ]),
+        Recommendation(
+            ticker: "BBCA", compositeScore: 0.69, intrinsicValue: 10_840,
+            marginOfSafety: 0.28, conviction: 0.69, suggestedWeight: 0.075,
+            audit: [
+                "regime=Neutral",
+                "✓ DataIntegrity",
+                "✓ Liquidity",
+                "MoS 28% vs req 25%",
+                "governance OK [watch · 0 flag(s)]",
+                "value 0.71 — Graham discount",
+                "→ conviction 0.69 weight 8%",
             ]),
     ]
 

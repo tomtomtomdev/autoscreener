@@ -30,6 +30,11 @@ final class StockDetailUITests: XCTestCase {
         return byID.exists ? byID : app.buttons[symbol]
     }
 
+    private func sidebarItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        let button = app.buttons[label]
+        return button.exists ? button : app.staticTexts[label].firstMatch
+    }
+
     @MainActor
     func testTappingStockCodeOpensFinancialDetail() throws {
         // macOS gives each display its own Space; with multiple displays attached,
@@ -43,10 +48,16 @@ final class StockDetailUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // The screener renders the canned rows; the stock code is a tappable link.
+        // The unified Recommendations inbox is the default landing now — navigate to the Watchlist,
+        // whose rows expose tappable stock codes.
+        let watchlist = sidebarItem(app, "Watchlist")
+        XCTAssertTrue(watchlist.waitForExistence(timeout: 15), "Watchlist sidebar item should appear")
+        watchlist.click()
+
+        // The watchlist renders the canned rows; the stock code is a tappable link.
         let bbca = stockButton(app, "BBCA")
         XCTAssertTrue(bbca.waitForExistence(timeout: 15),
-                      "BBCA stock-code link should appear in the screener")
+                      "BBCA stock-code link should appear in the watchlist")
         bbca.click()
 
         // Detail opens on the Chart tab: its timeframe control (default 1Y) is present.

@@ -24,6 +24,11 @@ final class WatchlistUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    private func sidebarItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        let button = app.buttons[label]
+        return button.exists ? button : app.staticTexts[label].firstMatch
+    }
+
     @MainActor
     func testWatchlistRendersFromCacheAndExcludesVetoedStock() throws {
         // macOS gives each display its own Space; XCUITest can't snapshot a window on
@@ -35,9 +40,14 @@ final class WatchlistUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // The Watchlist is the default landing screen; it renders from the seeded cache.
+        // The unified Recommendations inbox is the default landing now — navigate to the Watchlist,
+        // which renders from the seeded cache.
+        let watchlist = sidebarItem(app, "Watchlist")
+        XCTAssertTrue(watchlist.waitForExistence(timeout: 15), "Watchlist sidebar item should appear")
+        watchlist.click()
+
         XCTAssertTrue(element(app, "WatchlistView").waitForExistence(timeout: 15),
-                      "Watchlist screen should render on launch")
+                      "Watchlist screen should render")
 
         // BBCA and TLKM appear in every screener (including both liquidity gates) → survive.
         XCTAssertTrue(element(app, "watchlist.stockcode-BBCA").waitForExistence(timeout: 10),

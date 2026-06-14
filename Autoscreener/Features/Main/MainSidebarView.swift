@@ -1,7 +1,7 @@
 import SwiftUI
 
 nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
-    case todaysPicks
+    case recommendations
     case bandarAccumulating
     case bandarAboveMA20
     case bandarShiftToday
@@ -25,13 +25,12 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case markets
     case watchlist
     case paperTrading
-    case positionsReview
     case appSettings
 
     var id: Self { self }
     var title: String {
         switch self {
-        case .todaysPicks:        return "Today's Picks"
+        case .recommendations:    return "Recommendations"
         case .bandarAccumulating: return "Bandar Accumulating"
         case .bandarAboveMA20:    return "Bandar Above MA20"
         case .bandarShiftToday:   return "Bandar Shift Today"
@@ -55,13 +54,12 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "Markets"
         case .watchlist:          return "Watchlist"
         case .paperTrading:       return "Paper Trading"
-        case .positionsReview:    return "Positions to Review"
         case .appSettings:        return "Settings"
         }
     }
     var systemImage: String {
         switch self {
-        case .todaysPicks:        return "list.star"
+        case .recommendations:    return "checklist"
         case .bandarAccumulating: return "chart.bar.doc.horizontal"
         case .bandarAboveMA20:    return "chart.line.uptrend.xyaxis"
         case .bandarShiftToday:   return "arrow.left.arrow.right.circle"
@@ -85,13 +83,12 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "chart.bar.xaxis"
         case .watchlist:          return "star.circle.fill"
         case .paperTrading:       return "banknote"
-        case .positionsReview:    return "stethoscope"
         case .appSettings:        return "gearshape"
         }
     }
     var templateID: String? {
         switch self {
-        case .todaysPicks:        return nil
+        case .recommendations:    return nil
         case .bandarAccumulating: return "6676213"
         case .bandarAboveMA20:    return "6676217"
         case .bandarShiftToday:   return "6676221"
@@ -115,16 +112,16 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return nil
         case .watchlist:          return nil
         case .paperTrading:       return nil
-        case .positionsReview:    return nil
         case .appSettings:        return nil
         }
     }
 }
 
 struct MainSidebarView: View {
-    // Today's Picks is hidden for now — land on the composite Watchlist, the hub the
-    // continuous screener sweep feeds.
-    @State private var selection: SidebarItem? = .watchlist
+    // Land on the unified Recommendations inbox — the single "what should I do today" surface that
+    // merges the buy-side picks and the Gate-5 sell-side review. The composite Watchlist (the radar the
+    // continuous screener sweep feeds) is one click away.
+    @State private var selection: SidebarItem? = .recommendations
 
     // Hold one ViewModel per screener so switching tabs preserves their loaded rows
     // and doesn't fire a fresh paywall counter on every back-and-forth.
@@ -158,10 +155,10 @@ struct MainSidebarView: View {
     // Paper trading projects the same shared stores (portfolio + regime + screeners);
     // held here so switching tabs preserves the pending plan binding.
     @State private var paperTradingVM: PaperTradingViewModel
-    // Tier-A selection surfaces: the buy-side picks and the Gate-5 sell-side review. Held here (like the
-    // screeners) so switching tabs preserves their loaded state and doesn't re-run the engine each time.
-    @State private var todaysPicksVM: TodaysPicksViewModel
-    @State private var positionsReviewVM: PositionReviewViewModel
+    // Tier-A selection surface: the unified Recommendations inbox merges the buy-side picks and the
+    // Gate-5 sell-side review into one ranked list. Held here (like the screeners) so switching tabs
+    // preserves its loaded state and doesn't re-run the engine each time.
+    @State private var recommendationsVM: RecommendationsViewModel
 
     init() {
         let deps = AppDependencies.shared
@@ -197,20 +194,20 @@ struct MainSidebarView: View {
             store: deps.paperTradingStore, screenerStore: store,
             marketStore: deps.marketDataStore, coordinator: coordinator))
         // Default-wired to the shared sources/stores (incl. the shared RecommendationsStore the paper
-        // flow reads at fill time), so the buy picks and the sell review stay in lock-step.
-        _todaysPicksVM = State(initialValue: TodaysPicksViewModel())
-        _positionsReviewVM = State(initialValue: PositionReviewViewModel())
+        // flow reads at fill time), so the buy picks and the sell review stay in lock-step. The unified
+        // VM owns one of each child VM, so both stores are still fed exactly as before.
+        _recommendationsVM = State(initialValue: RecommendationsViewModel())
     }
 
     var body: some View {
         NavigationSplitView {
             List(selection: $selection) {
-                // The Tier-A selection surfaces. Default landing stays the composite Watchlist (below);
-                // these are reachable, with Today's Picks (buy side) and Positions to Review (Gate-5 sell side).
+                // The unified Tier-A surface: one ranked inbox merging the buy-side picks and the
+                // Gate-5 sell-side review. It's the default landing.
                 Section("Today") {
-                    Label(SidebarItem.todaysPicks.title,
-                          systemImage: SidebarItem.todaysPicks.systemImage)
-                        .tag(SidebarItem.todaysPicks)
+                    Label(SidebarItem.recommendations.title,
+                          systemImage: SidebarItem.recommendations.systemImage)
+                        .tag(SidebarItem.recommendations)
                 }
                 Section("Screeners") {
                     ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
@@ -229,9 +226,6 @@ struct MainSidebarView: View {
                     Label(SidebarItem.paperTrading.title,
                           systemImage: SidebarItem.paperTrading.systemImage)
                         .tag(SidebarItem.paperTrading)
-                    Label(SidebarItem.positionsReview.title,
-                          systemImage: SidebarItem.positionsReview.systemImage)
-                        .tag(SidebarItem.positionsReview)
                 }
                 Section {
                     Label(SidebarItem.appSettings.title,
@@ -259,9 +253,9 @@ struct MainSidebarView: View {
     @ViewBuilder
     private var detail: some View {
         switch selection {
-        case .todaysPicks:
-            TodaysPicksView(vm: todaysPicksVM)
-                .id(SidebarItem.todaysPicks)
+        case .recommendations:
+            RecommendationsView(vm: recommendationsVM)
+                .id(SidebarItem.recommendations)
         case .bandarAccumulating:
             ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
                 .id(SidebarItem.bandarAccumulating)
@@ -331,9 +325,6 @@ struct MainSidebarView: View {
         case .paperTrading:
             PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
                 .id(SidebarItem.paperTrading)
-        case .positionsReview:
-            PositionsReviewView(vm: positionsReviewVM)
-                .id(SidebarItem.positionsReview)
         case .appSettings:
             AppSettingsView()
                 .id(SidebarItem.appSettings)
