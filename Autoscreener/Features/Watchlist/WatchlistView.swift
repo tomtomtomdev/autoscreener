@@ -13,24 +13,22 @@ struct WatchlistView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                toolbar
-                if let msg = vm.paywallMessage {
-                    paywallBanner(msg)
-                }
-                Divider()
-                content
-                Divider()
-                statusBar
+        VStack(spacing: 0) {
+            toolbar
+            if let msg = vm.paywallMessage {
+                paywallBanner(msg)
             }
-            .frame(minWidth: 720, minHeight: 480)
-            .accessibilityIdentifier("WatchlistView")
-            .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
-            .task { await vm.autoRunIfNeeded() }
-            .navigationDestination(item: $selectedTicker) { ticker in
-                StockDetailView(ticker: ticker)
-            }
+            Divider()
+            content
+            Divider()
+            statusBar
+        }
+        .frame(minWidth: 720, minHeight: 480)
+        .accessibilityIdentifier("WatchlistView")
+        .searchable(text: $vm.searchText, placement: .toolbar, prompt: "Search stock code")
+        .task { await vm.autoRunIfNeeded() }
+        .navigationDestination(item: $selectedTicker) { ticker in
+            StockDetailView(ticker: ticker)
         }
     }
 
@@ -55,13 +53,6 @@ struct WatchlistView: View {
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
             }
-            Button {
-                Task { await vm.refresh() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .help("Refetch every screener live and rebuild the composite")
-            .disabled(vm.isLoading)
         }
         .padding()
     }

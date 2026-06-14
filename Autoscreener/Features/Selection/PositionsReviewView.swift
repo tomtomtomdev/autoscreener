@@ -16,28 +16,30 @@ struct PositionsReviewView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if !vm.decisions.isEmpty {
-                    decisionsList
-                } else if vm.isLoading {
-                    ProgressView("Reviewing positions…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = vm.error {
-                    ContentUnavailableView("Review unavailable", systemImage: "stethoscope",
-                                           description: Text(error))
-                } else if vm.hasLoaded {
-                    ContentUnavailableView("No positions to review",
-                                           systemImage: "checkmark.seal",
-                                           description: Text("There are no open paper positions, or every holding's thesis is intact under the current data. Doing nothing when nothing has broken is itself the discipline."))
-                        .accessibilityIdentifier("positionsreview.empty")
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+        Group {
+            if !vm.decisions.isEmpty {
+                decisionsList
+            } else if vm.isLoading {
+                ProgressView("Reviewing positions…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = vm.error {
+                ContentUnavailableView("Review unavailable", systemImage: "stethoscope",
+                                       description: Text(error))
+            } else if vm.hasLoaded {
+                ContentUnavailableView("No positions to review",
+                                       systemImage: "checkmark.seal",
+                                       description: Text("There are no open paper positions, or every holding's thesis is intact under the current data. Doing nothing when nothing has broken is itself the discipline."))
+                    .accessibilityIdentifier("positionsreview.empty")
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .navigationTitle("Positions to Review")
-            .task { await vm.load() }
-            .refreshable { await vm.load(force: true) }
+        }
+        .navigationTitle("Positions to Review")
+        .task { await vm.load() }
+        // No manual refresh: re-review holdings when a fresh global sweep lands, so dropping
+        // the pull-to-refresh control never strands a stale verdict (Decision 2 in UI-CHROME-PLAN).
+        .onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _, _ in
+            Task { await vm.load(force: true) }
         }
         .accessibilityIdentifier("PositionsReviewView")
     }

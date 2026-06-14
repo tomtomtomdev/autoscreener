@@ -8,8 +8,31 @@ fresh, so manual refresh is redundant chrome; the status bar makes the *automati
 
 ## Status & how to resume (READ FIRST) — locked 2026-06-14
 
-**Planning is locked; build not started.** This doc is the single source of truth. To resume, read this
-header, then work **§4 (build order)** from the next-unbuilt item. Decisions below were chosen by the user.
+**BUILT & COMMITTED 2026-06-14 — branch `feat/ui-chrome-global-fetch-status` (off `main`@`0bd1b1c`), UNPUSHED.**
+All 7 §4 steps done; decisions 1/2/3 below all honoured.
+- **Step 1** — `Features/Main/FetchStatus.swift` (pure `enum` + `resolve(…)` + `displayLabel`/`tint`/`showsSpinner`),
+  `FetchStatusTests` (12 cases, precedence asserted by case-equality). Green.
+- **Step 2** — `Features/Main/GlobalFetchStatusView.swift` (thin renderer, constructor-injected coordinator +
+  market store, `globalfetchstatus` a11y id/value).
+- **Step 3** — `MainSidebarView.detail` now wraps one shared `NavigationStack` with the `.principal`
+  `GlobalFetchStatusView()`; the per-screen `NavigationStack` was removed from `ScreenerView`/`WatchlistView`/
+  `MarketsView`/`TodaysPicksView`/`PositionsReviewView` (titles/toolbars/`.searchable`/`.navigationDestination`
+  kept, re-homed onto the surviving root view). PaperTrading/AppSettings never had their own stack. Primary
+  (shared-stack) approach used — the per-screen `.globalFetchStatusToolbar()` fallback was NOT needed.
+- **Step 4** — Refresh `Button` deleted from Screener/Watchlist; `.refreshable` deleted from
+  Markets/TodaysPicks/PositionsReview. Dead `ScreenerViewModel.refresh()` removed (no callers left);
+  `WatchlistViewModel.refresh()` KEPT (still used by `WatchlistTests`).
+- **Step 5** — `TodaysPicksView` + `PositionsReviewView` got
+  `.onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _,_ in Task { await vm.load(force: true) } }`.
+- **Step 6** — `AutoscreenerUITests/GlobalFetchStatusUITests.swift` (asserts `globalfetchstatus` on
+  Watchlist + Today's Picks, and `Refresh` button absent; multi-display `XCTSkipIf` guard). **Runner could
+  not bootstrap on this dev box** (`Early unexpected exit … signal kill before establishing connection` — the
+  standing env caveat, NOT an assertion failure). App was launched directly under `-UITestFixtures` and stays
+  up (no launch crash from the shared-stack refactor); kept as committed proof for CI.
+- **Step 7** — full `AutoscreenerTests` TEST SUCCEEDED (incl. the 12 new `FetchStatus` cases);
+  `SelectionEngineCharacterizationTests` golden master byte-for-byte (no engine code touched).
+
+**Original plan (kept for reference):** Planning was locked; build not started. Decisions below were chosen by the user.
 
 **Decisions (locked):**
 1. **Placement = native title-bar centre.** A `ToolbarItem(placement: .principal)` centred in the macOS

@@ -16,28 +16,30 @@ struct TodaysPicksView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if !vm.picks.isEmpty {
-                    picksList
-                } else if vm.isLoading {
-                    ProgressView("Ranking today's picks…")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let error = vm.error {
-                    ContentUnavailableView("Picks unavailable", systemImage: "star.slash",
-                                           description: Text(error))
-                } else if vm.hasLoaded {
-                    ContentUnavailableView("No picks today",
-                                           systemImage: "tray",
-                                           description: Text("Nothing in the watchlist clears the engine's gates and margin of safety under the current regime. Being patient when there's nothing to do is itself a discipline."))
-                        .accessibilityIdentifier("todayspicks.empty")
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+        Group {
+            if !vm.picks.isEmpty {
+                picksList
+            } else if vm.isLoading {
+                ProgressView("Ranking today's picks…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = vm.error {
+                ContentUnavailableView("Picks unavailable", systemImage: "star.slash",
+                                       description: Text(error))
+            } else if vm.hasLoaded {
+                ContentUnavailableView("No picks today",
+                                       systemImage: "tray",
+                                       description: Text("Nothing in the watchlist clears the engine's gates and margin of safety under the current regime. Being patient when there's nothing to do is itself a discipline."))
+                    .accessibilityIdentifier("todayspicks.empty")
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .navigationTitle("Today's Picks")
-            .task { await vm.load() }
-            .refreshable { await vm.load(force: true) }
+        }
+        .navigationTitle("Today's Picks")
+        .task { await vm.load() }
+        // No manual refresh: re-run the engine when a fresh global sweep lands, so dropping
+        // the pull-to-refresh control never strands stale picks (Decision 2 in UI-CHROME-PLAN).
+        .onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _, _ in
+            Task { await vm.load(force: true) }
         }
         .accessibilityIdentifier("TodaysPicksView")
     }

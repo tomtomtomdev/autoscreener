@@ -17,12 +17,10 @@ struct ScreenerView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            listView
-                .navigationDestination(item: $selectedTicker) { ticker in
-                    StockDetailView(ticker: ticker)
-                }
-        }
+        listView
+            .navigationDestination(item: $selectedTicker) { ticker in
+                StockDetailView(ticker: ticker)
+            }
     }
 
     @ViewBuilder
@@ -67,13 +65,6 @@ struct ScreenerView: View {
             if vm.isLoading {
                 ProgressView().controlSize(.small)
             }
-            Button {
-                Task { await vm.refresh() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .help("Refetch this screener")
-            .disabled(vm.isLoading)
         }
         .padding()
     }

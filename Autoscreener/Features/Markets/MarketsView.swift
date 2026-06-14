@@ -28,59 +28,52 @@ struct MarketsView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(alignment: .top, spacing: 16) {
-                        regimeSection
-                        MarketSectionCard(group: .global, symbols: symbols(.global), quotes: marketQuotes)
-                    }
-                    HStack(alignment: .top, spacing: 16) {
-                        VStack(spacing: 16) {
-                            MarketSectionCard(group: .composite, symbols: symbols(.composite), quotes: marketQuotes)
-                            MarketSectionCard(group: .index, symbols: symbols(.index), quotes: marketQuotes)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .top)
-                        VStack(spacing: 16) {
-                            MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
-                            MarketSectionCard(group: .currency, symbols: symbols(.currency), quotes: marketQuotes)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .top)
-                    }
-                    // Sectors is the longest IDX group; it gets its own full-width row
-                    // as a single column rather than sharing a two-column row.
-                    MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(alignment: .top, spacing: 16) {
+                    regimeSection
+                    MarketSectionCard(group: .global, symbols: symbols(.global), quotes: marketQuotes)
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .navigationTitle("Markets")
-            // Cold launch with no cache: the static dashboard scaffold stays mounted (so
-            // `.task` keeps running) while a centered spinner covers it until the first
-            // sweep prices a row or the regime read lands.
-            .overlay {
-                if marketQuotes.loadState == .loading && regime.read == nil {
-                    marketsLoadingView
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 16) {
+                        MarketSectionCard(group: .composite, symbols: symbols(.composite), quotes: marketQuotes)
+                        MarketSectionCard(group: .index, symbols: symbols(.index), quotes: marketQuotes)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    VStack(spacing: 16) {
+                        MarketSectionCard(group: .commodity, symbols: symbols(.commodity), quotes: marketQuotes)
+                        MarketSectionCard(group: .currency, symbols: symbols(.currency), quotes: marketQuotes)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
+                // Sectors is the longest IDX group; it gets its own full-width row
+                // as a single column rather than sharing a two-column row.
+                MarketSectionCard(group: .sector, symbols: symbols(.sector), quotes: marketQuotes)
             }
-            .navigationDestination(for: MarketSymbol.self) { item in
-                OHLCVChartView(vm: OHLCVChartViewModel(
-                    symbol: item.symbol,
-                    name: item.name,
-                    service: chartService))
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle("Markets")
+        // Cold launch with no cache: the static dashboard scaffold stays mounted (so
+        // `.task` keeps running) while a centered spinner covers it until the first
+        // sweep prices a row or the regime read lands.
+        .overlay {
+            if marketQuotes.loadState == .loading && regime.read == nil {
+                marketsLoadingView
             }
-            // Load both concurrently so the regime's breadth fan-out (one chart
-            // request per LQ45 constituent) doesn't block the market prices.
-            .task {
-                async let r: () = regime.load()
-                async let q: () = marketQuotes.load()
-                _ = await (r, q)
-            }
-            .refreshable {
-                async let r: () = regime.load(force: true)
-                async let q: () = marketQuotes.load(force: true)
-                _ = await (r, q)
-            }
+        }
+        .navigationDestination(for: MarketSymbol.self) { item in
+            OHLCVChartView(vm: OHLCVChartViewModel(
+                symbol: item.symbol,
+                name: item.name,
+                service: chartService))
+        }
+        // Load both concurrently so the regime's breadth fan-out (one chart
+        // request per LQ45 constituent) doesn't block the market prices.
+        .task {
+            async let r: () = regime.load()
+            async let q: () = marketQuotes.load()
+            _ = await (r, q)
         }
         .accessibilityIdentifier("MarketsView")
     }

@@ -242,7 +242,17 @@ struct MainSidebarView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
-            detail
+            // One shared NavigationStack for the whole detail column so the global fetch-status
+            // indicator can live in a single `.principal` title-bar slot on every screen (each
+            // detail view drops its own NavigationStack and keeps only its title/toolbar/searchable).
+            NavigationStack {
+                detail
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            GlobalFetchStatusView()
+                        }
+                    }
+            }
         }
     }
 

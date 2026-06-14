@@ -58,11 +58,6 @@ final class ScreenerViewModel {
         coordinator.start()
     }
 
-    /// User-initiated refresh — force one sweep now, regardless of session.
-    func refresh() async {
-        await coordinator.refreshNow()
-    }
-
     /// Header sort when set, else the template's `ordercol`/`ordertype` default
     /// (metric column at index `ordercol - 2`, nils sorted last).
     private func sortedForDisplay(_ rows: [ScreenerRow]) -> [ScreenerRow] {
