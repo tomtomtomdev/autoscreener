@@ -164,6 +164,94 @@ import Testing
         #expect(exit?.deltaShares == -5_000)
     }
 
+    // MARK: - Gate-5 exit decisions feed the allocator
+
+    @Test func exitFlaggedNameIsFullySoldEvenWhenStillHighConviction() {
+        // SYM00 is the top-conviction watchlist name (normally a large buy) AND already held.
+        // A Gate-5 `.exit` flag must override conviction: sell it in full, never add.
+        let (rows, prices) = scoredUniverse(8)
+        var state = PaperPortfolioState.seed
+        state.positions["SYM00"] = PaperPosition(shares: 3_000, avgCost: 900)
+        let plan = AllocationEngine.plan(state: state, watchlist: rows,
+                                         regime: read(.riskOn, score: 1.0), prices: prices,
+                                         exitDecisions: ["SYM00": .exit])
+        let line = plan.lines.first { $0.symbol == "SYM00" }
+        #expect(line?.side == .sell)
+        #expect(line?.targetShares == 0)
+        #expect(line?.deltaShares == -3_000)
+        #expect(!plan.lines.contains { $0.symbol == "SYM00" && $0.side == .buy })
+    }
+
+    @Test func exitFlaggedNameIsBlockedFromReentry() {
+        // Not held, top conviction — without a flag it would be the first buy. `.exit` blocks it.
+        let (rows, prices) = scoredUniverse(8)
+        let plan = AllocationEngine.plan(state: seed, watchlist: rows,
+                                         regime: read(.riskOn, score: 1.0), prices: prices,
+                                         exitDecisions: ["SYM00": .exit])
+        #expect(!plan.lines.contains { $0.symbol == "SYM00" })          // never re-bought
+        #expect(plan.lines.contains { $0.symbol == "SYM01" && $0.side == .buy })  // others unaffected
+    }
+
+    @Test func trimFlaggedNameIsNotAddedTo() {
+        // Hold a tiny slice of the top name; conviction wants far more. `.trim` caps at current,
+        // so the would-be top-up is suppressed (control proves it would otherwise buy).
+        let (rows, prices) = scoredUniverse(8)
+        var state = PaperPortfolioState.seed
+        state.positions["SYM00"] = PaperPosition(shares: 200, avgCost: 1_000)
+        let control = AllocationEngine.plan(state: state, watchlist: rows,
+                                            regime: read(.riskOn, score: 1.0), prices: prices)
+        let plan = AllocationEngine.plan(state: state, watchlist: rows,
+                                         regime: read(.riskOn, score: 1.0), prices: prices,
+                                         exitDecisions: ["SYM00": .trim])
+        #expect(control.lines.contains { $0.symbol == "SYM00" && $0.side == .buy })  // would add
+        #expect(!plan.lines.contains { $0.symbol == "SYM00" && $0.side == .buy })    // trim caps it
+    }
+
+    @Test func trimFlaggedNameStillRebalancesDown() {
+        // Hold far MORE than the natural target. `.trim` caps at current (min), so it must NOT
+        // freeze the position — the natural reduction toward target still happens.
+        let (rows, prices) = scoredUniverse(8)
+        var state = PaperPortfolioState.seed
+        state.positions["SYM07"] = PaperPosition(shares: 30_000, avgCost: 1_000)
+        let plan = AllocationEngine.plan(state: state, watchlist: rows,
+                                         regime: read(.neutral, score: 0), prices: prices,
+                                         exitDecisions: ["SYM07": .trim])
+        let line = plan.lines.first { $0.symbol == "SYM07" }
+        #expect(line?.side == .sell)
+        #expect((line?.targetShares ?? .infinity) < 30_000)
+    }
+
+    @Test func holdFlaggedNamesMatchTheBaselinePlan() {
+        // `.hold` (and, by extension, the default empty map) must be byte-for-byte the old behaviour.
+        let (rows, prices) = scoredUniverse(12)
+        let base = AllocationEngine.plan(state: seed, watchlist: rows,
+                                         regime: read(.riskOn, score: 1.0), prices: prices)
+        let withHolds = AllocationEngine.plan(state: seed, watchlist: rows,
+                                              regime: read(.riskOn, score: 1.0), prices: prices,
+                                              exitDecisions: ["SYM00": .hold, "SYM03": .hold])
+        #expect(base.lines.map(\.id) == withHolds.lines.map(\.id))
+        #expect(base.lines.map(\.deltaShares) == withHolds.lines.map(\.deltaShares))
+    }
+
+    @Test func exitOverridesTheAntiChurnBand() {
+        // A held slice too small to trip the rebalance band is normally left alone; a Gate-5 `.exit`
+        // forces the full sale anyway (a broken thesis isn't churn).
+        let rows = [WatchlistRow(symbol: "AAA", name: "AAA", matchedScreeners: [.accumulating])]
+        let prices = ["AAA": 1_000.0, "TINY": 1_000.0]
+        var state = PaperPortfolioState.seed
+        state.positions["TINY"] = PaperPosition(shares: 200, avgCost: 1_000)   // 200k ≪ 2% of ~100M
+        let control = AllocationEngine.plan(state: state, watchlist: rows,
+                                            regime: read(.neutral, score: 0), prices: prices)
+        #expect(!control.lines.contains { $0.symbol == "TINY" })               // sub-band → suppressed
+        let plan = AllocationEngine.plan(state: state, watchlist: rows,
+                                         regime: read(.neutral, score: 0), prices: prices,
+                                         exitDecisions: ["TINY": .exit])
+        let exit = plan.lines.first { $0.symbol == "TINY" }
+        #expect(exit?.side == .sell)
+        #expect(exit?.targetShares == 0)
+        #expect(exit?.deltaShares == -200)
+    }
+
     // MARK: - Helpers
 
     /// A universe whose `WatchlistRow.score` genuinely descends, by handing each row a

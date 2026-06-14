@@ -18,6 +18,7 @@ final class PaperTradingViewModel {
     private let marketStore: MarketDataStore
     private let coordinator: DataSweepCoordinator
     private let recommendationsStore: RecommendationsStore
+    private let exitDecisionsStore: ExitDecisionsStore
     private let config: AllocationConfig
 
     init(store: PaperTradingStore,
@@ -25,12 +26,14 @@ final class PaperTradingViewModel {
          marketStore: MarketDataStore,
          coordinator: DataSweepCoordinator,
          recommendationsStore: RecommendationsStore = AppDependencies.shared.recommendationsStore,
+         exitDecisionsStore: ExitDecisionsStore = AppDependencies.shared.exitDecisionsStore,
          config: AllocationConfig = .standard) {
         self.store = store
         self.screenerStore = screenerStore
         self.marketStore = marketStore
         self.coordinator = coordinator
         self.recommendationsStore = recommendationsStore
+        self.exitDecisionsStore = exitDecisionsStore
         self.config = config
     }
 
@@ -98,10 +101,13 @@ final class PaperTradingViewModel {
     /// Idempotently ensures the shared sweep is running so regime + watchlist fill in.
     func autoRunIfNeeded() async { coordinator.start() }
 
-    /// Recompute the proposed rebalance from the current portfolio, regime and prices.
+    /// Recompute the proposed rebalance from the current portfolio, regime and prices. Gate-5 exit
+    /// verdicts (cached by the Positions to Review screen) are overlaid so a flagged name is forced out /
+    /// barred from re-entry; an empty cache leaves the plan regime-only.
     func generatePlan() {
         pendingPlan = AllocationEngine.plan(state: store.state, watchlist: watchlist,
-                                            regime: regime, prices: prices, config: config)
+                                            regime: regime, prices: prices,
+                                            exitDecisions: exitDecisionsStore.byTicker, config: config)
     }
 
     /// Book the pending plan into the portfolio, then clear it. Each buy that OPENS a position is

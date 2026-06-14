@@ -111,4 +111,17 @@ import Testing
         await vm.load()
         #expect(spy.callCount == 2)
     }
+
+    @Test func loadFeedsTheExitDecisionsStoreForTheAllocator() async {
+        let spy = SourceSpy()
+        spy.result = [decision("WIFI", .hold), decision("XXXX", .exit), decision("BBNI", .trim)]
+        let store = ExitDecisionsStore()
+        let vm = PositionReviewViewModel(source: spy.source, exitDecisionsStore: store)
+
+        await vm.load()
+
+        #expect(store.byTicker["XXXX"] == .exit)
+        #expect(store.byTicker["BBNI"] == .trim)
+        #expect(store.byTicker["WIFI"] == .hold)
+    }
 }

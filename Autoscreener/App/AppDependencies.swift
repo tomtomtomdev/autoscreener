@@ -64,6 +64,10 @@ final class AppDependencies {
     // Latest ranked recommendations, cached by `TodaysPicksViewModel` on load. The paper-trading flow
     // reads it at fill time to snapshot an `EntryThesis` cheaply (Gate-5 Phase 3) — no engine re-run.
     let recommendationsStore = RecommendationsStore()
+    // Latest Gate-5 exit verdicts, cached by `PositionReviewViewModel` on review. The paper-trading
+    // allocator reads it when building a plan so a flagged name is forced out / not re-bought — without
+    // re-running the expensive holdings review on every rebalance.
+    let exitDecisionsStore = ExitDecisionsStore()
 
     static let shared = AppDependencies()
 

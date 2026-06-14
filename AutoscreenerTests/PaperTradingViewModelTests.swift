@@ -37,11 +37,13 @@ import Testing
 
     private func makeVM(_ screener: ScreenerStore, _ market: MarketDataStore,
                         _ paper: PaperTradingStore,
-                        recommendations: RecommendationsStore? = nil) -> PaperTradingViewModel {
+                        recommendations: RecommendationsStore? = nil,
+                        exits: ExitDecisionsStore? = nil) -> PaperTradingViewModel {
         let coordinator = SweepTestKit.coordinator(store: screener, marketStore: market)
         return PaperTradingViewModel(store: paper, screenerStore: screener,
                                      marketStore: market, coordinator: coordinator,
-                                     recommendationsStore: recommendations ?? RecommendationsStore())
+                                     recommendationsStore: recommendations ?? RecommendationsStore(),
+                                     exitDecisionsStore: exits ?? ExitDecisionsStore())
     }
 
     @Test func startsSeededAndCanPlanOnceWatchlistAndPricesAreLoaded() {
@@ -112,5 +114,30 @@ import Testing
         vm.generatePlan(); vm.execute()
         #expect(vm.hasPositions)                 // behaviour unchanged — buys still book
         #expect(p.state.positions.values.allSatisfy { $0.thesis == nil })
+    }
+
+    // MARK: - Gate-5: exit decisions feed generatePlan()
+
+    @Test func generatePlanBarsReentryForNamesFlaggedToExit() {
+        let (s, m, p) = makeStores()
+        let exits = ExitDecisionsStore()
+        exits.update([ExitDecision(ticker: "BBCA", action: .exit, reason: "thesis broke", audit: [])])
+        let vm = makeVM(s, m, p, exits: exits)
+        vm.generatePlan()
+        #expect(vm.pendingPlan?.lines.contains { $0.symbol == "BBCA" } == false)  // never bought
+        #expect(vm.pendingPlan?.lines.contains { $0.symbol == "TLKM" && $0.side == .buy } == true)
+    }
+
+    @Test func generatePlanSellsAHeldNameFlaggedForExit() {
+        let (s, m, p) = makeStores()
+        let exits = ExitDecisionsStore()
+        let vm = makeVM(s, m, p, exits: exits)
+        vm.generatePlan(); vm.execute()                       // now holding BBCA + TLKM
+        #expect(vm.holdings.contains { $0.symbol == "BBCA" })
+        exits.update([ExitDecision(ticker: "BBCA", action: .exit, reason: "governance veto", audit: [])])
+        vm.generatePlan()
+        let line = vm.pendingPlan?.lines.first { $0.symbol == "BBCA" }
+        #expect(line?.side == .sell)
+        #expect(line?.targetShares == 0)
     }
 }

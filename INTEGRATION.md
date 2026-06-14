@@ -452,21 +452,47 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     `AutoscreenerUITests/PositionsReviewUITests` + the now-un-skipped `TodaysPicksUITests` **both PASS
     live** (single-display; verified via `*.row.<TICKER>` ids per the project's id-based UI policy — leaf
     badge/disclosure ids are absorbed by the identified card containers, so they aren't asserted).
-  - **Still open / out of scope:** feeding `.exit` verdicts into `AllocationEngine` (force target-0) was
-    deliberately deferred (surface-only choice); a Lynch *classifier* (auto-`lynchCategory`) stays
-    deferred — the category rides in the snapshot. `ResearchService` still dead. Phase 5 (Tier-B
-    backtest) stays blocked on persistence (§9).
+  - **Still open / out of scope:** ~~feeding `.exit` verdicts into `AllocationEngine`~~ **now DONE (Phase 4
+    below)**; a Lynch *classifier* (auto-`lynchCategory`) stays deferred — the category rides in the
+    snapshot. `ResearchService` still dead. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
 
-**Next action:** **Tier-A is feature-complete, calibrated, user-visible, and has the full Gate-5 sell
-discipline (Phases 1–3) wired into paper trading + surfaced.** Remaining, all optional/non-blocking:
-(1) **LIVE audit (manual — needs the authenticated feed):** open **Today's Picks** / **Positions to
-Review** (or call `AppDependencies.selectionRunner.run(config: .balanced)` / `.reviewPositions(config:)`)
-against a live Stockbit session and eyeball the audit trails for a real industrial + a real bank + a held
-name. Couldn't be done in-session (no auth/network); the deterministic suites are the offline stand-in.
-(2) **Optional bank-rate calibration:** source live Rf/ERP and decide single-factor CAPM β vs two-factor
-timing β for the bank valuator (Phase 4 scope note). (3) **Optional:** feed Gate-5 `.exit` verdicts into
-`AllocationEngine` (force target-0 so a flagged name can't be re-bought); add a config/preset picker to
-the screens; a Lynch auto-classifier. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
+- **Gate-5 exit/sell — Phase 4 ✅ (2026-06-14) — `.exit` VERDICTS NOW DRIVE THE ALLOCATOR (loop closed).**
+  Gate-5 was surface-only (Phase 3 showed verdicts in Positions to Review but the allocator could still
+  re-buy a flagged name next rebalance). Phase 4 reverses that deliberate deferral: the paper-trading
+  `AllocationEngine` now *acts* on the verdicts. Purely additive — the new input is trailing-defaulted, so
+  every existing caller (incl. `BacktestHarness`) and the locked `SelectionEngineCharacterizationTests`
+  golden master are byte-for-byte unchanged (the buy engine isn't on this path). Pieces:
+  - **Pure engine (`AllocationEngine.plan`):** new `exitDecisions: [String: ExitAction] = [:]` overlays the
+    sell-side discipline on the regime-weighted target. **`.exit`** — barred from the buy candidates (no
+    re-entry) AND any held position is forced to target 0, **overriding the anti-churn band** (a broken
+    thesis isn't churn; a sub-band remnant still sells). **`.trim`** — target capped at current
+    (`min(natural, current)`): never adds, but the natural downward rebalance still applies (not frozen).
+    **`.hold`/absent** — no constraint. Rationale gains a "Gate-5: … flagged for exit" line.
+  - **Cheap seam (no per-rebalance review):** new `ExitDecisionsStore` (`@MainActor @Observable`, keyed by
+    ticker → `ExitAction`) on `AppDependencies` — a verbatim mirror of `RecommendationsStore`.
+    `PositionReviewViewModel.load()` is the only writer (refreshes on each review);
+    `PaperTradingViewModel.generatePlan()` reads `byTicker` and passes it to `plan()`. The VM stays
+    fetch-free (the expensive `PositionReviewer` fan-out runs only when the user opens Positions to Review;
+    an empty cache ⇒ regime-only plan, the pre-Gate-5 behaviour).
+  - **Tests (TDD, red→green):** +6 `AllocationEngineTests` (exit forces a full sell of a still-high-conviction
+    held name; exit bars re-entry; trim doesn't add but still rebalances down; `.hold`/empty = baseline;
+    exit overrides the anti-churn band) + 2 `PaperTradingViewModelTests` (generatePlan bars re-entry / sells
+    a held flagged name from the store) + 1 `PositionReviewViewModelTests` (load feeds the store). **Full
+    `AutoscreenerTests` bundle: TEST SUCCEEDED**, golden master byte-for-byte.
+  - **Still open (UI surface):** the plan now *contains* the forced exit/trim lines and labels them, but no
+    screen yet badges "this line is a Gate-5 exit" distinctly from a regime trim — cosmetic, deferred.
+
+**Next action:** **Tier-A is feature-complete, calibrated, user-visible, has the full Gate-5 sell
+discipline (Phases 1–3) surfaced, AND (Phase 4) feeds `.exit`/`.trim` verdicts into the paper-trading
+allocator (the loop is closed — a flagged name is forced out and can't be re-bought).** Remaining, all
+optional/non-blocking: (1) **LIVE audit (manual — needs the authenticated feed):** open **Today's Picks** /
+**Positions to Review** (or call `AppDependencies.selectionRunner.run(config: .balanced)` /
+`.reviewPositions(config:)`) against a live Stockbit session and eyeball the audit trails for a real
+industrial + a real bank + a held name. Couldn't be done in-session (no auth/network); the deterministic
+suites are the offline stand-in. (2) **Optional bank-rate calibration:** source live Rf/ERP and decide
+single-factor CAPM β vs two-factor timing β for the bank valuator (Phase 4-calibration scope note).
+(3) **Optional:** add a config/preset picker to the screens; a Lynch auto-classifier; badge the allocator's
+Gate-5-forced lines distinctly in the UI. Phase 5 (Tier-B backtest) stays blocked on persistence (§9).
 Read this Status header to resume.
 
 **Capture note:** the 18 MB WIFI capture was moved from `~/Downloads` to the repo root

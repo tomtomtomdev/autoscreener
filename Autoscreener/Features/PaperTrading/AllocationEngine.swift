@@ -17,10 +17,20 @@ nonisolated enum AllocationEngine {
     /// Builds the proposed rebalance. `prices` is keyed by symbol; a watchlist name
     /// with no positive price is skipped (we never fill at a stale cost basis). A `nil`
     /// regime degrades to the neutral band, matching the rest of the app.
+    ///
+    /// `exitDecisions` (Gate-5) overlays the sell-side discipline onto the regime-weighted target,
+    /// keyed by symbol (defaulted empty ⇒ byte-for-byte the regime-only behaviour, so every existing
+    /// caller and the harness are unchanged):
+    ///   • `.exit` — the name is barred from the buy candidates (no re-entry) and any held position is
+    ///     forced to a full sale, overriding the anti-churn band (a broken thesis isn't churn).
+    ///   • `.trim` — the name's target is capped at its current size (never add); the natural downward
+    ///     rebalance still applies, so the position can still shrink toward its regime target.
+    ///   • `.hold` / absent — no constraint; the name sizes purely on conviction + regime.
     static func plan(state: PaperPortfolioState,
                      watchlist: [WatchlistRow],
                      regime: RegimeRead?,
                      prices: [String: Double],
+                     exitDecisions: [String: ExitAction] = [:],
                      config: AllocationConfig = .standard) -> AllocationPlan {
         let score = regime?.score ?? 0
         let stance = regime?.stance ?? .neutral
@@ -29,8 +39,11 @@ nonisolated enum AllocationEngine {
         let equity = state.equity(prices: prices)
         let cashTarget = equity * (1 - exposure)
 
-        // Layer 2 — rank priced candidates by conviction, take top-N.
-        let priced: [WatchlistRow] = watchlist.filter { (prices[$0.symbol] ?? 0) > 0 }
+        // Layer 2 — rank priced candidates by conviction, take top-N. A Gate-5 `.exit` name is never a
+        // candidate, so it can't consume a slot or be re-bought (the held side is forced out below).
+        let priced: [WatchlistRow] = watchlist.filter {
+            (prices[$0.symbol] ?? 0) > 0 && exitDecisions[$0.symbol] != .exit
+        }
         let ranked: [WatchlistRow] = priced.sorted { lhs, rhs in
             lhs.score != rhs.score ? lhs.score > rhs.score : lhs.symbol < rhs.symbol
         }
@@ -60,10 +73,20 @@ nonisolated enum AllocationEngine {
         for symbol in names {
             guard let price = prices[symbol], price > 0 else { continue } // can't value → skip
             let current = state.positions[symbol]?.shares ?? 0
-            let target = targetShares[symbol] ?? 0
+            // Gate-5 overlay on the regime-weighted target (`.exit` names were already excluded from
+            // `targetShares` above, so their target is 0 — the held side is forced out here).
+            let exitAction = exitDecisions[symbol]
+            var target = targetShares[symbol] ?? 0
+            switch exitAction {
+            case .exit: target = 0                              // sell in full; barred from re-entry above
+            case .trim: target = Swift.min(target, current)     // cap at current — never add to a flagged name
+            case .hold, nil: break
+            }
             let delta = target - current
-            // Anti-churn: ignore a move worth less than `rebalanceBandPct` of equity.
-            if abs(delta) * price < config.rebalanceBandPct * equity { continue }
+            let forcedExit = exitAction == .exit && current > 0
+            // Anti-churn: ignore a move worth less than `rebalanceBandPct` of equity — but a forced exit
+            // is a deliberate sell, not churn, so it overrides the band.
+            if !forcedExit, abs(delta) * price < config.rebalanceBandPct * equity { continue }
             // Sub-lot residue can't trade.
             if abs(delta) < Double(config.execution.lotSize) { continue }
 
@@ -79,8 +102,9 @@ nonisolated enum AllocationEngine {
                 price: price,
                 estValue: abs(delta) * price,
                 targetWeight: weight,
-                rationale: rationale(side: side, symbol: symbol, weight: weight,
-                                     stance: stance, exposure: exposure, capped: weight >= config.effectivePerNameCap - 1e-9)))
+                rationale: rationale(side: side, symbol: symbol, weight: weight, stance: stance,
+                                     exposure: exposure, capped: weight >= config.effectivePerNameCap - 1e-9,
+                                     forcedExit: forcedExit)))
         }
 
         // Sells first (free the cash buys consume), then larger trades first.
@@ -134,14 +158,15 @@ nonisolated enum AllocationEngine {
         return weights
     }
 
-    private static func rationale(side: TradeSide, symbol: String, weight: Double,
-                                  stance: RegimeStance, exposure: Double, capped: Bool) -> String {
+    private static func rationale(side: TradeSide, symbol: String, weight: Double, stance: RegimeStance,
+                                  exposure: Double, capped: Bool, forcedExit: Bool) -> String {
         let pct = { (x: Double) in String(format: "%.0f%%", x * 100) }
         switch side {
         case .buy:
             let cap = capped ? ", at per-name cap" : ""
             return "\(stance.rawValue): deploy \(pct(exposure)) of equity; \(symbol) sized to \(pct(weight)) on conviction\(cap)."
         case .sell:
+            if forcedExit { return "Gate-5: \(symbol) flagged for exit — full sale." }
             return weight <= 0
                 ? "\(stance.rawValue): \(symbol) no longer in the regime-weighted target — exit."
                 : "\(stance.rawValue): trim \(symbol) toward its \(pct(weight)) target weight."

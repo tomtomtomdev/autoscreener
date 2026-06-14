@@ -23,12 +23,17 @@ final class PositionReviewViewModel {
 
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> [ExitDecision]
+    /// Where the verdicts are cached so the paper-trading allocator can act on them without re-running
+    /// this (expensive) review on every rebalance. This VM is the only writer; it refreshes on each load.
+    private let exitDecisionsStore: ExitDecisionsStore
 
     init(config: SelectionConfig = .balanced,
          source: @escaping (SelectionConfig) async throws -> [ExitDecision]
-            = { try await AppDependencies.shared.reviewPositions(config: $0) }) {
+            = { try await AppDependencies.shared.reviewPositions(config: $0) },
+         exitDecisionsStore: ExitDecisionsStore = AppDependencies.shared.exitDecisionsStore) {
         self.config = config
         self.source = source
+        self.exitDecisionsStore = exitDecisionsStore
     }
 
     /// The names flagged to act on (exit or trim), surfaced first; holds are the rest.
@@ -41,6 +46,7 @@ final class PositionReviewViewModel {
         defer { isLoading = false }
         do {
             decisions = try await source(config)
+            exitDecisionsStore.update(decisions)   // feed the allocator's Gate-5 cache
             hasLoaded = true            // an empty result is still a successful review
         } catch {
             self.error = error.localizedDescription
