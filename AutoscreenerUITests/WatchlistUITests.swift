@@ -55,6 +55,13 @@ final class WatchlistUITests: XCTestCase {
         XCTAssertTrue(element(app, "watchlist.stockcode-TLKM").waitForExistence(timeout: 5),
                       "A fully-liquid stock should appear in the composite")
 
+        // Each surviving row shows its screener-provenance icon strip (right of the score). BBCA/TLKM
+        // match every screener under fixtures, so their signal strips are non-empty → the cell exists.
+        XCTAssertTrue(element(app, "watchlist.screeners-BBCA").waitForExistence(timeout: 5),
+                      "The screener-icon strip should render for a matched stock")
+        XCTAssertTrue(element(app, "watchlist.screeners-TLKM").exists,
+                      "The screener-icon strip should render for a matched stock")
+
         // GOTO is absent from the intraday-liquidity veto gate → excluded entirely.
         XCTAssertFalse(element(app, "watchlist.stockcode-GOTO").exists,
                        "A stock failing a liquidity veto gate must be excluded, not shown")

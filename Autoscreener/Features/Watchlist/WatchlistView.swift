@@ -129,6 +129,14 @@ struct WatchlistView: View {
                 Text(formatScore(row.score)).monospacedDigit()
             }
             .width(min: 60, ideal: 80)
+
+            // Inline screener provenance: one tinted icon per signal screener the stock satisfies,
+            // replacing the now-removed per-screener sidebar screens. Sits to the right of the score.
+            TableColumn("Screeners") { row in
+                ScreenerIconStrip(kinds: row.matchedScreeners)
+                    .accessibilityIdentifier("watchlist.screeners-\(row.symbol)")
+            }
+            .width(min: 120, ideal: 220)
         }
     }
 

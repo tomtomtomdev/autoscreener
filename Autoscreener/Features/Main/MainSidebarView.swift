@@ -209,11 +209,10 @@ struct MainSidebarView: View {
                           systemImage: SidebarItem.recommendations.systemImage)
                         .tag(SidebarItem.recommendations)
                 }
-                Section("Screeners") {
-                    ForEach([SidebarItem.bandarAccumulating, .bandarAboveMA20, .bandarShiftToday, .accumDistPositive, .foreignFlow1M, .foreignFlow6M, .foreignFlow3M, .foreignBuyStreak, .freshForeignBuy, .freqSpike, .volumeSpike, .above50MA, .above200MA, .earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt, .liquidityFloor, .intradayLiquidity]) { item in
-                        Label(item.title, systemImage: item.systemImage).tag(item)
-                    }
-                }
+                // The 20 individual screener screens are intentionally not listed here anymore: the
+                // composite Watchlist is the radar, and each row now shows an icon for every signal
+                // screener it satisfies (see `ScreenerIconStrip`). The screener sweep + data are
+                // unchanged — `DataSweepCoordinator` still fills `ScreenerStore` on its own cadence.
                 Section("Markets") {
                     Label(SidebarItem.markets.title,
                           systemImage: SidebarItem.markets.systemImage)
