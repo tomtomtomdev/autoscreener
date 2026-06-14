@@ -66,54 +66,66 @@ enum RecommendationFormatting {
     }
 }
 
-/// Sidebar "Recommendations" screen: the single Tier-A surface that merges the buy-side picks (the
-/// selection engine, §8) and the Gate-5 sell-side review (`PositionReviewer`) into one ranked inbox —
-/// the answer to *"what should I do today?"*. Exits lead, then trims, then fresh buys, then holds; each
-/// row carries its action badge, a one-line reason or its conviction metrics, and the engine's full
-/// reasoning behind an expandable "Why".
+/// The unified home screen: the Tier-A action inbox **stacked above the composite Watchlist** in one
+/// scroll. The top merges the buy-side picks (the selection engine, §8) and the Gate-5 sell-side review
+/// (`PositionReviewer`) into one ranked list — the answer to *"what should I do today?"* (exits lead,
+/// then trims, then fresh buys, then holds; each row carries its action badge, a reason or conviction
+/// metrics, and the engine's full reasoning behind an expandable "Why"). Beneath it, the upstream radar:
+/// the composite Watchlist the screener sweep feeds (`WatchlistSection`).
 ///
 /// Framed as a discipline, not an order: it shows what the rules would do and why, leaving the judgement
-/// to the reader. The composite Watchlist (the upstream radar the screener sweep feeds) is its own
-/// screen; this one is about acting on what the engine already ranked.
+/// to the reader. Pure view composition — it owns the recommendations VM and is *handed* the watchlist VM
+/// (both unchanged), so each side's data path and stores are untouched.
 struct RecommendationsView: View {
     @State private var vm: RecommendationsViewModel
+    /// Handed in (owned by `MainSidebarView`) so the search field can bind its `searchText`; the
+    /// watchlist section reads its other outputs through Observation.
+    @Bindable private var watchlist: WatchlistViewModel
+    /// Set when a watchlist row's stock code is tapped — drives the push to `StockDetailView`.
+    @State private var selectedTicker: StockTicker?
 
     @MainActor
-    init(vm: RecommendationsViewModel? = nil) {
+    init(vm: RecommendationsViewModel? = nil, watchlist: WatchlistViewModel) {
         _vm = State(initialValue: vm ?? RecommendationsViewModel())
+        self.watchlist = watchlist
     }
 
     var body: some View {
-        Group {
-            if !vm.rows.isEmpty {
-                list
-            } else if vm.isLoading {
-                ProgressView("Sizing today's actions…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let error = vm.error {
-                ContentUnavailableView("Recommendations unavailable", systemImage: "exclamationmark.triangle",
-                                       description: Text(error))
-            } else if vm.hasLoaded {
-                ContentUnavailableView("Nothing to do today",
-                                       systemImage: "checkmark.seal",
-                                       description: Text("Nothing in the watchlist clears the engine's gates and margin of safety under the current regime, and every holding's thesis is intact. Being patient when there's nothing to do is itself a discipline."))
-                    .accessibilityIdentifier("recommendations.empty")
-            } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                recommendationsSection
+                Divider()
+                WatchlistSection(vm: watchlist) { selectedTicker = $0 }
             }
+            .padding(24)
+            .frame(maxWidth: 960, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
+        .frame(minWidth: 760, minHeight: 560)
         .navigationTitle("Recommendations")
-        .task { await vm.load() }
-        // No manual refresh: re-run both sides when a fresh global sweep lands, so dropping the
-        // pull-to-refresh control never strands a stale row (Decision 2 in UI-CHROME-PLAN).
+        // Search scopes to the watchlist section (recommendation cards always stay visible).
+        .searchable(text: $watchlist.searchText, placement: .toolbar, prompt: "Search stock code")
+        .task {
+            await vm.load()
+            await watchlist.autoRunIfNeeded()
+        }
+        // No manual refresh: re-run the buy/sell sides when a fresh global sweep lands, so dropping the
+        // pull-to-refresh control never strands a stale row (Decision 2 in UI-CHROME-PLAN). The watchlist
+        // section re-projects automatically off the store's version.
         .onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _, _ in
             Task { await vm.load(force: true) }
+        }
+        .navigationDestination(item: $selectedTicker) { ticker in
+            StockDetailView(ticker: ticker)
         }
         .accessibilityIdentifier("RecommendationsView")
     }
 
-    private var list: some View {
-        ScrollView {
+    /// The action inbox at the top of the screen. Renders compactly in its non-list states (loading /
+    /// error / nothing-to-do) so the watchlist section below always stays in view.
+    @ViewBuilder
+    private var recommendationsSection: some View {
+        if !vm.rows.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 summary
                 ForEach(vm.rows) { row in
@@ -121,9 +133,24 @@ struct RecommendationsView: View {
                 }
                 footnote
             }
-            .padding(24)
-            .frame(maxWidth: 720, alignment: .leading)
-            .frame(maxWidth: .infinity)
+        } else if vm.isLoading {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Sizing today's actions…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if let error = vm.error {
+            ContentUnavailableView("Recommendations unavailable", systemImage: "exclamationmark.triangle",
+                                   description: Text(error))
+        } else if vm.hasLoaded {
+            Label("Nothing to act on today — nothing in the watchlist clears the engine's gates and margin of safety under the current regime, and every holding's thesis is intact. Being patient when there's nothing to do is itself a discipline.",
+                  systemImage: "checkmark.seal")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recommendations.empty")
+        } else {
+            ProgressView().controlSize(.small)
         }
     }
 

@@ -23,6 +23,16 @@ final class GlobalFetchStatusUITests: XCTestCase {
         return button.exists ? button : app.staticTexts[label].firstMatch
     }
 
+    /// On this runner the default-selected detail column doesn't always surface to XCUITest until the
+    /// sidebar selection changes. Bounce off another item and back to force the Recommendations detail
+    /// to realize.
+    private func landOnRecommendations(_ app: XCUIApplication) {
+        let markets = sidebarItem(app, "Markets")
+        if markets.waitForExistence(timeout: 15) { markets.click() }
+        let recommendations = sidebarItem(app, "Recommendations")
+        if recommendations.waitForExistence(timeout: 10) { recommendations.click() }
+    }
+
     /// Query by accessibility identifier, type-agnostically (SwiftUI surfaces these as different
     /// element kinds across macOS builds).
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
@@ -40,10 +50,11 @@ final class GlobalFetchStatusUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // Screen 1 — the default landing is the unified Recommendations inbox. The global status
+        // Screen 1 — the default landing is the unified Recommendations screen. The global status
         // indicator lives in the shared title bar.
+        landOnRecommendations(app)
         XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
-                      "Recommendations screen should render on launch")
+                      "Recommendations screen should render")
         XCTAssertTrue(element(app, "globalfetchstatus").waitForExistence(timeout: 10),
                       "The global fetch-status indicator should show on Recommendations")
 
@@ -51,16 +62,17 @@ final class GlobalFetchStatusUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Refresh"].exists,
                        "The per-screen Refresh button should have been removed")
 
-        // Screen 2 — the Watchlist. The same single indicator persists across the shared NavigationStack.
-        let watchlist = sidebarItem(app, "Watchlist")
-        XCTAssertTrue(watchlist.waitForExistence(timeout: 10), "Watchlist sidebar item should appear")
-        watchlist.click()
+        // Screen 2 — Paper Trading (the Watchlist is now a section of screen 1, not its own tab). The
+        // same single indicator persists across the shared NavigationStack on a different screen.
+        let paperTrading = sidebarItem(app, "Paper Trading")
+        XCTAssertTrue(paperTrading.waitForExistence(timeout: 10), "Paper Trading sidebar item should appear")
+        paperTrading.click()
 
-        XCTAssertTrue(element(app, "WatchlistView").waitForExistence(timeout: 10),
-                      "Watchlist screen should render")
+        XCTAssertTrue(element(app, "PaperTradingView").waitForExistence(timeout: 10),
+                      "Paper Trading screen should render")
         XCTAssertTrue(element(app, "globalfetchstatus").waitForExistence(timeout: 10),
-                      "The global fetch-status indicator should also show on the Watchlist")
+                      "The global fetch-status indicator should also show on Paper Trading")
         XCTAssertFalse(app.buttons["Refresh"].exists,
-                       "The Watchlist should no longer expose a Refresh button")
+                       "Paper Trading should not expose a per-screen Refresh button")
     }
 }

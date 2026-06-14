@@ -23,7 +23,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case liquidityFloor
     case intradayLiquidity
     case markets
-    case watchlist
     case paperTrading
 
     var id: Self { self }
@@ -51,7 +50,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .liquidityFloor:     return "Liquidity Floor"
         case .intradayLiquidity:  return "Intraday Liquidity"
         case .markets:            return "Markets"
-        case .watchlist:          return "Watchlist"
         case .paperTrading:       return "Paper Trading"
         }
     }
@@ -79,7 +77,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .liquidityFloor:     return "drop.fill"
         case .intradayLiquidity:  return "bolt.fill"
         case .markets:            return "chart.bar.xaxis"
-        case .watchlist:          return "star.circle.fill"
         case .paperTrading:       return "banknote"
         }
     }
@@ -107,16 +104,15 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .liquidityFloor:     return "6676314"
         case .intradayLiquidity:  return "6676320"
         case .markets:            return nil
-        case .watchlist:          return nil
         case .paperTrading:       return nil
         }
     }
 }
 
 struct MainSidebarView: View {
-    // Land on the unified Recommendations inbox — the single "what should I do today" surface that
-    // merges the buy-side picks and the Gate-5 sell-side review. The composite Watchlist (the radar the
-    // continuous screener sweep feeds) is one click away.
+    // Land on the unified Recommendations screen — the single "what should I do today" surface that
+    // merges the buy-side picks and the Gate-5 sell-side review, with the composite Watchlist (the radar
+    // the continuous screener sweep feeds) rendered beneath it on the same scroll.
     @State private var selection: SidebarItem? = .recommendations
 
     // Hold one ViewModel per screener so switching tabs preserves their loaded rows
@@ -215,9 +211,6 @@ struct MainSidebarView: View {
                         .tag(SidebarItem.markets)
                 }
                 Section {
-                    Label(SidebarItem.watchlist.title,
-                          systemImage: SidebarItem.watchlist.systemImage)
-                        .tag(SidebarItem.watchlist)
                     Label(SidebarItem.paperTrading.title,
                           systemImage: SidebarItem.paperTrading.systemImage)
                         .tag(SidebarItem.paperTrading)
@@ -254,7 +247,7 @@ struct MainSidebarView: View {
     private var detail: some View {
         switch selection {
         case .recommendations:
-            RecommendationsView(vm: recommendationsVM)
+            RecommendationsView(vm: recommendationsVM, watchlist: watchlistVM)
                 .id(SidebarItem.recommendations)
         case .bandarAccumulating:
             ScreenerView(vm: bandarAccumulatingVM, title: SidebarItem.bandarAccumulating.title)
@@ -319,9 +312,6 @@ struct MainSidebarView: View {
         case .markets:
             MarketsView(regime: regimeVM, quotes: marketQuotesVM)
                 .id(SidebarItem.markets)
-        case .watchlist:
-            WatchlistView(vm: watchlistVM, title: SidebarItem.watchlist.title)
-                .id(SidebarItem.watchlist)
         case .paperTrading:
             PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
                 .id(SidebarItem.paperTrading)

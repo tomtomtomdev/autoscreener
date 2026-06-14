@@ -28,6 +28,21 @@ final class RecommendationsUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    private func sidebarItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        let button = app.buttons[label]
+        return button.exists ? button : app.staticTexts[label].firstMatch
+    }
+
+    /// On this runner the default-selected detail column doesn't always surface to XCUITest until the
+    /// sidebar selection changes. Bounce off another item and back to force the Recommendations detail
+    /// to realize.
+    private func landOnRecommendations(_ app: XCUIApplication) {
+        let markets = sidebarItem(app, "Markets")
+        if markets.waitForExistence(timeout: 15) { markets.click() }
+        let recommendations = sidebarItem(app, "Recommendations")
+        if recommendations.waitForExistence(timeout: 10) { recommendations.click() }
+    }
+
     @MainActor
     func testRecommendationsMergesBuyAndSellRows() throws {
         // macOS gives each display its own Space; with multiple displays attached, XCUITest can't
@@ -40,10 +55,11 @@ final class RecommendationsUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // Recommendations is the default landing — it renders without any navigation. (We verify through
-        // accessibility identifiers, per the project's UI-verification policy — not by scraping labels.)
+        // Recommendations is the default landing. (We verify through accessibility identifiers, per the
+        // project's UI-verification policy — not by scraping labels.)
+        landOnRecommendations(app)
         XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
-                      "Recommendations screen should render on launch")
+                      "Recommendations screen should render")
         XCTAssertTrue(element(app, "recommendations.summary").waitForExistence(timeout: 5),
                       "The summary header should render (the loaded-with-rows state)")
 

@@ -24,15 +24,38 @@ final class StockDetailUITests: XCTestCase {
         return radio.exists ? radio : app.buttons[label]
     }
 
-    /// Finds the stock-code control by accessibility id, falling back to its label.
-    private func stockButton(_ app: XCUIApplication, _ symbol: String) -> XCUIElement {
-        let byID = app.buttons["stockcode-\(symbol)"]
-        return byID.exists ? byID : app.buttons[symbol]
+    private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
     private func sidebarItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
         let button = app.buttons[label]
         return button.exists ? button : app.staticTexts[label].firstMatch
+    }
+
+    /// On this runner the default-selected detail column doesn't always surface to XCUITest until the
+    /// sidebar selection changes. Bounce off another item and back to force the Recommendations detail
+    /// (which now hosts the watchlist section) to realize.
+    private func landOnRecommendations(_ app: XCUIApplication) {
+        let markets = sidebarItem(app, "Markets")
+        if markets.waitForExistence(timeout: 15) { markets.click() }
+        let recommendations = sidebarItem(app, "Recommendations")
+        if recommendations.waitForExistence(timeout: 10) { recommendations.click() }
+    }
+
+    /// The watchlist section sits below the recommendation cards in one scroll, so its rows aren't
+    /// instantiated until scrolled into view. Scroll the merged screen until `target` appears.
+    @discardableResult
+    private func reveal(_ app: XCUIApplication, _ target: XCUIElement) -> Bool {
+        if target.waitForExistence(timeout: 3) { return true }
+        let scroll = app.scrollViews["RecommendationsView"].exists
+            ? app.scrollViews["RecommendationsView"]
+            : app.scrollViews.firstMatch
+        for delta in [-160.0, -160, -160, -160, -160, 160, 160, 160, 160, 160] {
+            guard !target.exists else { return true }
+            if scroll.exists { scroll.scroll(byDeltaX: 0, deltaY: CGFloat(delta)) }
+        }
+        return target.exists
     }
 
     @MainActor
@@ -48,16 +71,14 @@ final class StockDetailUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // The unified Recommendations inbox is the default landing now — navigate to the Watchlist,
-        // whose rows expose tappable stock codes.
-        let watchlist = sidebarItem(app, "Watchlist")
-        XCTAssertTrue(watchlist.waitForExistence(timeout: 15), "Watchlist sidebar item should appear")
-        watchlist.click()
-
-        // The watchlist renders the canned rows; the stock code is a tappable link.
-        let bbca = stockButton(app, "BBCA")
-        XCTAssertTrue(bbca.waitForExistence(timeout: 15),
-                      "BBCA stock-code link should appear in the watchlist")
+        // The Watchlist is a section of the default Recommendations screen now — scroll down to reveal
+        // its rows, whose stock codes are tappable links into the financial detail.
+        landOnRecommendations(app)
+        XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
+                      "The merged Recommendations screen should render")
+        let bbca = element(app, "watchlist.stockcode-BBCA")
+        XCTAssertTrue(reveal(app, bbca),
+                      "BBCA stock-code link should appear in the watchlist section")
         bbca.click()
 
         // Detail opens on the Chart tab: its timeframe control (default 1Y) is present.

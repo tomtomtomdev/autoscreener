@@ -42,10 +42,10 @@ final class SidebarUITests: XCTestCase {
         XCTAssertTrue(paperTrading.waitForExistence(timeout: 15),
                       "Paper Trading sidebar item should still appear")
 
-        // The remaining navigation surfaces are intact.
+        // The remaining navigation surfaces are intact. (Watchlist is no longer its own sidebar item —
+        // it was merged into the Recommendations screen as a lower section — so it's not asserted here.)
         XCTAssertTrue(sidebarItem(app, "Recommendations").exists, "Recommendations should remain")
         XCTAssertTrue(sidebarItem(app, "Markets").exists, "Markets should remain")
-        XCTAssertTrue(sidebarItem(app, "Watchlist").exists, "Watchlist should remain")
 
         // The Settings tab is gone from the sidebar.
         XCTAssertFalse(app.buttons["Settings"].exists,
