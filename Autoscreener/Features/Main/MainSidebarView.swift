@@ -242,8 +242,18 @@ struct MainSidebarView: View {
             NavigationStack {
                 detail
                     .toolbar {
-                        ToolbarItem(placement: .principal) {
-                            GlobalFetchStatusView()
+                        // The fetch status is plain text, not a control — opt it out of the
+                        // automatic glass capsule the new design (macOS 26+) draws behind
+                        // toolbar items so it reads as a centred title, not a rounded pill.
+                        if #available(macOS 26.0, *) {
+                            ToolbarItem(placement: .principal) {
+                                GlobalFetchStatusView()
+                            }
+                            .sharedBackgroundVisibility(.hidden)
+                        } else {
+                            ToolbarItem(placement: .principal) {
+                                GlobalFetchStatusView()
+                            }
                         }
                     }
             }

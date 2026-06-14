@@ -21,6 +21,7 @@ struct GlobalFetchStatusView: View {
     private var status: FetchStatus {
         FetchStatus.resolve(
             isSweeping: coordinator.isSweeping,
+            isThrottling: coordinator.isThrottling,
             loaded: coordinator.loadedScreenerCount,
             total: coordinator.totalScreenerCount,
             lastError: coordinator.lastError,

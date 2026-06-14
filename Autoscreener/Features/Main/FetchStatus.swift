@@ -7,8 +7,11 @@ import Foundation
 /// `MarketDataStore.lastSweepAt` onto exactly one status, with a fixed precedence so the bar
 /// never lies. No SwiftUI here — `GlobalFetchStatusView` renders `displayLabel`/`tint`/`showsSpinner`.
 nonisolated enum FetchStatus: Equatable {
-    /// A sweep is in flight: `loaded` of `total` screeners fetched so far.
+    /// A sweep is in flight and actively pulling a request: `loaded` of `total` so far.
     case fetching(loaded: Int, total: Int)
+    /// A sweep is in flight but paused in the anti-burst throttle gap between two
+    /// requests — same progress, but waiting rather than fetching this instant.
+    case throttling(loaded: Int, total: Int)
     /// The last sweep surfaced a fetch error.
     case error(String)
     /// The plan paywall limited the last sweep.
@@ -23,13 +26,21 @@ nonisolated enum FetchStatus: Equatable {
 
     /// Maps the raw coordinator/store state to a status. Precedence (highest first):
     /// a live sweep > a fetch error > a paywall message > a landed sweep > idle.
+    /// Within a live sweep, `isThrottling` distinguishes the inter-request gap (waiting)
+    /// from an in-flight request (fetching). The flag is meaningless outside a sweep, so
+    /// it's only consulted when `isSweeping` and defaults off for callers that don't track it.
     static func resolve(isSweeping: Bool,
+                        isThrottling: Bool = false,
                         loaded: Int,
                         total: Int,
                         lastError: String?,
                         paywall: String?,
                         lastSweepAt: Date?) -> FetchStatus {
-        if isSweeping { return .fetching(loaded: loaded, total: total) }
+        if isSweeping {
+            return isThrottling
+                ? .throttling(loaded: loaded, total: total)
+                : .fetching(loaded: loaded, total: total)
+        }
         if let lastError { return .error(lastError) }
         if let paywall { return .paywall(paywall) }
         if let lastSweepAt { return .updated(lastSweepAt) }
@@ -39,18 +50,22 @@ nonisolated enum FetchStatus: Equatable {
     /// The text shown in the title bar.
     var displayLabel: String {
         switch self {
-        case let .fetching(loaded, total): return "Fetching \(loaded)/\(total)…"
-        case let .error(message):          return message
-        case let .paywall(message):        return message
-        case let .updated(date):           return "Updated \(Self.timeFormatter.string(from: date))"
-        case .idle:                        return "—"
+        case let .fetching(loaded, total):   return "Fetching \(loaded)/\(total)…"
+        case let .throttling(loaded, total): return "Waiting \(loaded)/\(total)…"
+        case let .error(message):            return message
+        case let .paywall(message):          return message
+        case let .updated(date):             return "Updated \(Self.timeFormatter.string(from: date))"
+        case .idle:                          return "—"
         }
     }
 
-    /// Only an in-flight sweep animates a spinner.
+    /// An in-flight sweep animates a spinner — whether it's pulling a request or waiting
+    /// in the throttle gap — so the bar reads as continuously busy across the sweep.
     var showsSpinner: Bool {
-        if case .fetching = self { return true }
-        return false
+        switch self {
+        case .fetching, .throttling: return true
+        default:                     return false
+        }
     }
 
     var tint: Tint {

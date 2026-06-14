@@ -17,6 +17,24 @@ import Testing
         #expect(status == .fetching(loaded: 7, total: 20))
     }
 
+    @Test func throttlingShownWhenSweepingAndInTheThrottleGap() {
+        // A live sweep that's currently paused between requests reads as throttling,
+        // still outranking a stale error/paywall/landed sweep.
+        let status = FetchStatus.resolve(
+            isSweeping: true, isThrottling: true, loaded: 7, total: 20,
+            lastError: "boom", paywall: "locked", lastSweepAt: sweepAt)
+        #expect(status == .throttling(loaded: 7, total: 20))
+    }
+
+    @Test func throttleFlagIgnoredWhenNotSweeping() {
+        // The throttle gap only exists inside a sweep; if the flag lingers while idle,
+        // the landed-sweep status must still win — the bar never claims to be working.
+        let status = FetchStatus.resolve(
+            isSweeping: false, isThrottling: true, loaded: 0, total: 20,
+            lastError: nil, paywall: nil, lastSweepAt: sweepAt)
+        #expect(status == .updated(sweepAt))
+    }
+
     @Test func errorWinsOverPaywallAndUpdatedWhenNotSweeping() {
         let status = FetchStatus.resolve(
             isSweeping: false, loaded: 0, total: 20,
@@ -51,6 +69,10 @@ import Testing
         #expect(FetchStatus.fetching(loaded: 7, total: 20).displayLabel == "Fetching 7/20…")
     }
 
+    @Test func throttlingLabelShowsWaitingWithProgress() {
+        #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Waiting 7/20…")
+    }
+
     @Test func errorLabelIsTheMessage() {
         #expect(FetchStatus.error("Couldn't load").displayLabel == "Couldn't load")
     }
@@ -70,8 +92,11 @@ import Testing
 
     // MARK: - spinner + tint
 
-    @Test func onlyFetchingShowsTheSpinner() {
+    @Test func fetchingAndThrottlingShowTheSpinner() {
+        // Both active states keep the spinner up so the bar reads as busy through the
+        // whole sweep — only the label flips between "Fetching" and "Waiting".
         #expect(FetchStatus.fetching(loaded: 1, total: 20).showsSpinner)
+        #expect(FetchStatus.throttling(loaded: 1, total: 20).showsSpinner)
         #expect(!FetchStatus.error("x").showsSpinner)
         #expect(!FetchStatus.paywall("x").showsSpinner)
         #expect(!FetchStatus.updated(sweepAt).showsSpinner)
@@ -82,6 +107,7 @@ import Testing
         #expect(FetchStatus.error("x").tint == .error)
         #expect(FetchStatus.paywall("x").tint == .warning)
         #expect(FetchStatus.fetching(loaded: 1, total: 20).tint == .normal)
+        #expect(FetchStatus.throttling(loaded: 1, total: 20).tint == .normal)
         #expect(FetchStatus.updated(sweepAt).tint == .normal)
         #expect(FetchStatus.idle.tint == .normal)
     }

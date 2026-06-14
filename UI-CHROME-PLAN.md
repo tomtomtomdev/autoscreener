@@ -39,6 +39,31 @@ All 7 §4 steps done; decisions 1/2/3 below all honoured.
 - **Step 7** — full `AutoscreenerTests` TEST SUCCEEDED (incl. the 12 new `FetchStatus` cases);
   `SelectionEngineCharacterizationTests` golden master byte-for-byte (no engine code touched).
 
+### Addendum 2026-06-14 (later) — throttle "Waiting" state + Liquid-Glass capsule removed
+
+Two follow-up refinements on top of the committed bar (test-first, full `AutoscreenerTests` **748 cases
+TEST SUCCEEDED**, golden master byte-for-byte):
+
+1. **No rounded glass capsule behind the status text.** This box runs **macOS 26.2** while the deployment
+   target is **15.0**, so SwiftUI auto-wraps the `.principal` toolbar item in a Liquid-Glass capsule at
+   runtime — the "rounded background" the user saw. Opted out in `MainSidebarView.detail` with
+   `.sharedBackgroundVisibility(.hidden)` on the `ToolbarItem`, guarded by `if #available(macOS 26.0, *)`
+   (the modifier is 26+; the `else` arm keeps the plain item for 15–25). The text now reads as a centred
+   title, not a pill. *Pure visual styling — not XCUITest-assertable (no pixel/glass introspection); the
+   `globalfetchstatus` a11y id is unchanged so `GlobalFetchStatusUITests` still holds.*
+2. **"Waiting" status during the anti-burst throttle gap.** The sweep spaces every Stockbit request by a
+   randomized 1–1.5 s gap (`DataSweepCoordinator.throttle()`); the bar used to keep showing `Fetching N/20…`
+   through the pause. Now `DataSweepCoordinator` publishes `isThrottling: Bool` (raised only inside the gap,
+   cleared via `defer` even on a cancelling sleeper), `FetchStatus` gained a `.throttling(loaded:total:)`
+   case rendering **`Waiting N/20…`** (spinner stays up, normal tint), and `resolve(…)` took a new
+   `isThrottling: Bool = false` param consulted **only while `isSweeping`** (meaningless when idle; default
+   keeps non-tracking callers/tests compiling). `GlobalFetchStatusView` passes `coordinator.isThrottling`
+   through. The bar now flips `Fetching 7/20…` → `Waiting 7/20…` → `Fetching 8/20…` each cycle.
+   - Tests: 3 new `FetchStatus` cases (→ **15** total) for the throttling state/label and the
+     ignored-when-idle precedence, plus a new `DataSweepCoordinatorScreenerTests.throttleGapRaisesThe
+     ThrottlingFlagThenResetsIt` that reads the flag from inside the sleeper via a MainActor `ThrottleFlag
+     Probe` (same de-flaked shape as `IncrementalRowProbe` — deterministic, no `Task.yield`).
+
 **Original plan (kept for reference):** Planning was locked; build not started. Decisions below were chosen by the user.
 
 **Decisions (locked):**
@@ -99,14 +124,16 @@ No window toolbar, no `.principal` placement anywhere. Each detail view wraps it
 - **`FetchStatus` (pure, testable)** — maps coordinator/store state → a render model + label, with a fixed
   precedence so the bar never lies:
   ```
-  sweeping            → .fetching(done, total)   "Fetching 7/20…"   (spinner)
-  else lastError      → .error(message)          red
-  else paywallMessage → .paywall(message)        orange
-  else lastSweepAt    → .updated(date)           "Updated 14:32"
-  else                → .idle                    "—"
+  sweeping & throttling → .throttling(done,total) "Waiting 7/20…"   (spinner)   ← added 2026-06-14
+  sweeping              → .fetching(done, total)   "Fetching 7/20…"  (spinner)
+  else lastError        → .error(message)          red
+  else paywallMessage   → .paywall(message)        orange
+  else lastSweepAt      → .updated(date)           "Updated 14:32"
+  else                  → .idle                    "—"
   ```
   Live in a new `Features/Main/FetchStatus.swift` as a pure `enum` + `static func resolve(isSweeping:
-  loaded:total:lastError:paywall:lastSweepAt:) -> FetchStatus` and a `displayLabel`. No SwiftUI import.
+  isThrottling:loaded:total:lastError:paywall:lastSweepAt:) -> FetchStatus` and a `displayLabel`. No SwiftUI
+  import. (`isThrottling` defaults `false` and is consulted only while `isSweeping`.)
 - **`GlobalFetchStatusView`** (`Features/Main/GlobalFetchStatusView.swift`) — thin renderer: reads the
   shared coordinator + market store, calls `FetchStatus.resolve(…)`, renders label + conditional spinner /
   colour. a11y: `.accessibilityIdentifier("globalfetchstatus")` (+ value = the label) so XCUITest can read

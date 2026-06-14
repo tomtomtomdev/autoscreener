@@ -191,6 +191,35 @@ enum SweepTestKit {
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
     }
 
+    /// Snapshots the coordinator's `isThrottling` flag at each throttle point — i.e. from
+    /// inside the sleeper, which `throttle()` only enters after setting the flag. MainActor-
+    /// isolated because it reads the MainActor coordinator; safe to call from the @Sendable
+    /// sleeper via `await`. Same shape as `IncrementalRowProbe`.
+    @MainActor
+    final class ThrottleFlagProbe {
+        private(set) var flags: [Bool] = []
+        weak var coord: DataSweepCoordinator?
+        func snapshot() { flags.append(coord?.isThrottling ?? false) }
+    }
+
+    @Test func throttleGapRaisesTheThrottlingFlagThenResetsIt() async {
+        let probe = ThrottleFlagProbe()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(),
+            sleeper: { _ in await probe.snapshot() })
+        probe.coord = coord
+
+        #expect(coord.isThrottling == false)   // idle before the sweep starts
+
+        await coord.runSweep()
+
+        // The 20-kind fan-out (single page each) throttles before every request but the
+        // first → 19 gaps, and the flag was up inside every one of them.
+        #expect(probe.flags.count == 19)
+        #expect(probe.flags.allSatisfy { $0 })
+        #expect(coord.isThrottling == false)   // reset once the sweep settles
+    }
+
     @Test func cancellationMidSweepKeepsPartialSnapshotsAndSurfacesNoError() async {
         let store = SweepTestKit.store()
         let templates = WatchlistFakeTemplates()

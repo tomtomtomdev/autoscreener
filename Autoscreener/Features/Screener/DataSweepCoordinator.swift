@@ -24,6 +24,10 @@ final class DataSweepCoordinator {
 
     // UI-facing progress, observed by the Watchlist/Screener toolbars.
     private(set) var isSweeping: Bool = false
+    /// True only while the sweep is parked in the anti-burst throttle gap between two
+    /// requests. Lets the title-bar status flip "Fetching" → "Waiting" during the pause
+    /// instead of looking stalled. Always false outside a sweep.
+    private(set) var isThrottling: Bool = false
     private(set) var loadedScreenerCount: Int = 0
     var paywallMessage: String?
     var lastError: String?
@@ -375,9 +379,13 @@ final class DataSweepCoordinator {
     // MARK: - Throttle + failure surfacing
 
     /// Sleeps a randomized `throttleRange` before each outgoing request, except the
-    /// very first one in a sweep. Stockbit penalises parallel bursts.
+    /// very first one in a sweep. Stockbit penalises parallel bursts. `isThrottling` is
+    /// raised for the duration of the gap (and cleared even if the sleeper throws on
+    /// cancellation) so the status bar reads "Waiting" while paused.
     private func throttle() async throws {
         if hasIssuedFirstRequest {
+            isThrottling = true
+            defer { isThrottling = false }
             try await sleeper(UInt64.random(in: throttleRange))
         }
         hasIssuedFirstRequest = true
