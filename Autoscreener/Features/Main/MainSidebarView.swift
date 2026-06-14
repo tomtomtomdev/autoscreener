@@ -25,7 +25,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case markets
     case watchlist
     case paperTrading
-    case appSettings
 
     var id: Self { self }
     var title: String {
@@ -54,7 +53,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "Markets"
         case .watchlist:          return "Watchlist"
         case .paperTrading:       return "Paper Trading"
-        case .appSettings:        return "Settings"
         }
     }
     var systemImage: String {
@@ -83,7 +81,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return "chart.bar.xaxis"
         case .watchlist:          return "star.circle.fill"
         case .paperTrading:       return "banknote"
-        case .appSettings:        return "gearshape"
         }
     }
     var templateID: String? {
@@ -112,7 +109,6 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .markets:            return nil
         case .watchlist:          return nil
         case .paperTrading:       return nil
-        case .appSettings:        return nil
         }
     }
 }
@@ -226,11 +222,6 @@ struct MainSidebarView: View {
                           systemImage: SidebarItem.paperTrading.systemImage)
                         .tag(SidebarItem.paperTrading)
                 }
-                Section {
-                    Label(SidebarItem.appSettings.title,
-                          systemImage: SidebarItem.appSettings.systemImage)
-                        .tag(SidebarItem.appSettings)
-                }
             }
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
@@ -334,9 +325,6 @@ struct MainSidebarView: View {
         case .paperTrading:
             PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
                 .id(SidebarItem.paperTrading)
-        case .appSettings:
-            AppSettingsView()
-                .id(SidebarItem.appSettings)
         case .none:
             ContentUnavailableView("Pick a screener", systemImage: "sidebar.left")
         }
