@@ -19,15 +19,16 @@ import Testing
     @MainActor private final class SourceSpy {
         private(set) var callCount = 0
         var result: [ExitDecision] = []
+        var skipped: [SkippedName] = []
         var error: Error?
         var loadingWhenCalled: Bool?
         weak var vm: PositionReviewViewModel?
 
-        func source(_ config: SelectionConfig) async throws -> [ExitDecision] {
+        func source(_ config: SelectionConfig) async throws -> ReviewOutcome {
             callCount += 1
             loadingWhenCalled = vm?.isLoading
             if let error { throw error }
-            return result
+            return ReviewOutcome(decisions: result, skipped: skipped)
         }
     }
 

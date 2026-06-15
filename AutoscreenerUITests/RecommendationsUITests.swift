@@ -15,9 +15,10 @@ final class RecommendationsUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    private func launchWithFixtures() -> XCUIApplication {
+    private func launchWithFixtures(skipped: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments += ["-UITestFixtures"]
+        if skipped { app.launchArguments += ["-UITestSkippedFixture"] }
         app.launch()
         return app
     }
@@ -76,5 +77,27 @@ final class RecommendationsUITests: XCTestCase {
                       "Buy-only candidate row (buy-side only) should render in the same list")
         XCTAssertTrue(element(app, "recommendations.row.WIFI").waitForExistence(timeout: 5),
                       "Hold verdict row should render")
+    }
+
+    @MainActor
+    func testSkippedNamesSurfaceAsANonBlockingNote() throws {
+        // Resilience proof: with skipped names seeded, the screen still renders its rows AND a
+        // non-blocking "N skipped" note — never the full-screen "…AdapterError error 0" it used to show.
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = launchWithFixtures(skipped: true)
+
+        landOnRecommendations(app)
+        XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
+                      "Recommendations screen should render")
+        // The rows are unaffected — skips don't block the load.
+        XCTAssertTrue(element(app, "recommendations.summary").waitForExistence(timeout: 5),
+                      "The summary header should still render alongside the skip note")
+        // The note itself.
+        XCTAssertTrue(element(app, "recommendations.skipped").waitForExistence(timeout: 5),
+                      "The 'N skipped' note should render when names were skipped")
     }
 }

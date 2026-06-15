@@ -14,6 +14,9 @@ import Observation
 @Observable
 final class PositionReviewViewModel {
     private(set) var decisions: [ExitDecision] = []
+    /// Held names the reviewer could not re-value (missing fundamentals / no price) and skipped this
+    /// run — surfaced (with the buy-side skips) as the Recommendations screen's "N skipped" note.
+    private(set) var skipped: [SkippedName] = []
     var isLoading = false
     var error: String?
 
@@ -22,13 +25,13 @@ final class PositionReviewViewModel {
     private(set) var hasLoaded = false
 
     let config: SelectionConfig
-    private let source: (SelectionConfig) async throws -> [ExitDecision]
+    private let source: (SelectionConfig) async throws -> ReviewOutcome
     /// Where the verdicts are cached so the paper-trading allocator can act on them without re-running
     /// this (expensive) review on every rebalance. This VM is the only writer; it refreshes on each load.
     private let exitDecisionsStore: ExitDecisionsStore
 
     init(config: SelectionConfig = .balanced,
-         source: @escaping (SelectionConfig) async throws -> [ExitDecision]
+         source: @escaping (SelectionConfig) async throws -> ReviewOutcome
             = { try await AppDependencies.shared.reviewPositions(config: $0) },
          exitDecisionsStore: ExitDecisionsStore = AppDependencies.shared.exitDecisionsStore) {
         self.config = config
@@ -45,7 +48,9 @@ final class PositionReviewViewModel {
         error = nil
         defer { isLoading = false }
         do {
-            decisions = try await source(config)
+            let outcome = try await source(config)
+            decisions = outcome.decisions
+            skipped = outcome.skipped
             exitDecisionsStore.update(decisions)   // feed the allocator's Gate-5 cache
             hasLoaded = true            // an empty result is still a successful review
         } catch {

@@ -131,6 +131,7 @@ struct RecommendationsView: View {
                 ForEach(vm.rows) { row in
                     ActionRowView(row: row)
                 }
+                skippedNote
                 footnote
             }
         } else if vm.isLoading {
@@ -143,14 +144,34 @@ struct RecommendationsView: View {
             ContentUnavailableView("Recommendations unavailable", systemImage: "exclamationmark.triangle",
                                    description: Text(error))
         } else if vm.hasLoaded {
-            Label("Nothing to act on today — nothing in the watchlist clears the engine's gates and margin of safety under the current regime, and every holding's thesis is intact. Being patient when there's nothing to do is itself a discipline.",
-                  systemImage: "checkmark.seal")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("recommendations.empty")
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Nothing to act on today — nothing in the watchlist clears the engine's gates and margin of safety under the current regime, and every holding's thesis is intact. Being patient when there's nothing to do is itself a discipline.",
+                      systemImage: "checkmark.seal")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recommendations.empty")
+                skippedNote
+            }
         } else {
             ProgressView().controlSize(.small)
+        }
+    }
+
+    /// Non-blocking note for names the engine/reviewer could not value (missing fundamentals / no
+    /// price) and skipped this run, so one bad ticker reads as "N skipped" rather than emptying the
+    /// screen with an error. Renders nothing when there were no skips. The per-name reasons are
+    /// available on hover (`.help`).
+    @ViewBuilder
+    private var skippedNote: some View {
+        if !vm.skipped.isEmpty {
+            Label("\(vm.skipped.count) name\(vm.skipped.count == 1 ? "" : "s") skipped — missing fundamentals or price data.",
+                  systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .help(vm.skipped.map { "\($0.ticker): \($0.reason)" }.joined(separator: "\n"))
+                .accessibilityIdentifier("recommendations.skipped")
         }
     }
 

@@ -240,11 +240,22 @@ struct PositionReviewer: Sendable {
         self.evaluator = evaluator ?? ExitEvaluator()
     }
 
-    func review() async throws -> [ExitDecision] {
+    /// Re-evaluate each held name. A holding that can't be re-valued — missing required fundamentals
+    /// (`SelectionFundamentals.AdapterError`) or no price (`SelectionProviderError.noPriceData`) — is
+    /// SKIPPED (reported via `onSkip`) rather than aborting the whole review, mirroring the buy-side
+    /// `StockSelectionEngine.run`. Any other error still propagates so a real outage surfaces.
+    func review(onSkip: @Sendable (SkippedName) -> Void = { _ in }) async throws -> [ExitDecision] {
         let policy = RegimeAssessor.assess(try await provider.marketContext(), config: evaluator.config)
         var decisions: [ExitDecision] = []
         for position in try await holdings.heldPositions() {
-            let data = try await provider.data(for: position.ticker)
+            let data: SecurityData
+            do {
+                data = try await provider.data(for: position.ticker)
+            } catch let error as SelectionFundamentals.AdapterError {
+                onSkip(SkippedName(ticker: position.ticker, reason: error.localizedDescription)); continue
+            } catch let error as SelectionProviderError where error == .noPriceData(position.ticker) {
+                onSkip(SkippedName(ticker: position.ticker, reason: error.localizedDescription)); continue
+            }
             decisions.append(evaluator.evaluate(position, data: data, policy: policy))
         }
         return decisions

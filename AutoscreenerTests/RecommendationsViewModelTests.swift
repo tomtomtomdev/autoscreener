@@ -27,20 +27,22 @@ import Testing
     @MainActor private final class Spies {
         var picksResult: [Recommendation] = []
         var decisionsResult: [ExitDecision] = []
+        var picksSkipped: [SkippedName] = []
+        var decisionsSkipped: [SkippedName] = []
         var picksError: Error?
         var decisionsError: Error?
         private(set) var picksCalls = 0
         private(set) var decisionsCalls = 0
 
-        func picksSource(_ c: SelectionConfig) async throws -> [Recommendation] {
+        func picksSource(_ c: SelectionConfig) async throws -> SelectionOutcome {
             picksCalls += 1
             if let picksError { throw picksError }
-            return picksResult
+            return SelectionOutcome(recommendations: picksResult, skipped: picksSkipped)
         }
-        func decisionsSource(_ c: SelectionConfig) async throws -> [ExitDecision] {
+        func decisionsSource(_ c: SelectionConfig) async throws -> ReviewOutcome {
             decisionsCalls += 1
             if let decisionsError { throw decisionsError }
-            return decisionsResult
+            return ReviewOutcome(decisions: decisionsResult, skipped: decisionsSkipped)
         }
     }
 
@@ -135,5 +137,18 @@ import Testing
         #expect(vm.hasLoaded)              // an empty merged inbox is still a successful load
         #expect(vm.rows.isEmpty)
         #expect(vm.error == nil)
+    }
+
+    @Test func skippedAggregatesBothChildrenForTheScreenNote() async {
+        let spies = Spies()
+        spies.picksResult = [rec("WIFI")]
+        spies.picksSkipped = [SkippedName(ticker: "BAD1", reason: "Current Ratio unavailable")]
+        spies.decisionsSkipped = [SkippedName(ticker: "BAD2", reason: "no price data")]
+        let vm = makeVM(spies)
+
+        await vm.load()
+
+        #expect(vm.error == nil)                                       // skips aren't failures
+        #expect(Set(vm.skipped.map(\.ticker)) == ["BAD1", "BAD2"])     // buy- + sell-side merged
     }
 }

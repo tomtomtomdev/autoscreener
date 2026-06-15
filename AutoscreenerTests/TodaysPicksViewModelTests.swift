@@ -25,15 +25,16 @@ import Testing
     @MainActor private final class SourceSpy {
         private(set) var callCount = 0
         var result: [Recommendation] = []
+        var skipped: [SkippedName] = []
         var error: Error?
         var loadingWhenCalled: Bool?
         weak var vm: TodaysPicksViewModel?
 
-        func source(_ config: SelectionConfig) async throws -> [Recommendation] {
+        func source(_ config: SelectionConfig) async throws -> SelectionOutcome {
             callCount += 1
             loadingWhenCalled = vm?.isLoading
             if let error { throw error }
-            return result
+            return SelectionOutcome(recommendations: result, skipped: skipped)
         }
     }
 
@@ -131,5 +132,20 @@ import Testing
         await vm.load()
 
         #expect(recs.byTicker.isEmpty)
+    }
+
+    // MARK: - Skipped names (resilience): surfaced for the non-blocking "N skipped" note.
+
+    @Test func loadSurfacesSkippedNamesWithoutAnError() async {
+        let spy = SourceSpy()
+        spy.result = [makeRecommendation("WIFI")]
+        spy.skipped = [SkippedName(ticker: "BAD", reason: "Current Ratio unavailable")]
+        let vm = TodaysPicksViewModel(source: spy.source)
+
+        await vm.load()
+
+        #expect(vm.error == nil)                       // a skipped name is not a failure
+        #expect(vm.picks.map(\.ticker) == ["WIFI"])    // the valuable name still ranks
+        #expect(vm.skipped.map(\.ticker) == ["BAD"])
     }
 }

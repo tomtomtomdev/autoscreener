@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let selectionLog = Logger(subsystem: "com.tom.tom.tom.Autoscreener", category: "selection")
 
 // Thin, headless Tier-A entry point (§8 "app wiring", post-Phase-3). It composes a candidate-universe
 // source with an engine factory and runs `StockSelectionEngine` over the sourced universe, returning
@@ -23,10 +26,14 @@ struct SelectionRunner {
 
     /// Source the universe, then run the engine over it. An empty universe returns `[]` directly so a
     /// blocked/empty Watchlist doesn't pay a market-context fetch (or risk a `noRegimeInputs` throw).
-    func run(config: SelectionConfig = .balanced) async throws -> [Recommendation] {
+    func run(config: SelectionConfig = .balanced) async throws -> SelectionOutcome {
         let universe = await universeSource()
-        guard !universe.isEmpty else { return [] }
-        return try await makeEngine(universe, config).run()
+        guard !universe.isEmpty else { return SelectionOutcome(recommendations: [], skipped: []) }
+        let collector = SkipCollector()
+        let recommendations = try await makeEngine(universe, config).run { collector.add($0) }
+        let skipped = collector.all
+        for s in skipped { selectionLog.notice("picks skipped \(s.ticker, privacy: .public): \(s.reason, privacy: .public)") }
+        return SelectionOutcome(recommendations: recommendations, skipped: skipped)
     }
 }
 
@@ -71,10 +78,18 @@ extension AppDependencies {
     /// The "Positions to Review" screen source: hold/trim/exit verdicts for the current paper book under
     /// `config`. Under `-UITestFixtures` returns canned decisions so the screen renders offline; an empty
     /// book short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
-    func reviewPositions(config: SelectionConfig = .balanced) async throws -> [ExitDecision] {
-        if ProcessInfo.processInfo.isUITestFixtures { return UITestFixtures.exitDecisions }
-        guard !paperTradingStore.state.positions.isEmpty else { return [] }
-        return try await makePositionReviewer(config: config).review()
+    func reviewPositions(config: SelectionConfig = .balanced) async throws -> ReviewOutcome {
+        if ProcessInfo.processInfo.isUITestFixtures {
+            return ReviewOutcome(decisions: UITestFixtures.exitDecisions, skipped: [])
+        }
+        guard !paperTradingStore.state.positions.isEmpty else {
+            return ReviewOutcome(decisions: [], skipped: [])
+        }
+        let collector = SkipCollector()
+        let decisions = try await makePositionReviewer(config: config).review { collector.add($0) }
+        let skipped = collector.all
+        for s in skipped { selectionLog.notice("review skipped \(s.ticker, privacy: .public): \(s.reason, privacy: .public)") }
+        return ReviewOutcome(decisions: decisions, skipped: skipped)
     }
 
     /// §10 universe: the composite Watchlist (the ranked union of the 20 screeners), read
@@ -96,8 +111,11 @@ extension AppDependencies {
     /// so the screen renders deterministically offline (the per-ticker leaf services are empty stubs
     /// under fixtures, so the live engine fan-out isn't exercised there); live, it runs the headless
     /// `selectionRunner`. `TodaysPicksViewModel` injects this as its default source.
-    func todaysPicks(config: SelectionConfig = .balanced) async throws -> [Recommendation] {
-        if ProcessInfo.processInfo.isUITestFixtures { return UITestFixtures.recommendations }
+    func todaysPicks(config: SelectionConfig = .balanced) async throws -> SelectionOutcome {
+        if ProcessInfo.processInfo.isUITestFixtures {
+            let skipped = ProcessInfo.processInfo.isUITestSkippedFixture ? UITestFixtures.skippedNames : []
+            return SelectionOutcome(recommendations: UITestFixtures.recommendations, skipped: skipped)
+        }
         return try await selectionRunner.run(config: config)
     }
 }

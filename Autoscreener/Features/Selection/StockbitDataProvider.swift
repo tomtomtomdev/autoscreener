@@ -27,12 +27,20 @@ import Foundation
 // sector is an open decision that doesn't block assembly.
 
 /// Errors `StockbitDataProvider` raises that aren't a service's own domain error.
-nonisolated enum SelectionProviderError: Error, Equatable {
+nonisolated enum SelectionProviderError: Error, Equatable, LocalizedError {
     /// The daily-bar feed returned no bars, so there's no price to value the name on.
     case noPriceData(Ticker)
     /// Every market-wide regime input failed/was absent — refuse to score a phantom regime
     /// (mirrors `RegimeViewModel` surfacing an error rather than reading an empty factor list, §1.7).
     case noRegimeInputs
+
+    /// `LocalizedError` so a propagated/skipped provider error reads as a sentence, not "error 0".
+    var errorDescription: String? {
+        switch self {
+        case let .noPriceData(t):  return "\(t): no price data — can't value this name."
+        case .noRegimeInputs:      return "No market regime inputs available."
+        }
+    }
 }
 
 actor StockbitDataProvider: DataProvider {

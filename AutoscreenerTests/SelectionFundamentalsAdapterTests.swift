@@ -189,4 +189,12 @@ private let bbcaKeystatsFields: [String: String] = [
             _ = try SelectionFundamentals.ttm(fromKeystats: bbcaKeystatsFields)   // default = .industrial
         }
     }
+
+    @Test func adapterErrorIsLegibleNotErrorZero() {
+        // Regression: `AdapterError` must be `LocalizedError` so the Recommendations screen (and the
+        // skip note) shows the offending field — never the raw "…AdapterError error 0" enum index.
+        let error = SelectionFundamentals.AdapterError.missingField(id: "1498", name: "Current Ratio")
+        #expect(error.localizedDescription.contains("Current Ratio"))
+        #expect(!error.localizedDescription.contains("error 0"))
+    }
 }

@@ -6,6 +6,11 @@ extension ProcessInfo {
     /// no Keychain, no auth, no network. Distinct from `-UITesting`, which freezes
     /// the app on the "Checking session…" splash.
     var isUITestFixtures: Bool { arguments.contains("-UITestFixtures") }
+
+    /// True when the fixtures run should also seed a few SKIPPED names, so the Recommendations
+    /// screen's non-blocking "N skipped" note can be asserted by an XCUITest. Off by default so the
+    /// other fixture-backed screens never see the note.
+    var isUITestSkippedFixture: Bool { arguments.contains("-UITestSkippedFixture") }
 }
 
 // MARK: - Canned services used only under -UITestFixtures
@@ -379,6 +384,14 @@ enum UITestFixtures {
                 "value 0.71 — Graham discount",
                 "→ conviction 0.69 weight 8%",
             ]),
+    ]
+
+    /// Canned skipped names for the Recommendations "N skipped" note, surfaced only under
+    /// `-UITestSkippedFixture` (see `AppDependencies.todaysPicks`). Each mirrors a real un-valuable
+    /// reason (missing fundamentals / no price) so the note renders deterministically offline.
+    static let skippedNames: [SkippedName] = [
+        SkippedName(ticker: "GOTO", reason: "Current Ratio unavailable (field 1498) — can't value this name."),
+        SkippedName(ticker: "BUKA", reason: "BUKA: no price data — can't value this name."),
     ]
 
     /// Canned Gate-5 exit verdicts for the "Positions to Review" screen under UI tests — a thesis-intact

@@ -35,13 +35,56 @@ extension Sequence where Element == HistoricalSummaryBar {
 // field-id → typed-field mapping — the fiddly part — is unit-tested in isolation; StockbitDataProvider
 // (Phase 1.8) does the fetching and hands the raw payloads here.
 
+// MARK: - Skip reporting (resilience)
+//
+// A name the engine/reviewer could not value (missing required fundamentals or no price) is SKIPPED
+// rather than aborting the whole run, so one bad ticker never empties the Recommendations screen.
+// `reason` is the offending error's `localizedDescription`; the view aggregates these into a small
+// non-blocking "N skipped" note. The outcome wrappers carry the survivors alongside the skips.
+
+nonisolated struct SkippedName: Equatable, Sendable {
+    let ticker: Ticker
+    let reason: String
+}
+
+/// Thread-safe sink for the engine/reviewer's `onSkip` callback. The buy engine and Gate-5 reviewer
+/// are non-isolated `async` types, so `onSkip` may fire off the calling actor — a locked reference
+/// box lets the orchestration collect skips synchronously without a data-race warning.
+nonisolated final class SkipCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [SkippedName] = []
+    func add(_ skipped: SkippedName) { lock.lock(); items.append(skipped); lock.unlock() }
+    var all: [SkippedName] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
+/// Buy-side run result: the ranked recommendations plus the names skipped while assembling them.
+nonisolated struct SelectionOutcome: Sendable {
+    let recommendations: [Recommendation]
+    let skipped: [SkippedName]
+}
+
+/// Sell-side review result: the hold/trim/exit verdicts plus the held names skipped while re-valuing.
+nonisolated struct ReviewOutcome: Sendable {
+    let decisions: [ExitDecision]
+    let skipped: [SkippedName]
+}
+
 enum SelectionFundamentals {
 
-    enum AdapterError: Error, Equatable {
+    enum AdapterError: Error, Equatable, LocalizedError {
         /// A keystats field the industrial scoring path requires was absent ("-"): the name
         /// can't be gated/scored as an industrial. Phase 2's archetype seam routes banks
         /// (which legitimately return "-" for current ratio / D/E) to a financial profile instead.
         case missingField(id: String, name: String)
+
+        /// `LocalizedError` so the Recommendations screen (and the skip note) names the offending
+        /// field instead of Swift's default "…AdapterError error 0" enum-index formatting.
+        var errorDescription: String? {
+            switch self {
+            case let .missingField(id, name):
+                return "\(name) unavailable (field \(id)) — can't value this name."
+            }
+        }
     }
 
     /// Stable keystats `fitem.id`s for the TTM block the engine consumes (verified on WIFI, §11).

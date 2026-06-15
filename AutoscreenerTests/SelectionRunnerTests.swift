@@ -69,9 +69,10 @@ private final class CallSpy {
                 return StockSelectionEngine(provider: EchoProvider(tickers: universe), config: config)
             })
 
-        let recs = try await runner.run()
+        let outcome = try await runner.run()
 
-        #expect(recs.isEmpty)
+        #expect(outcome.recommendations.isEmpty)
+        #expect(outcome.skipped.isEmpty)
         #expect(spy.madeEngine == false)            // no candidates → no market fetch, no engine
     }
 }

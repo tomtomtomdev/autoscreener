@@ -228,6 +228,18 @@ private struct StubData: DataProvider {
     func marketContext() async throws -> MarketContext { context }
 }
 
+private struct ThrowingData: DataProvider {
+    let securities: [Ticker: SecurityData]
+    let failures: [Ticker: any Error]
+    let context: MarketContext
+    func universe() async throws -> [Ticker] { Array(securities.keys) }
+    func data(for t: Ticker) async throws -> SecurityData {
+        if let e = failures[t] { throw e }
+        return securities[t]!
+    }
+    func marketContext() async throws -> MarketContext { context }
+}
+
 private func neutralContext() -> MarketContext {
     MarketContext(indexValuationPercentile: 0.5, breadthAbove200dma: 0.6, indexAbove200dma: true,
                   idrWeakeningTrend: false, biRateRising: false, marketForeignFlowNet: 0, commodityTailwind: true)
@@ -255,6 +267,26 @@ private func neutralContext() -> MarketContext {
         let provider = StubData(securities: [:], context: neutralContext())
         let decisions = try await PositionReviewer(holdings: StubHoldings(positions: []), provider: provider).review()
         #expect(decisions.isEmpty)
+    }
+
+    @Test func skipsAnUnvaluableHeldNameAndKeepsReviewingTheRest() async throws {
+        // Regression (sell-side mirror of the buy engine): a held name whose fundamentals can't be
+        // re-fetched must be SKIPPED, not abort the whole review — otherwise one bad holding empties
+        // the Recommendations screen with "…AdapterError error 0".
+        let keep = makeSecurity(ticker: "KEEP", price: 1000)
+        let provider = ThrowingData(
+            securities: ["KEEP": keep],
+            failures: ["BAD": SelectionFundamentals.AdapterError.missingField(id: "1498", name: "Current Ratio")],
+            context: neutralContext())
+        let holdings = StubHoldings(positions: [
+            HeldPosition(ticker: "KEEP", shares: 1000, avgCost: 900),
+            HeldPosition(ticker: "BAD", shares: 1000, avgCost: 900)])
+
+        var skipped: [SkippedName] = []
+        let decisions = try await PositionReviewer(holdings: holdings, provider: provider).review { skipped.append($0) }
+
+        #expect(decisions.map(\.ticker) == ["KEEP"])
+        #expect(skipped.map(\.ticker) == ["BAD"])
     }
 }
 

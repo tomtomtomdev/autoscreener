@@ -971,14 +971,27 @@ struct StockSelectionEngine: Sendable {
         let valuator: any Valuator
     }
 
-    func run() async throws -> [Recommendation] {
+    /// Rank the universe. A name that can't be VALUED — missing required fundamentals
+    /// (`SelectionFundamentals.AdapterError`) or no price (`SelectionProviderError.noPriceData`) — is
+    /// SKIPPED (reported via `onSkip`) so one bad ticker never aborts the whole run / empties the
+    /// screen. Any OTHER error (network/auth/decoding) still propagates, so a real outage surfaces as
+    /// an error rather than masquerading as "no picks". `onSkip` defaults to a no-op so the ~existing
+    /// `run()` call sites stay source-compatible.
+    func run(onSkip: @Sendable (SkippedName) -> Void = { _ in }) async throws -> [Recommendation] {
         let context = try await provider.marketContext()
         let policy = RegimeAssessor.assess(context, config: config)
         if policy.maxTotalExposure <= 0 { return [] }
 
         var scored: [Scored] = []
         for t in try await provider.universe() {
-            let s = try await provider.data(for: t)
+            let s: SecurityData
+            do {
+                s = try await provider.data(for: t)
+            } catch let error as SelectionFundamentals.AdapterError {
+                onSkip(SkippedName(ticker: t, reason: error.localizedDescription)); continue
+            } catch let error as SelectionProviderError where error == .noPriceData(t) {
+                onSkip(SkippedName(ticker: t, reason: error.localizedDescription)); continue
+            }
             let profile = profileSelector(s)
             var audit = ["regime=\(policy.regime.rawValue)"]
 

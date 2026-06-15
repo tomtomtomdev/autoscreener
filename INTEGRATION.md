@@ -313,6 +313,34 @@ canonical build order)** from the next-unbuilt item. All other sections are back
     to sweep, NOT wired to the regression (wiring it would move the BBCA worked example). **Full
     `AutoscreenerTests` bundle: 458 passed, 0 failures** — golden master unchanged.
 
+- **Run-level resilience ✅ (2026-06-15) — one un-valuable name no longer empties the Recommendations
+  screen.** §13-A3 made each *adapter* null-safe, but the *run* wasn't: `StockSelectionEngine.run` and
+  `PositionReviewer.review` called `provider.data(for:)` with no catch, so a single ticker that throws
+  `SelectionFundamentals.AdapterError.missingField` (a required keystats field is `"-"` and the
+  archetype seam can't relax it) or `SelectionProviderError.noPriceData` aborted the **whole** run and
+  surfaced on the screen as the raw, unhelpful *"…AdapterError error 0"* (the enum wasn't
+  `LocalizedError`). Fix:
+  - **Skip, don't abort.** Both loops now `do/catch` those two *un-valuable-name* errors, report each
+    via a defaulted `onSkip: @Sendable (SkippedName) -> Void` closure, and `continue`. **Any other
+    error (network/auth/decoding) still propagates**, so a genuine outage surfaces as the error state
+    rather than masquerading as "no picks". The defaulted closure keeps the ~25 existing `run()` /
+    `review()` call sites source-compatible (engine return type unchanged → golden master untouched).
+  - **Legibility.** `AdapterError` + `SelectionProviderError` now conform to `LocalizedError` (e.g.
+    *"Current Ratio unavailable (field 1498) — can't value this name."*), used as the skip reason and
+    any propagated message.
+  - **Plumbing.** New `nonisolated` value types `SkippedName` / `SelectionOutcome` / `ReviewOutcome`
+    (in `SelectionAdapters.swift`) thread the skips up `SelectionRunner.run` → `todaysPicks` /
+    `reviewPositions` (collected via a locked `SkipCollector`, logged through an `os.Logger`) → the two
+    child VMs (`.skipped`) → `RecommendationsViewModel.skipped`. `RecommendationsView` renders a
+    non-blocking `skippedNote` (`recommendations.skipped`, per-name reasons on hover) in both the
+    populated and empty states. UITest fixture flag `-UITestSkippedFixture` seeds
+    `UITestFixtures.skippedNames` so the note is XCUITest-assertable.
+  - **Tests (red→green):** `EngineSkipResilienceTests` (skip missing-fundamentals / no-price; infra
+    error still propagates), `PositionReviewerTests.skipsAnUnvaluableHeldName…`,
+    `SelectionFundamentalsAdapterTests.adapterErrorIsLegibleNotErrorZero`, and skip-aggregation cases in
+    the Today's-Picks / Recommendations VM suites. Full `AutoscreenerTests` green; `RecommendationsUITests`
+    skip-note case passes on single-display/CI (skips on multi-display per the documented guard).
+
 > **⚠️ Hidden again 2026-06-11 (API-fetching revamp).** Today's Picks is currently **hidden from the
 > sidebar** (the "Today" section and the `.todaysPicks` detail arm were removed; default landing is now
 > the Watchlist). All the code below remains intact and wired — only the sidebar entry is gone, so the

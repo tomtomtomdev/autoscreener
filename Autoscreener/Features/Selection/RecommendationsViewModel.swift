@@ -75,6 +75,10 @@ final class RecommendationsViewModel {
     /// How many rows ask for an action (exit, trim, or buy) — drives the "N to act on" summary.
     var actionableCount: Int { rows.filter(\.isActionable).count }
 
+    /// Names skipped (un-valuable: missing fundamentals / no price) across BOTH sides this load —
+    /// the non-blocking "N skipped" note. Computed so Observation tracks both children's outputs.
+    var skipped: [SkippedName] { picks.skipped + positions.skipped }
+
     /// Loading while either child is loading; the first child error surfaces; loaded once both have.
     var isLoading: Bool { picks.isLoading || positions.isLoading }
     var error: String?  { picks.error ?? positions.error }
