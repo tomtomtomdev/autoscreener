@@ -1,0 +1,277 @@
+import Foundation
+
+nonisolated struct ScreenerInitialResult: Sendable {
+    let config: ScreenerConfig
+    let page: ScreenerPage  // page 1 of rows returned alongside the template
+}
+
+nonisolated protocol ScreenerTemplateServicing: Sendable {
+    func load(templateID: String) async throws -> ScreenerInitialResult
+}
+
+nonisolated final class ScreenerTemplateService: ScreenerTemplateServicing {
+    private let apiClient: APIClient
+    init(apiClient: APIClient) { self.apiClient = apiClient }
+
+    func load(templateID: String) async throws -> ScreenerInitialResult {
+        let endpoint = Endpoint(
+            method: .get,
+            path: "screener/templates/\(templateID)",
+            query: [URLQueryItem(name: "limit", value: "25"),
+                    URLQueryItem(name: "type", value: "TEMPLATE_TYPE_CUSTOM")]
+        )
+        let data = try await apiClient.sendRaw(endpoint)
+        return try Self.parse(data, templateID: templateID)
+    }
+
+    static func parse(_ data: Data, templateID: String) throws -> ScreenerInitialResult {
+        // Try the confirmed Stockbit envelope first via Codable for the rows.
+        let codablePage: ScreenerPage? = (try? JSONDecoder().decode(ScreenerResponseDTO.self, from: data))
+            .flatMap { dto -> ScreenerPage? in
+                guard let calcs = dto.data.calcs else { return nil }
+                // We don't yet know the sequence — caller will reapply on the rows below.
+                return nil // placeholder; actual rows materialised below once we know `sequence`
+            }
+        _ = codablePage
+
+        // The template-metadata portion (filters/universe/sequence) hasn't been pinned
+        // to a single path yet, so keep walking the JSON tree for it.
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ScreenerError.malformedResponse
+        }
+        let templateDict = findTemplateDict(in: json) ?? [:]
+        let config = configFromTemplate(templateDict, templateID: templateID)
+
+        // Rows via Codable if available, else fall back to tree-walk.
+        let rows: [ScreenerRow]
+        let total: Int?
+        if let dto = try? JSONDecoder().decode(ScreenerResponseDTO.self, from: data),
+           let calcs = dto.data.calcs {
+            rows = calcs.map { $0.toRow(sequence: config.sequence) }
+            total = dto.data.total ?? findTotal(in: json)
+        } else {
+            let rowsArray = findRowsArray(in: json) ?? []
+            rows = rowsArray.map { ScreenerService.row(from: $0, sequence: config.sequence) }
+            total = findTotal(in: json)
+        }
+        let page = ScreenerPage(rows: rows, total: total, page: 1)
+        return ScreenerInitialResult(config: config, page: page)
+    }
+
+    private static func configFromTemplate(_ payload: [String: Any], templateID: String) -> ScreenerConfig {
+        let name = (payload["name"] as? String) ?? "bandar-accumulating"
+        let description = (payload["description"] as? String) ?? ""
+        let filters = parseFilters(payload["filters"])
+        let universe = parseUniverse(payload["universe"]) ?? .ihsg
+        let sequence = parseSequence(payload["sequence"])
+        let orderColumn = (payload["ordercol"] as? Int) ?? (payload["order_col"] as? Int) ?? 2
+        let orderType = (payload["ordertype"] as? String) ?? (payload["order_type"] as? String) ?? "desc"
+        let limit = (payload["limit"] as? Int) ?? 25
+
+        var config = ScreenerConfig()
+        config.name = name
+        config.description = description
+        config.filters = filters.isEmpty ? defaultFilters(forTemplateID: templateID) : filters
+        config.universe = universe
+        config.sequence = sequence.isEmpty ? defaultSequence(forTemplateID: templateID) : sequence
+        config.orderColumn = orderColumn
+        config.orderType = orderType
+        config.limit = limit
+        config.screenerID = templateID
+        return config
+    }
+
+    /// Picks the per-screener filter set used when the GET response doesn't carry
+    /// template metadata. The Stockbit `GET /screener/templates/{id}` ships only
+    /// `data.calcs` (rows) in production — without templateID-aware defaults, every
+    /// screener inherits bandar-accumulating's 2 filters and page-2+ POSTs collapse
+    /// to bandar-accumulating's results.
+    private static func defaultFilters(forTemplateID id: String) -> [ScreenerFilter] {
+        switch id {
+        case "6676217": return ScreenerFilter.bandarAboveMA20
+        case "6676221": return ScreenerFilter.bandarShiftToday
+        case "6676223": return ScreenerFilter.accumDistPositive
+        case "6676225": return ScreenerFilter.foreignFlow1M
+        case "6676228": return ScreenerFilter.foreignFlow6M
+        case "6676231": return ScreenerFilter.foreignFlow3M
+        case "6676235": return ScreenerFilter.foreignBuyStreak
+        case "6676238": return ScreenerFilter.freshForeignBuy
+        case "6676260": return ScreenerFilter.freqSpike
+        case "6676263": return ScreenerFilter.volumeSpike
+        case "6676264": return ScreenerFilter.above50MA
+        case "6676268": return ScreenerFilter.above200MA
+        case "6676273": return ScreenerFilter.earningsYield
+        case "6676280": return ScreenerFilter.pbvBelow2
+        case "6676288": return ScreenerFilter.roeQuality
+        case "6676291": return ScreenerFilter.fcfPositive
+        case "6676292": return ScreenerFilter.manageableDebt
+        case "6676314": return ScreenerFilter.liquidityFloor
+        case "6676320": return ScreenerFilter.intradayLiquidity
+        default:        return ScreenerFilter.bandarAccumulating
+        }
+    }
+
+    /// Per-screener metric sequence (the IDs to pull from each row's `results`).
+    /// bandar-shift-today swaps the second column from 14426 (MA 20) to 14425
+    /// (Previous Bandar Value). accum-dist-positive is single-column (14400);
+    /// foreign-flow-1m is single-column (13580); foreign-flow-6m is single-column
+    /// (13582); foreign-flow-3m is single-column (13581); foreign-buy-streak is
+    /// single-column (13561); fresh-foreign-buy is single-column (13561, same metric
+    /// as foreign-buy-streak but `> 0` instead of `>= 5`); liquidity-floor is
+    /// single-column (16454, Value MA 20); intraday-liquidity is single-column
+    /// (13620, Value). freq-spike pairs Frequency Spike + Analyzer (15396, 15394);
+    /// volume-spike pairs Volume + Volume MA 20 (12469, 12464); above-50ma pairs
+    /// Price + Price MA 50 (2661, 12460); above-200ma pairs Price + Price MA 200
+    /// (2661, 12462). The five fundamentals are each single-column: earnings-yield
+    /// (2898), pbv-below-2 (2896), roe-quality (1461), fcf-positive (2538),
+    /// manageable-debt (1508).
+    private static func defaultSequence(forTemplateID id: String) -> [Int] {
+        switch id {
+        case "6676221": return [14399, 14425]
+        case "6676223": return [14400]
+        case "6676225": return [13580]
+        case "6676228": return [13582]
+        case "6676231": return [13581]
+        case "6676235": return [13561]
+        case "6676238": return [13561]
+        case "6676260": return [15396, 15394]
+        case "6676263": return [12469, 12464]
+        case "6676264": return [2661, 12460]
+        case "6676268": return [2661, 12462]
+        case "6676273": return [2898]
+        case "6676280": return [2896]
+        case "6676288": return [1461]
+        case "6676291": return [2538]
+        case "6676292": return [1508]
+        case "6676314": return [16454]
+        case "6676320": return [13620]
+        default:        return [14399, 14426]
+        }
+    }
+
+    /// Walk the tree to find the dict that carries the screener template fields.
+    /// Heuristic: contains at least one of {filters, universe, sequence} and ideally a name.
+    private static func findTemplateDict(in any: Any) -> [String: Any]? {
+        if let dict = any as? [String: Any] {
+            if dict["filters"] != nil || dict["universe"] != nil || dict["sequence"] != nil {
+                return dict
+            }
+            for (_, v) in dict {
+                if let found = findTemplateDict(in: v) { return found }
+            }
+        }
+        if let arr = any as? [Any] {
+            for v in arr {
+                if let found = findTemplateDict(in: v) { return found }
+            }
+        }
+        return nil
+    }
+
+    /// Find an array of row-like dicts anywhere in the tree.
+    /// Recognises Stockbit's "calcs" entries (which carry `company` + `results`)
+    /// as well as flatter symbol/ticker/code-keyed variants.
+    private static func findRowsArray(in any: Any) -> [[String: Any]]? {
+        if let arr = any as? [[String: Any]], let first = arr.first {
+            if first["symbol"] != nil || first["ticker"] != nil || first["code"] != nil
+                || first["company"] != nil || first["results"] != nil {
+                return arr
+            }
+        }
+        if let dict = any as? [String: Any] {
+            // Prefer "calcs" / "rows" / "data" / "results" keys when present.
+            for key in ["calcs", "rows", "data", "results"] {
+                if let arr = dict[key] as? [[String: Any]], let first = arr.first,
+                   first["company"] != nil || first["symbol"] != nil
+                    || first["ticker"] != nil || first["results"] != nil {
+                    return arr
+                }
+            }
+            for (_, v) in dict {
+                if let found = findRowsArray(in: v) { return found }
+            }
+        }
+        if let arr = any as? [Any] {
+            for v in arr {
+                if let found = findRowsArray(in: v) { return found }
+            }
+        }
+        return nil
+    }
+
+    private static func findTotal(in any: Any) -> Int? {
+        if let dict = any as? [String: Any] {
+            if let n = dict["total"] as? Int { return n }
+            if let n = dict["total_count"] as? Int { return n }
+            for (_, v) in dict {
+                if let n = findTotal(in: v) { return n }
+            }
+        }
+        return nil
+    }
+
+    private static func parseFilters(_ raw: Any?) -> [ScreenerFilter] {
+        // `filters` may be: a String (JSON-encoded), or an array of dicts already.
+        if let str = raw as? String, let d = str.data(using: .utf8),
+           let arr = try? JSONSerialization.jsonObject(with: d) as? [[String: Any]] {
+            return arr.compactMap(filter(from:))
+        }
+        if let arr = raw as? [[String: Any]] {
+            return arr.compactMap(filter(from:))
+        }
+        return []
+    }
+
+    private static func filter(from dict: [String: Any]) -> ScreenerFilter? {
+        guard let typeRaw = dict["type"] as? String,
+              let type = ScreenerFilter.FilterType(rawValue: typeRaw),
+              let op = dict["operator"] as? String,
+              let item1 = dict["item1"] as? Int
+        else { return nil }
+        return ScreenerFilter(
+            type: type,
+            operator_: op,
+            item1: item1,
+            item1_name: (dict["item1_name"] as? String) ?? "",
+            item2: stringValue(dict["item2"]) ?? "",
+            item2_name: (dict["item2_name"] as? String) ?? "",
+            multiplier: stringValue(dict["multiplier"]) ?? "0"
+        )
+    }
+
+    private static func stringValue(_ any: Any?) -> String? {
+        switch any {
+        case let s as String: return s
+        case let i as Int: return String(i)
+        case let d as Double: return String(d)
+        default: return nil
+        }
+    }
+
+    private static func parseUniverse(_ raw: Any?) -> ScreenerUniverse? {
+        if let str = raw as? String, let d = str.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            return universe(from: dict)
+        }
+        if let dict = raw as? [String: Any] {
+            return universe(from: dict)
+        }
+        return nil
+    }
+
+    private static func universe(from dict: [String: Any]) -> ScreenerUniverse? {
+        guard let scope = dict["scope"] as? String else { return nil }
+        let scopeID = stringValue(dict["scopeID"]) ?? stringValue(dict["scope_id"]) ?? "0"
+        let name = (dict["name"] as? String) ?? scope
+        return ScreenerUniverse(scopeID: scopeID, name: name, scope: scope)
+    }
+
+    private static func parseSequence(_ raw: Any?) -> [Int] {
+        if let s = raw as? String {
+            return s.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        }
+        if let arr = raw as? [Int] { return arr }
+        if let arr = raw as? [String] { return arr.compactMap(Int.init) }
+        return []
+    }
+}

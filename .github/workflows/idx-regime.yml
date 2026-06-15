@@ -1,0 +1,75 @@
+name: IDX regime snapshot
+
+# Builds regime.json (+ regime-history.json) from the free IDX/BI feeds and
+# publishes them to the `data` branch, where the app fetches the raw URL.
+# See tools/idx-regime-scraper/ and idx-regime-data-research.md §6.
+
+on:
+  schedule:
+    # 06:00 UTC on the 5th of each month — the prior month's IDX statistics are
+    # published by then (the ratios are monthly).
+    - cron: "0 6 5 * *"
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Months of history to backfill before the target month (0 = none)"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: idx-regime
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/idx-regime-scraper
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the pure-logic tests
+        run: pip install pytest && python -m pytest -q
+
+      - name: Restore prior history from the data branch
+        working-directory: .
+        run: |
+          git fetch origin data || true
+          mkdir -p tools/idx-regime-scraper/dist
+          git show origin/data:regime-history.json > tools/idx-regime-scraper/dist/regime-history.json 2>/dev/null \
+            || echo "no prior history (first run / backfill needed)"
+
+      - name: Build the snapshot
+        run: python -m regime_scraper --backfill "${{ github.event.inputs.backfill || '0' }}"
+
+      - name: Publish to the data branch
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git config user.name "regime-bot"
+          git config user.email "regime-bot@users.noreply.github.com"
+          dist="$GITHUB_WORKSPACE/tools/idx-regime-scraper/dist"
+          git fetch origin data || true
+          if git show-ref --verify --quiet refs/remotes/origin/data; then
+            git worktree add ../data-branch origin/data
+            git -C ../data-branch checkout -B data
+          else
+            git worktree add --detach ../data-branch
+            git -C ../data-branch checkout --orphan data
+            git -C ../data-branch rm -rf . >/dev/null 2>&1 || true
+          fi
+          cp "$dist/regime.json" "$dist/regime-history.json" ../data-branch/
+          git -C ../data-branch add regime.json regime-history.json
+          git -C ../data-branch commit -m "data: regime snapshot $(date -u +%F)" || { echo "no changes"; exit 0; }
+          git -C ../data-branch push origin data

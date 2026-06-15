@@ -1,0 +1,14 @@
+{
+  "index": "LQ45",
+  "note": "Maintained config — IDX reviews LQ45 twice a year (effective Feb & Aug). Update at each rebalance. Mirrors Autoscreener's LQ45Constituents.swift. Seed as of the 2026 review known at authoring time; verify against the live list.",
+  "constituents": [
+    "BBCA", "BBRI", "BMRI", "BBNI", "BRIS", "BBTN", "ARTO",
+    "TLKM", "ISAT", "EXCL", "TOWR", "TBIG", "MTEL",
+    "UNVR", "ICBP", "INDF", "MYOR", "AMRT", "GGRM", "HMSP", "CPIN", "JPFA",
+    "ADRO", "PTBA", "ITMG", "MEDC", "PGAS", "AKRA", "PGEO",
+    "ANTM", "INCO", "MDKA", "TPIA", "BRPT", "INKP", "SMGR", "INTP",
+    "ASII", "UNTR", "KLBF",
+    "CTRA", "BSDE", "JSMR",
+    "GOTO", "ACES"
+  ]
+}

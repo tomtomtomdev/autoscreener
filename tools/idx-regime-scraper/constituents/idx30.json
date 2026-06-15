@@ -1,0 +1,13 @@
+{
+  "index": "IDX30",
+  "note": "Maintained config — the 30 most-liquid LQ45 names; reviewed with LQ45 (Feb & Aug). Update at each rebalance. Seed as of the 2026 review known at authoring time; verify against the live list.",
+  "constituents": [
+    "BBCA", "BBRI", "BMRI", "BBNI", "BRIS",
+    "TLKM", "ISAT", "TOWR",
+    "ASII", "UNTR", "KLBF",
+    "ICBP", "INDF", "AMRT", "GGRM", "CPIN",
+    "ADRO", "PTBA", "ITMG", "MEDC", "PGAS",
+    "ANTM", "INCO", "MDKA", "TPIA", "BRPT", "SMGR",
+    "GOTO", "AKRA", "CTRA"
+  ]
+}

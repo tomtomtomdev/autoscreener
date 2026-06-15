@@ -1,0 +1,4 @@
+# Live HTTP only. The pure logic (aggregation/percentile/parsers/build) and its
+# tests need none of these — see regime_scraper/sources.py.
+curl_cffi>=0.7        # TLS impersonation to clear Cloudflare on the IDX endpoint (§4)
+beautifulsoup4>=4.12  # parse the BI-Rate history table (§3)

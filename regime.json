@@ -1,0 +1,95 @@
+{
+  "asOf": "2026-05-31",
+  "biRate": {
+    "value": 5.5,
+    "direction": "hike",
+    "asOf": "2026-06-09"
+  },
+  "macro": null,
+  "indices": {
+    "COMPOSITE": {
+      "pe": 12.9,
+      "pb": 1.55,
+      "pePctile": 0.1443,
+      "pbPctile": 0.0412
+    },
+    "SECTOR:A": {
+      "pe": 15.61,
+      "pb": 1.79,
+      "pePctile": 0.7778,
+      "pbPctile": 0.1746
+    },
+    "SECTOR:B": {
+      "pe": 12.08,
+      "pb": 1.46,
+      "pePctile": 0.0476,
+      "pbPctile": 0.0159
+    },
+    "SECTOR:C": {
+      "pe": 9.25,
+      "pb": 0.94,
+      "pePctile": 0.619,
+      "pbPctile": 0.3651
+    },
+    "SECTOR:D": {
+      "pe": 10.15,
+      "pb": 1.43,
+      "pePctile": 0.0317,
+      "pbPctile": 0.0159
+    },
+    "SECTOR:E": {
+      "pe": 10.75,
+      "pb": 1.17,
+      "pePctile": 0.0635,
+      "pbPctile": 0.0317
+    },
+    "SECTOR:F": {
+      "pe": 16.58,
+      "pb": 2.56,
+      "pePctile": 0.0159,
+      "pbPctile": 0.0317
+    },
+    "SECTOR:G": {
+      "pe": 10.2,
+      "pb": 1.33,
+      "pePctile": 0.0159,
+      "pbPctile": 0.0317
+    },
+    "SECTOR:H": {
+      "pe": 15.82,
+      "pb": 1.04,
+      "pePctile": 0.5238,
+      "pbPctile": 0.6667
+    },
+    "SECTOR:I": {
+      "pe": 36.7,
+      "pb": 2.56,
+      "pePctile": 0.4444,
+      "pbPctile": 0.5079
+    },
+    "SECTOR:J": {
+      "pe": 24.64,
+      "pb": 2.94,
+      "pePctile": 0.7937,
+      "pbPctile": 0.8571
+    },
+    "SECTOR:K": {
+      "pe": 14.19,
+      "pb": 1.58,
+      "pePctile": 0.8095,
+      "pbPctile": 0.7937
+    },
+    "IDX30": {
+      "pe": 8.89,
+      "pb": 1.28,
+      "pePctile": 0.0159,
+      "pbPctile": 0.0159
+    },
+    "LQ45": {
+      "pe": 8.93,
+      "pb": 1.24,
+      "pePctile": 0.0159,
+      "pbPctile": 0.0159
+    }
+  }
+}

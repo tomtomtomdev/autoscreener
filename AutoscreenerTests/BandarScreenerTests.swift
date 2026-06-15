@@ -1,0 +1,428 @@
+import Foundation
+import Testing
+@testable import Autoscreener
+
+// MARK: - PaywallService
+
+@Suite struct PaywallServiceTests {
+    @Test func checkSendsExpectedPathAndParsesEligibleTrue() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let session = StubSession([.init(
+            status: 200,
+            body: Data(#"{"data":{"is_eligible":true}}"#.utf8)
+        )])
+        let client = APIClient(session: session, tokens: store)
+        let svc = PaywallService(apiClient: client)
+
+        let result = await svc.check(.screener)
+
+        #expect(result.eligible == true)
+        let req = session.received[0]
+        #expect(req.url?.path == "/paywall/eligibility/check")
+        #expect(req.url?.query?.contains("features=PAYWALL_FEATURE_SCREENER") == true)
+        #expect(req.value(forHTTPHeaderField: "authorization") == "Bearer A")
+    }
+
+    @Test func checkReturnsEligibleOnUnknownEnvelopeRatherThanFailing() async {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let session = StubSession([.init(status: 200, body: Data("garbage".utf8))])
+        let client = APIClient(session: session, tokens: store)
+        let svc = PaywallService(apiClient: client)
+        let result = await svc.check(.screener)
+        #expect(result.eligible == true)
+    }
+
+    @Test func incrementPostsFeatureName() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let session = StubSession([.init(status: 200, body: Data("{}".utf8))])
+        let client = APIClient(session: session, tokens: store)
+        let svc = PaywallService(apiClient: client)
+
+        await svc.increment(.screener)
+
+        let req = session.received[0]
+        #expect(req.url?.path == "/paywall/counter/increment")
+        #expect(req.httpMethod == "POST")
+        let body = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: String]
+        #expect(body["feature"] == "PAYWALL_FEATURE_SCREENER")
+        #expect(body["company"] == "")
+    }
+}
+
+// MARK: - ScreenerTemplateService
+
+@Suite struct ScreenerTemplateServiceTests {
+    @Test func loadParsesStringifiedFiltersAndUniverseAndPage1Rows() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        // Template GET response carries both the template metadata AND page 1 rows.
+        let body = Data(#"""
+        {"data":{
+          "template":{
+            "name":"bandar-accumulating",
+            "description":"",
+            "filters":"[{\"operator\":\">\",\"item1_name\":\"Bandar Value\",\"multiplier\":\"1\",\"type\":\"compare\",\"item1\":14399,\"item2\":\"14426\",\"item2_name\":\"Bandar Value MA 20\"}]",
+            "universe":"{\"scopeID\":\"0\",\"name\":\"IHSG\",\"scope\":\"IHSG\"}",
+            "sequence":"14399,14426",
+            "ordercol":2,"ordertype":"desc","limit":25
+          },
+          "screener":{
+            "data":[
+              {"symbol":"BBCA","name":"BCA","values":[1.0, 0.5]},
+              {"symbol":"BBRI","name":"BRI","values":[2.0, 1.0]}
+            ],
+            "total":120
+          }
+        }}
+        """#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let result = try await svc.load(templateID: "6676213")
+
+        #expect(result.config.name == "bandar-accumulating")
+        #expect(result.config.filters.count == 1)
+        #expect(result.config.filters[0].item1 == 14399)
+        #expect(result.config.universe == .ihsg)
+        #expect(result.config.sequence == [14399, 14426])
+        #expect(result.config.screenerID == "6676213")
+
+        #expect(result.page.rows.map(\.symbol) == ["BBCA", "BBRI"])
+        #expect(result.page.total == 120)
+        #expect(result.page.page == 1)
+    }
+
+    @Test func loadFallsBackToCannedDefaultsWhenFieldsMissing() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let session = StubSession([.init(status: 200, body: Data(#"{"data":{}}"#.utf8))])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+        let result = try await svc.load(templateID: "X")
+        #expect(result.config.sequence == [14399, 14426])  // fell back to canned defaults
+        #expect(result.config.universe == .ihsg)
+        #expect(result.page.rows.isEmpty)
+    }
+
+    /// Regression: when the GET response ships only rows (no template metadata),
+    /// the parser must use a templateID-specific filter default — not a single shared
+    /// canned set. Otherwise bandar-above-ma20's page 2+ POSTs run with bandar-accumulating's
+    /// 2-filter set and silently cap the results at bandar-accumulating's total.
+    @Test func parseChoosesTemplateSpecificFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        // Real-world Stockbit GET response: just data.calcs, no template field.
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let accumulating = try await svc.load(templateID: "6676213")
+        let aboveMA20    = try await svc.load(templateID: "6676217")
+        let shiftToday   = try await svc.load(templateID: "6676221")
+        let accumDist    = try await svc.load(templateID: "6676223")
+
+        // bandar-accumulating: compare (value > MA20) + basic (value > 0) = 2 filters
+        #expect(accumulating.config.filters.count == 2)
+        // bandar-above-ma20: compare-only = 1 filter (this is the "less criteria" the
+        // sidebar advertises). With the wrong fallback, this would be 2.
+        #expect(aboveMA20.config.filters.count == 1)
+        #expect(aboveMA20.config.filters.first?.type == .compare)
+        // bandar-shift-today: Bandar Value (14399) > Previous Bandar Value (14425).
+        // Sequence and item2 differ from above-ma20; if we reused above-ma20's filter
+        // set the POST would compare against 14426 (Bandar Value MA 20) instead.
+        #expect(shiftToday.config.filters.count == 1)
+        #expect(shiftToday.config.filters.first?.item1 == 14399)
+        #expect(shiftToday.config.filters.first?.item2 == "14425")
+        #expect(shiftToday.config.sequence == [14399, 14425])
+        // accum-dist-positive: Bandar Accum/Dist (14400) > 0 — basic, single-column.
+        // Only screener with a `.basic` fallback; item2 is the literal threshold "0",
+        // not another metric ID.
+        #expect(accumDist.config.filters.count == 1)
+        #expect(accumDist.config.filters.first?.type == .basic)
+        #expect(accumDist.config.filters.first?.item1 == 14400)
+        #expect(accumDist.config.filters.first?.item2 == "0")
+        #expect(accumDist.config.sequence == [14400])
+    }
+
+    /// fresh-foreign-buy (6676238): Net Foreign Buy Streak (13561) > 0 — a `basic`,
+    /// single-column filter sharing the metric of foreign-buy-streak (6676235) but
+    /// with operator `>` and threshold "0" instead of `>=` "5". When the server omits
+    /// template metadata, the parser must pick *this* filter, not foreign-buy-streak's,
+    /// or the page-2+ POSTs would silently screen on `>= 5`.
+    @Test func parseChoosesFreshForeignBuyFilterWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let fresh = try await svc.load(templateID: "6676238")
+
+        #expect(fresh.config.filters.count == 1)
+        #expect(fresh.config.filters.first?.type == .basic)
+        #expect(fresh.config.filters.first?.item1 == 13561)
+        #expect(fresh.config.filters.first?.operator_ == ">")
+        #expect(fresh.config.filters.first?.item2 == "0")
+        #expect(fresh.config.sequence == [13561])
+    }
+
+    /// freq-spike (6676260): two `basic` filters — Frequency Spike (15396) > 0 AND
+    /// Frequency Analyzer (15394) >= 1.5. Per the proxseer capture Stockbit AND-combines
+    /// both, so the fallback must carry *both*; dropping one would loosen the screen.
+    /// Sequence is [15396, 15394] (two columns).
+    @Test func parseChoosesFreqSpikeFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let freq = try await svc.load(templateID: "6676260")
+
+        #expect(freq.config.filters.count == 2)
+        #expect(freq.config.filters.allSatisfy { $0.type == .basic })
+        #expect(freq.config.filters[0].item1 == 15396)
+        #expect(freq.config.filters[0].operator_ == ">")
+        #expect(freq.config.filters[0].item2 == "0")
+        #expect(freq.config.filters[1].item1 == 15394)
+        #expect(freq.config.filters[1].operator_ == ">=")
+        #expect(freq.config.filters[1].item2 == "1.5")
+        #expect(freq.config.sequence == [15396, 15394])
+    }
+
+    /// volume-spike (6676263): a `compare` filter — Volume (12469) >= 1.5 × Volume MA 20
+    /// (12464). The 1.5 lives in `multiplier`, not in item2; a `basic` fallback would lose
+    /// the column-vs-column comparison entirely. Sequence [12469, 12464].
+    @Test func parseChoosesVolumeSpikeFilterWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let vol = try await svc.load(templateID: "6676263")
+
+        #expect(vol.config.filters.count == 1)
+        #expect(vol.config.filters.first?.type == .compare)
+        #expect(vol.config.filters.first?.item1 == 12469)
+        #expect(vol.config.filters.first?.operator_ == ">=")
+        #expect(vol.config.filters.first?.item2 == "12464")
+        #expect(vol.config.filters.first?.multiplier == "1.5")
+        #expect(vol.config.sequence == [12469, 12464])
+    }
+
+    /// above-50ma (6676264) and above-200ma (6676268): both `compare` filters comparing
+    /// Price (2661) against its 50- / 200-day MA (12460 / 12462) at multiplier 1. They
+    /// share item1 but differ in item2 + sequence; reusing one fallback for the other
+    /// would screen on the wrong MA horizon.
+    @Test func parseChoosesPriceMAFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let above50  = try await svc.load(templateID: "6676264")
+        let above200 = try await svc.load(templateID: "6676268")
+
+        #expect(above50.config.filters.count == 1)
+        #expect(above50.config.filters.first?.type == .compare)
+        #expect(above50.config.filters.first?.item1 == 2661)
+        #expect(above50.config.filters.first?.item2 == "12460")
+        #expect(above50.config.filters.first?.multiplier == "1")
+        #expect(above50.config.sequence == [2661, 12460])
+
+        #expect(above200.config.filters.first?.item1 == 2661)
+        #expect(above200.config.filters.first?.item2 == "12462")
+        #expect(above200.config.sequence == [2661, 12462])
+    }
+
+    /// Fundamentals (proxseer "(1)" capture): each is a single-column `basic` filter
+    /// transcribed from the POST /screener/templates run body — earnings-yield
+    /// (2898 >= 8), roe-quality (1461 >= 12), fcf-positive (2538 > 0), manageable-debt
+    /// (1508 < 1.5). Sequences are single-column. When the server omits template
+    /// metadata the parser must pick each screener's own filter, not a shared default.
+    @Test func parseChoosesFundamentalBasicFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+            .init(status: 200, body: body),
+        ])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let ey  = try await svc.load(templateID: "6676273")
+        let roe = try await svc.load(templateID: "6676288")
+        let fcf = try await svc.load(templateID: "6676291")
+        let der = try await svc.load(templateID: "6676292")
+
+        #expect(ey.config.filters.count == 1)
+        #expect(ey.config.filters.first?.type == .basic)
+        #expect(ey.config.filters.first?.item1 == 2898)
+        #expect(ey.config.filters.first?.operator_ == ">=")
+        #expect(ey.config.filters.first?.item2 == "8")
+        #expect(ey.config.sequence == [2898])
+
+        #expect(roe.config.filters.first?.item1 == 1461)
+        #expect(roe.config.filters.first?.operator_ == ">=")
+        #expect(roe.config.filters.first?.item2 == "12")
+        #expect(roe.config.sequence == [1461])
+
+        #expect(fcf.config.filters.first?.item1 == 2538)
+        #expect(fcf.config.filters.first?.operator_ == ">")
+        #expect(fcf.config.filters.first?.item2 == "0")
+        #expect(fcf.config.sequence == [2538])
+
+        #expect(der.config.filters.first?.item1 == 1508)
+        #expect(der.config.filters.first?.operator_ == "<")
+        #expect(der.config.filters.first?.item2 == "1.5")
+        #expect(der.config.sequence == [1508])
+    }
+
+    /// pbv-below-2 (6676280) is a *range* gate: two `basic` filters on metric 2896 —
+    /// Current Price to Book Value > 0 AND <= 2. Both must survive the metadata-omitted
+    /// fallback; dropping the upper bound would surface every positive-book-value name.
+    @Test func parseChoosesPBVRangeFiltersWhenServerOmitsMetadata() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"{"data":{"calcs":[]}}"#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let pbv = try await svc.load(templateID: "6676280")
+
+        #expect(pbv.config.filters.count == 2)
+        #expect(pbv.config.filters.allSatisfy { $0.type == .basic })
+        #expect(pbv.config.filters.allSatisfy { $0.item1 == 2896 })
+        #expect(pbv.config.filters[0].operator_ == ">")
+        #expect(pbv.config.filters[0].item2 == "0")
+        #expect(pbv.config.filters[1].operator_ == "<=")
+        #expect(pbv.config.filters[1].item2 == "2")
+        #expect(pbv.config.sequence == [2896])
+    }
+}
+
+// MARK: - ScreenerService row enrichment
+
+@Suite struct ScreenerStockbitShapeTests {
+    /// Pins the real-world envelope captured 2026-05-31:
+    ///   data.calcs[].company.{symbol,name}
+    ///   data.calcs[].results[].{id, raw, item}
+    @Test func parsesCalcsEnvelopeWithNestedCompanyAndResults() throws {
+        let body = Data(#"""
+        {"data":{"calcs":[
+          {"company":{"symbol":"BOGA","name":"Apollo Global Interactive Tbk.","exchange":"IDX"},
+           "results":[
+             {"id":14399,"item":"Bandar Value","raw":"14925216921719.91","display":"14,925.22 B"},
+             {"id":14426,"item":"Bandar Value MA 20","raw":"14925216260264.54","display":"14,925.22 B"}]},
+          {"company":{"symbol":"CARE","name":"Metro Healthcare Indonesia Tbk."},
+           "results":[
+             {"id":14399,"item":"Bandar Value","raw":"6168555478468.97"},
+             {"id":14426,"item":"Bandar Value MA 20","raw":"6168183877350.62"}]}
+        ]}}
+        """#.utf8)
+        let page = try ScreenerService.decodeResponse(body, sequence: [14399, 14426], page: 1)
+        #expect(page.rows.count == 2)
+        #expect(page.rows[0].symbol == "BOGA")
+        #expect(page.rows[0].name == "Apollo Global Interactive Tbk.")
+        #expect(page.rows[0].values[0] == 14925216921719.91)
+        #expect(page.rows[0].values[1] == 14925216260264.54)
+        #expect(page.rows[1].symbol == "CARE")
+        #expect(page.rows[1].values[0] == 6168555478468.97)
+    }
+
+    /// ScreenerTemplateService walks the tree to find the rows array — it must also
+    /// recognise calcs entries (which don't have a top-level "symbol" field).
+    @Test func templateServiceFindsCalcsRowsViaTreeWalk() async throws {
+        let store = InMemoryTokenStore(initial: TokenPair(accessToken: "A", refreshToken: "R"))
+        let body = Data(#"""
+        {"data":{"calcs":[
+          {"company":{"symbol":"BBCA","name":"BCA"},
+           "results":[{"id":14399,"item":"Bandar Value","raw":"100.5"},
+                      {"id":14426,"item":"Bandar Value MA 20","raw":"80.0"}]}
+        ]}}
+        """#.utf8)
+        let session = StubSession([.init(status: 200, body: body)])
+        let client = APIClient(session: session, tokens: store)
+        let svc = ScreenerTemplateService(apiClient: client)
+
+        let result = try await svc.load(templateID: "6676213")
+
+        #expect(result.page.rows.count == 1)
+        #expect(result.page.rows[0].symbol == "BBCA")
+        #expect(result.page.rows[0].values == [100.5, 80.0])
+    }
+}
+
+@Suite struct ScreenerRowEnrichmentTests {
+    @Test func parsesLastPriceAndPercentChangeWhenPresent() throws {
+        let body = Data(#"""
+        {"data":[
+          {"symbol":"BBCA","name":"BCA","values":[1,2],"last_price":10500,"pct_change":1.25},
+          {"symbol":"BBRI","name":"BRI","values":[3,4],"close":4200,"change_percent":-0.5}
+        ]}
+        """#.utf8)
+        let page = try ScreenerService.decodeResponse(body, sequence: [14399, 14426], page: 1)
+        #expect(page.rows[0].lastPrice == 10500)
+        #expect(page.rows[0].pctChange == 1.25)
+        #expect(page.rows[1].lastPrice == 4200)        // picked up "close"
+        #expect(page.rows[1].pctChange == -0.5)        // picked up "change_percent"
+    }
+
+    @Test func lastPriceAndChangeAreNilWhenAbsent() throws {
+        let body = Data(#"{"data":[{"symbol":"X","name":"X","values":[1]}]}"#.utf8)
+        let page = try ScreenerService.decodeResponse(body, sequence: [14399], page: 1)
+        #expect(page.rows[0].lastPrice == nil)
+        #expect(page.rows[0].pctChange == nil)
+    }
+}
+
+// MARK: - ScreenerViewModel bootstrap
+
+final class FakePaywallService: PaywallServicing, @unchecked Sendable {
+    var eligibility = PaywallEligibility(eligible: true, message: nil)
+    private(set) var checkCalls: [PaywallFeature] = []
+    private(set) var incrementCalls: [PaywallFeature] = []
+    func check(_ feature: PaywallFeature) async -> PaywallEligibility {
+        checkCalls.append(feature)
+        return eligibility
+    }
+    func increment(_ feature: PaywallFeature) async {
+        incrementCalls.append(feature)
+    }
+}
+
+final class FakeTemplateService: ScreenerTemplateServicing, @unchecked Sendable {
+    var result: Result<ScreenerInitialResult, Error> = .success({
+        var c = ScreenerConfig()
+        c.name = "loaded-template"
+        c.sequence = [14399, 14426]
+        c.orderColumn = 2
+        c.orderType = "desc"
+        return ScreenerInitialResult(
+            config: c,
+            page: ScreenerPage(rows: [], total: 0, page: 1)
+        )
+    }())
+    /// When non-nil, takes precedence over `result` — returns the entry whose key matches
+    /// the requested templateID. Lets a single fake serve multiple screeners.
+    var resultsByTemplateID: [String: Result<ScreenerInitialResult, Error>]?
+    private(set) var loadCalls: [String] = []
+    func load(templateID: String) async throws -> ScreenerInitialResult {
+        loadCalls.append(templateID)
+        if let byID = resultsByTemplateID, let scoped = byID[templateID] {
+            return try scoped.get()
+        }
+        return try result.get()
+    }
+}
