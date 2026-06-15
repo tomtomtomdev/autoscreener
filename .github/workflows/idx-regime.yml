@@ -3,12 +3,14 @@ name: IDX regime snapshot
 # Builds regime.json (+ regime-history.json) from the free IDX/BI feeds and
 # publishes them to the `data` branch, where the app fetches the raw URL.
 # See tools/idx-regime-scraper/ and idx-regime-data-research.md §6.
+#
+# NOTE: the monthly schedule is intentionally gone. Cloudflare now blocks GitHub
+# Actions' datacenter IPs (every IDX fetch 403s, even with curl_cffi Chrome
+# impersonation), so the job runs from a residential IP via launchd instead —
+# see tools/idx-regime-scraper/run-local.sh. This workflow is kept for manual
+# dispatch only, e.g. if run from a self-hosted runner on a clean IP.
 
 on:
-  schedule:
-    # 06:00 UTC on the 5th of each month — the prior month's IDX statistics are
-    # published by then (the ratios are monthly).
-    - cron: "0 6 5 * *"
   workflow_dispatch:
     inputs:
       backfill:

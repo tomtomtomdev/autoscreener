@@ -3,3 +3,7 @@ dist/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Local runner artifacts (run-local.sh)
+.venv/
+regime-cron.log
