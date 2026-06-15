@@ -78,14 +78,24 @@ enum ScreenerIconCatalog {
 /// the Watchlist column to the right of the score; each icon's hover tooltip names its screener.
 struct ScreenerIconStrip: View {
     let kinds: Set<BandarScreenerKind>
+    /// Tapping an icon asks the host to push that screener's full results list. Optional/defaulted so
+    /// non-interactive call sites (and previews) keep rendering plain icons.
+    var onSelect: ((BandarScreenerKind) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 4) {
             ForEach(ScreenerIconCatalog.displayed(from: kinds), id: \.self) { kind in
-                Image(systemName: ScreenerIconCatalog.symbol(for: kind))
-                    .font(.caption)
-                    .foregroundStyle(ScreenerIconCatalog.family(for: kind).tint)
-                    .help(kind.displayName)
+                Button {
+                    onSelect?(kind)
+                } label: {
+                    Image(systemName: ScreenerIconCatalog.symbol(for: kind))
+                        .font(.caption)
+                        .foregroundStyle(ScreenerIconCatalog.family(for: kind).tint)
+                }
+                .buttonStyle(.plain)
+                .disabled(onSelect == nil)
+                .help(kind.displayName)
+                .accessibilityIdentifier("watchlist.screener-\(kind.rawValue)")
             }
         }
     }

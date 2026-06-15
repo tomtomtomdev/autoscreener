@@ -44,6 +44,21 @@ final class RecommendationsUITests: XCTestCase {
         if recommendations.waitForExistence(timeout: 10) { recommendations.click() }
     }
 
+    /// The watchlist section sits below the recommendation cards in one `ScrollView`, so its rows (and
+    /// their screener-icon strips) aren't instantiated until scrolled into view. Mirrors `WatchlistUITests`.
+    @discardableResult
+    private func reveal(_ app: XCUIApplication, _ target: XCUIElement) -> Bool {
+        if target.waitForExistence(timeout: 3) { return true }
+        let scroll = app.scrollViews["RecommendationsView"].exists
+            ? app.scrollViews["RecommendationsView"]
+            : app.scrollViews.firstMatch
+        for delta in [-160.0, -160, -160, -160, -160, 160, 160, 160, 160, 160] {
+            guard !target.exists else { return true }
+            if scroll.exists { scroll.scroll(byDeltaX: 0, deltaY: CGFloat(delta)) }
+        }
+        return target.exists
+    }
+
     @MainActor
     func testRecommendationsMergesBuyAndSellRows() throws {
         // macOS gives each display its own Space; with multiple displays attached, XCUITest can't
@@ -99,5 +114,37 @@ final class RecommendationsUITests: XCTestCase {
         // The note itself.
         XCTAssertTrue(element(app, "recommendations.skipped").waitForExistence(timeout: 5),
                       "The 'N skipped' note should render when names were skipped")
+    }
+
+    @MainActor
+    func testTappingScreenerIconPushesThatScreenersList() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = launchWithFixtures()
+
+        landOnRecommendations(app)
+        XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
+                      "The merged Recommendations screen should render")
+
+        // Scroll the watchlist section into view (it sits below the action cards). BBCA matches every
+        // signal screener under fixtures, so its row carries a tappable Accumulating icon.
+        let bbca = element(app, "watchlist.stockcode-BBCA")
+        XCTAssertTrue(reveal(app, bbca),
+                      "A matched watchlist row should appear so its screener icons render")
+
+        // Tap the Accumulating screener icon → drill into that screener's full results list.
+        let icon = element(app, "watchlist.screener-accumulating")
+        XCTAssertTrue(icon.waitForExistence(timeout: 5),
+                      "The Accumulating screener icon should render on a matched row")
+        icon.click()
+
+        // The pushed ScreenerView renders its own rows — its stock-code buttons use the bare
+        // `stockcode-<symbol>` id (the watchlist section uses the `watchlist.`-prefixed variant), so this
+        // uniquely proves we navigated to the screener's list, not back to the watchlist.
+        XCTAssertTrue(element(app, "stockcode-BBCA").waitForExistence(timeout: 10),
+                      "Tapping the screener icon should push that screener's results list")
     }
 }

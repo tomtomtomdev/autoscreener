@@ -83,6 +83,8 @@ struct RecommendationsView: View {
     @Bindable private var watchlist: WatchlistViewModel
     /// Set when a watchlist row's stock code is tapped — drives the push to `StockDetailView`.
     @State private var selectedTicker: StockTicker?
+    /// Set when a watchlist row's screener icon is tapped — drives the push to that screener's list.
+    @State private var selectedScreener: BandarScreenerKind?
 
     @MainActor
     init(vm: RecommendationsViewModel? = nil, watchlist: WatchlistViewModel) {
@@ -95,9 +97,12 @@ struct RecommendationsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 recommendationsSection
                 Divider()
-                WatchlistSection(vm: watchlist) { selectedTicker = $0 }
+                WatchlistSection(vm: watchlist,
+                                 onSelect: { selectedTicker = $0 },
+                                 onSelectScreener: { selectedScreener = $0 })
             }
             .padding(24)
+            .padding(.trailing, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 760, minHeight: 560)
@@ -116,6 +121,17 @@ struct RecommendationsView: View {
         }
         .navigationDestination(item: $selectedTicker) { ticker in
             StockDetailView(ticker: ticker)
+        }
+        // Tapping a row's screener icon drills into that screener's full results list. A freshly built
+        // ScreenerViewModel is fine — it's a thin projection over the shared store, so cached rows render
+        // immediately (same construction as MainSidebarView's per-screener VMs).
+        .navigationDestination(item: $selectedScreener) { kind in
+            let deps = AppDependencies.shared
+            ScreenerView(
+                vm: ScreenerViewModel(store: deps.screenerStore,
+                                      coordinator: deps.dataSweepCoordinator,
+                                      kind: kind),
+                title: kind.displayName)
         }
         .accessibilityIdentifier("RecommendationsView")
     }

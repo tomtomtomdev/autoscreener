@@ -13,6 +13,8 @@ struct WatchlistSection: View {
     /// Tapping a row's stock code asks the host to push the financial detail (the host owns the
     /// `NavigationStack` destination, so this section stays navigation-agnostic).
     let onSelect: (StockTicker) -> Void
+    /// Tapping a row's screener icon asks the host to push that screener's full results list.
+    let onSelectScreener: (BandarScreenerKind) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -72,7 +74,8 @@ struct WatchlistSection: View {
                 WatchlistColumnHeader()
                 Divider()
                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    WatchlistRowView(rank: index + 1, row: row, onSelect: onSelect)
+                    WatchlistRowView(rank: index + 1, row: row,
+                                     onSelect: onSelect, onSelectScreener: onSelectScreener)
                     if row.id != rows.last?.id { Divider() }
                 }
             }
@@ -126,6 +129,7 @@ struct WatchlistRowView: View {
     let rank: Int
     let row: WatchlistRow
     let onSelect: (StockTicker) -> Void
+    let onSelectScreener: (BandarScreenerKind) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -151,7 +155,7 @@ struct WatchlistRowView: View {
                 .monospacedDigit()
                 .frame(width: WatchlistRowMetrics.score, alignment: .trailing)
 
-            ScreenerIconStrip(kinds: row.matchedScreeners)
+            ScreenerIconStrip(kinds: row.matchedScreeners, onSelect: onSelectScreener)
                 .accessibilityIdentifier("watchlist.screeners-\(row.symbol)")
                 .frame(width: WatchlistRowMetrics.screeners, alignment: .leading)
         }
