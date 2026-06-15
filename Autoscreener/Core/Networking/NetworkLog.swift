@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 @MainActor
 @Observable
@@ -35,6 +36,10 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
     private let upstream: HTTPSession
     init(_ upstream: HTTPSession) { self.upstream = upstream }
 
+    /// Mirrors failed requests to the Xcode/Console.app log so a 400 (and the exact
+    /// feed/URL that produced it) is visible without opening the in-app Network panel.
+    private static let log = Logger(subsystem: "com.tom.tom.tom.Autoscreener", category: "network")
+
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         let start = Date()
         let method = request.httpMethod ?? "GET"
@@ -44,12 +49,16 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
             let (data, response) = try await upstream.data(for: request)
             let ms = Int(Date().timeIntervalSince(start) * 1000)
             let status = (response as? HTTPURLResponse)?.statusCode
+            let body = Self.preview(data)
             let entry = NetworkLog.Entry(
                 timestamp: start,
                 method: method, url: url, status: status, durationMS: ms,
-                requestBody: reqBody, responseBody: Self.preview(data), error: nil
+                requestBody: reqBody, responseBody: body, error: nil
             )
             await NetworkLog.shared.append(entry)
+            if let line = Self.consoleLine(method: method, url: url, status: status, detail: body) {
+                Self.log.error("\(line, privacy: .public)")
+            }
             return (data, response)
         } catch {
             let ms = Int(Date().timeIntervalSince(start) * 1000)
@@ -59,8 +68,25 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
                 requestBody: reqBody, responseBody: nil, error: error.localizedDescription
             )
             await NetworkLog.shared.append(entry)
+            if let line = Self.consoleLine(method: method, url: url, status: nil, detail: error.localizedDescription) {
+                Self.log.error("\(line, privacy: .public)")
+            }
             throw error
         }
+    }
+
+    /// One-line console summary for a completed request, or `nil` when it succeeded
+    /// (2xx) — only failures are surfaced so the noise stays low and a 400/5xx pops.
+    /// `detail` is the response body (on an HTTP failure) or the error text (on a
+    /// transport failure); it's truncated so the console isn't flooded.
+    static func consoleLine(method: String, url: String, status: Int?, detail: String?) -> String? {
+        if let status, (200..<300).contains(status) { return nil }
+        let code = status.map(String.init) ?? "transport-error"
+        var line = "⚠️ HTTP \(code) \(method) \(url)"
+        if let detail, !detail.isEmpty {
+            line += " — \(detail.prefix(500))"
+        }
+        return line
     }
 
     private static func preview(_ data: Data, limit: Int = 4000) -> String? {

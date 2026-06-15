@@ -40,13 +40,6 @@ struct WatchlistSection: View {
                 .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if vm.isLoading {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading… \(vm.loadedScreenerCount)/\(vm.totalScreenerCount)")
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                }
-            }
         }
     }
 
