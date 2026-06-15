@@ -35,4 +35,14 @@ import Testing
         #expect(line != nil)
         #expect(line!.count < 700)  // 500-char detail cap + short prefix
     }
+
+    @Test func cancellationIsRecognised() {
+        #expect(LoggingHTTPSession.isCancellation(CancellationError()))
+        #expect(LoggingHTTPSession.isCancellation(URLError(.cancelled)))
+    }
+
+    @Test func genuineTransportErrorIsNotCancellation() {
+        #expect(!LoggingHTTPSession.isCancellation(URLError(.timedOut)))
+        #expect(!LoggingHTTPSession.isCancellation(URLError(.notConnectedToInternet)))
+    }
 }

@@ -61,6 +61,9 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
             }
             return (data, response)
         } catch {
+            // A cancelled request was abandoned by its caller (view dismissed, load
+            // superseded) — not a failure. Don't record or log it as a transport error.
+            if Self.isCancellation(error) { throw error }
             let ms = Int(Date().timeIntervalSince(start) * 1000)
             let entry = NetworkLog.Entry(
                 timestamp: start,
@@ -73,6 +76,15 @@ nonisolated final class LoggingHTTPSession: HTTPSession, @unchecked Sendable {
             }
             throw error
         }
+    }
+
+    /// True when an error is a task cancellation rather than a genuine failure.
+    /// URLSession throws `URLError.cancelled` when its task is cancelled; structured
+    /// concurrency throws `CancellationError`. Callers should treat neither as an error.
+    static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled { return true }
+        return false
     }
 
     /// One-line console summary for a completed request, or `nil` when it succeeded

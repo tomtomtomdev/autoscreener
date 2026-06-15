@@ -78,4 +78,36 @@ private final class StubChartServicing: ChartServicing, @unchecked Sendable {
         #expect(stub.calls.count == 2)
         #expect(stub.calls.last?.timeframe == .today)
     }
+
+    // A cancelled load (view dismissed / superseded by a newer load) is not a failure:
+    // it must leave already-loaded data and the error state untouched, never flashing
+    // "Couldn't load chart." The raw error can arrive as a CancellationError or as
+    // URLError.cancelled (thrown by URLSession when its task is cancelled).
+    @Test func cancellationErrorKeepsSeriesAndShowsNoError() async {
+        let stub = StubChartServicing(result: .success(StubChartServicing.series()))
+        let vm = OHLCVChartViewModel(symbol: "CUAN", name: "Petrindo", service: stub)
+
+        await vm.load()
+        #expect(vm.series != nil)
+
+        stub.result = .failure(CancellationError())
+        await vm.load(force: true)
+
+        #expect(vm.series != nil)
+        #expect(vm.error == nil)
+    }
+
+    @Test func urlCancelledKeepsSeriesAndShowsNoError() async {
+        let stub = StubChartServicing(result: .success(StubChartServicing.series()))
+        let vm = OHLCVChartViewModel(symbol: "CUAN", name: "Petrindo", service: stub)
+
+        await vm.load()
+        #expect(vm.series != nil)
+
+        stub.result = .failure(URLError(.cancelled))
+        await vm.load(force: true)
+
+        #expect(vm.series != nil)
+        #expect(vm.error == nil)
+    }
 }

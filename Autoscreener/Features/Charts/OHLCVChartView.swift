@@ -39,6 +39,8 @@ final class OHLCVChartViewModel {
         } catch ChartError.network(let detail) {
             series = nil
             error = "Couldn't load chart (\(detail))."
+        } catch let err where LoggingHTTPSession.isCancellation(err) {
+            return            // superseded/abandoned load — keep series & error untouched
         } catch {
             series = nil
             self.error = "Couldn't load chart."
