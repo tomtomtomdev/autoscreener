@@ -220,6 +220,40 @@ enum SweepTestKit {
         #expect(coord.isThrottling == false)   // reset once the sweep settles
     }
 
+    /// Snapshots `currentPage` from inside the sleeper, same shape as `ThrottleFlagProbe`.
+    @MainActor
+    final class CurrentPageProbe {
+        private(set) var pages: [Int] = []
+        weak var coord: DataSweepCoordinator?
+        func snapshot() { pages.append(coord?.currentPage ?? -1) }
+    }
+
+    @Test func currentPageTracksPaginationThenResetsAfterTheFanOut() async {
+        let templates = WatchlistFakeTemplates()
+        let page1 = (0..<25).map { WatchlistTestHelpers.row("ACC\($0)") }
+        templates.resultsByTemplateID = [
+            "6676213": .success(WatchlistTestHelpers.initial(for: .accumulating, rows: page1)),
+        ]
+        let screener = WatchlistFakeScreener()
+        screener.pages["6676213"] = [
+            2: (0..<25).map { WatchlistTestHelpers.row("ACC2_\($0)") },
+            3: (0..<12).map { WatchlistTestHelpers.row("ACC3_\($0)") },  // partial → done
+        ]
+        let probe = CurrentPageProbe()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), templates: templates, screener: screener,
+            sleeper: { _ in await probe.snapshot() })
+        probe.coord = coord
+
+        await coord.runSweep()
+
+        // accumulating's page-1 GET is the free first request (no throttle snapshot); its
+        // pages 2 and 3 throttle at currentPage 2 then 3. The remaining 19 screeners each
+        // fetch a single page-1 GET, throttled at currentPage 1.
+        #expect(probe.pages == [2, 3] + Array(repeating: 1, count: 19))
+        #expect(coord.currentPage == 0)   // cleared once the screener fan-out ends
+    }
+
     @Test func cancellationMidSweepKeepsPartialSnapshotsAndSurfacesNoError() async {
         let store = SweepTestKit.store()
         let templates = WatchlistFakeTemplates()

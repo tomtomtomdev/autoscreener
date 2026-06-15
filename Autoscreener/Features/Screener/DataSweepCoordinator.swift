@@ -25,10 +25,14 @@ final class DataSweepCoordinator {
     // UI-facing progress, observed by the Watchlist/Screener toolbars.
     private(set) var isSweeping: Bool = false
     /// True only while the sweep is parked in the anti-burst throttle gap between two
-    /// requests. Lets the title-bar status flip "Fetching" → "Waiting" during the pause
+    /// requests. Lets the title-bar status flip "Fetching" → "Throttling" during the pause
     /// instead of looking stalled. Always false outside a sweep.
     private(set) var isThrottling: Bool = false
     private(set) var loadedScreenerCount: Int = 0
+    /// Page currently being pulled within a multi-page screener fetch. 1 on the first page
+    /// (and 0 between screeners / on the non-paginated market+regime legs); ≥2 once a screener
+    /// runs deep, which the title-bar status surfaces as a "page x" suffix.
+    private(set) var currentPage: Int = 0
     var paywallMessage: String?
     var lastError: String?
 
@@ -188,6 +192,7 @@ final class DataSweepCoordinator {
         guard !isSweeping else { return }
         isSweeping = true
         loadedScreenerCount = 0
+        currentPage = 0
         hasIssuedFirstRequest = false
         lastError = nil
         defer { isSweeping = false }
@@ -236,6 +241,7 @@ final class DataSweepCoordinator {
             if Task.isCancelled || isCancellation(result) { break }
         }
 
+        currentPage = 0
         store.markSweepComplete(at: clock.now())
         surfaceFailures(perKind)
     }
@@ -252,6 +258,7 @@ final class DataSweepCoordinator {
     /// the screener's full result set (which lets the per-tab views drop pagination).
     private func fetchAll(_ kind: BandarScreenerKind) async -> Result<KindFetch, Error> {
         sweepLog.info("\(kind.displayName, privacy: .public): GET templates/\(kind.templateID, privacy: .public)")
+        currentPage = 1
         do {
             try await throttle()
             let initial = try await templates.load(templateID: kind.templateID)
@@ -264,6 +271,7 @@ final class DataSweepCoordinator {
 
             var page = 2
             while page <= safetyCap {
+                currentPage = page
                 try await throttle()
                 let next = try await screener.run(initial.config, page: page)
                 all.append(contentsOf: next.rows)
@@ -381,7 +389,7 @@ final class DataSweepCoordinator {
     /// Sleeps a randomized `throttleRange` before each outgoing request, except the
     /// very first one in a sweep. Stockbit penalises parallel bursts. `isThrottling` is
     /// raised for the duration of the gap (and cleared even if the sleeper throws on
-    /// cancellation) so the status bar reads "Waiting" while paused.
+    /// cancellation) so the status bar reads "Throttling" while paused.
     private func throttle() async throws {
         if hasIssuedFirstRequest {
             isThrottling = true

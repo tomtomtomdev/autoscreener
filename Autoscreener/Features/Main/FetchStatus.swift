@@ -5,13 +5,16 @@ import Foundation
 /// The continuous `DataSweepCoordinator` loop is the app's only fetch path; this maps its
 /// published progress (`isSweeping`/`loadedScreenerCount`/`lastError`/`paywallMessage`) plus
 /// `MarketDataStore.lastSweepAt` onto exactly one status, with a fixed precedence so the bar
-/// never lies. No SwiftUI here — `GlobalFetchStatusView` renders `displayLabel`/`tint`/`showsSpinner`.
+/// never lies. No SwiftUI here — `GlobalFetchStatusView` renders `displayLabel`/`tint`.
 nonisolated enum FetchStatus: Equatable {
     /// A sweep is in flight and actively pulling a request: `loaded` of `total` so far.
-    case fetching(loaded: Int, total: Int)
+    /// `page` is the current page of a multi-page screener fetch (≥2), or nil on the first
+    /// page / non-paginated legs — surfaced as a "page x" suffix so the bar shows progress
+    /// through a deep paginated screener instead of looking stuck on one counter.
+    case fetching(loaded: Int, total: Int, page: Int? = nil)
     /// A sweep is in flight but paused in the anti-burst throttle gap between two
     /// requests — same progress, but waiting rather than fetching this instant.
-    case throttling(loaded: Int, total: Int)
+    case throttling(loaded: Int, total: Int, page: Int? = nil)
     /// The last sweep surfaced a fetch error.
     case error(String)
     /// The plan paywall limited the last sweep.
@@ -33,13 +36,14 @@ nonisolated enum FetchStatus: Equatable {
                         isThrottling: Bool = false,
                         loaded: Int,
                         total: Int,
+                        page: Int? = nil,
                         lastError: String?,
                         paywall: String?,
                         lastSweepAt: Date?) -> FetchStatus {
         if isSweeping {
             return isThrottling
-                ? .throttling(loaded: loaded, total: total)
-                : .fetching(loaded: loaded, total: total)
+                ? .throttling(loaded: loaded, total: total, page: page)
+                : .fetching(loaded: loaded, total: total, page: page)
         }
         if let lastError { return .error(lastError) }
         if let paywall { return .paywall(paywall) }
@@ -50,22 +54,20 @@ nonisolated enum FetchStatus: Equatable {
     /// The text shown in the title bar.
     var displayLabel: String {
         switch self {
-        case let .fetching(loaded, total):   return "Fetching \(loaded)/\(total)…"
-        case let .throttling(loaded, total): return "Waiting \(loaded)/\(total)…"
-        case let .error(message):            return message
-        case let .paywall(message):          return message
-        case let .updated(date):             return "Updated \(Self.timeFormatter.string(from: date))"
-        case .idle:                          return "—"
+        case let .fetching(loaded, total, page):   return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
+        case let .throttling(loaded, total, page): return "Throttling \(loaded)/\(total)…" + Self.pageSuffix(page)
+        case let .error(message):                  return message
+        case let .paywall(message):                return message
+        case let .updated(date):                   return "Updated \(Self.timeFormatter.string(from: date))"
+        case .idle:                                return "—"
         }
     }
 
-    /// An in-flight sweep animates a spinner — whether it's pulling a request or waiting
-    /// in the throttle gap — so the bar reads as continuously busy across the sweep.
-    var showsSpinner: Bool {
-        switch self {
-        case .fetching, .throttling: return true
-        default:                     return false
-        }
+    /// " page x" tail appended to a live-sweep label while a multi-page screener is being
+    /// paginated, empty otherwise.
+    private static func pageSuffix(_ page: Int?) -> String {
+        guard let page else { return "" }
+        return " page \(page)"
     }
 
     var tint: Tint {

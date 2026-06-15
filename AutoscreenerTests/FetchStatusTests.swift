@@ -4,7 +4,7 @@ import Testing
 
 /// The pure render model behind the global title-bar fetch indicator. `resolve(…)` maps the
 /// coordinator/store state to exactly one status with a fixed precedence so the bar never lies;
-/// `displayLabel`/`tint`/`showsSpinner` are the deterministic view inputs. No SwiftUI here.
+/// `displayLabel`/`tint` are the deterministic view inputs. No SwiftUI here.
 @Suite struct FetchStatusTests {
     private let sweepAt = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -24,6 +24,20 @@ import Testing
             isSweeping: true, isThrottling: true, loaded: 7, total: 20,
             lastError: "boom", paywall: "locked", lastSweepAt: sweepAt)
         #expect(status == .throttling(loaded: 7, total: 20))
+    }
+
+    @Test func pageCarriesThroughIntoFetchingAndThrottling() {
+        // A deep paginated screener feeds its page through resolve onto whichever
+        // live-sweep state applies.
+        let fetching = FetchStatus.resolve(
+            isSweeping: true, isThrottling: false, loaded: 7, total: 20, page: 3,
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(fetching == .fetching(loaded: 7, total: 20, page: 3))
+
+        let throttling = FetchStatus.resolve(
+            isSweeping: true, isThrottling: true, loaded: 7, total: 20, page: 3,
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(throttling == .throttling(loaded: 7, total: 20, page: 3))
     }
 
     @Test func throttleFlagIgnoredWhenNotSweeping() {
@@ -69,8 +83,18 @@ import Testing
         #expect(FetchStatus.fetching(loaded: 7, total: 20).displayLabel == "Fetching 7/20…")
     }
 
-    @Test func throttlingLabelShowsWaitingWithProgress() {
-        #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Waiting 7/20…")
+    @Test func throttlingLabelShowsThrottlingWithProgress() {
+        #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Throttling 7/20…")
+    }
+
+    @Test func paginatedLabelsAppendThePageSuffix() {
+        #expect(FetchStatus.fetching(loaded: 7, total: 20, page: 3).displayLabel == "Fetching 7/20… page 3")
+        #expect(FetchStatus.throttling(loaded: 7, total: 20, page: 3).displayLabel == "Throttling 7/20… page 3")
+    }
+
+    @Test func firstPageHasNoPageSuffix() {
+        // nil page (first page / non-paginated leg) renders the bare counter.
+        #expect(FetchStatus.fetching(loaded: 7, total: 20).displayLabel == "Fetching 7/20…")
     }
 
     @Test func errorLabelIsTheMessage() {
@@ -90,18 +114,7 @@ import Testing
         #expect(FetchStatus.updated(sweepAt).displayLabel.hasPrefix("Updated "))
     }
 
-    // MARK: - spinner + tint
-
-    @Test func fetchingAndThrottlingShowTheSpinner() {
-        // Both active states keep the spinner up so the bar reads as busy through the
-        // whole sweep — only the label flips between "Fetching" and "Waiting".
-        #expect(FetchStatus.fetching(loaded: 1, total: 20).showsSpinner)
-        #expect(FetchStatus.throttling(loaded: 1, total: 20).showsSpinner)
-        #expect(!FetchStatus.error("x").showsSpinner)
-        #expect(!FetchStatus.paywall("x").showsSpinner)
-        #expect(!FetchStatus.updated(sweepAt).showsSpinner)
-        #expect(!FetchStatus.idle.showsSpinner)
-    }
+    // MARK: - tint
 
     @Test func tintFlagsErrorAndPaywall() {
         #expect(FetchStatus.error("x").tint == .error)

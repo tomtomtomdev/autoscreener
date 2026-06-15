@@ -64,6 +64,25 @@ TEST SUCCEEDED**, golden master byte-for-byte):
      ThrottlingFlagThenResetsIt` that reads the flag from inside the sleeper via a MainActor `ThrottleFlag
      Probe` (same de-flaked shape as `IncrementalRowProbe` — deterministic, no `Task.yield`).
 
+### Addendum 2026-06-15 — no spinner, "Throttling" label, paginated "page x" suffix
+
+Three small status-bar refinements (test-first, `FetchStatusTests` + `DataSweepCoordinatorTests` green):
+
+1. **No loading indicator.** Dropped the `ProgressView` spinner from `GlobalFetchStatusView` — the bar is
+   now a bare label (the progress counter already conveys "busy"). `FetchStatus.showsSpinner` removed
+   entirely, along with its test.
+2. **"Waiting" → "Throttling".** The `.throttling` case now renders **`Throttling N/20…`** (was
+   `Waiting N/20…`). The bar flips `Fetching 7/20…` → `Throttling 7/20…` → `Fetching 8/20…` each cycle.
+3. **Paginated "page x" suffix.** `.fetching`/`.throttling` gained an optional `page: Int?` (default nil)
+   and `resolve(…)` a matching `page:` param; a non-nil page appends **` page x`** to the label
+   (e.g. `Fetching 7/20… page 3`). `DataSweepCoordinator` publishes `currentPage` — 1 on the first page /
+   0 between screeners and on the non-paginated market+regime legs, set to the live page number while a
+   screener runs deep. `GlobalFetchStatusView` passes it through only when `≥2`, so single-page screeners
+   show the bare counter. Tests: `paginatedLabelsAppendThePageSuffix`, `firstPageHasNoPageSuffix`,
+   `pageCarriesThroughIntoFetchingAndThrottling`, and a `DataSweepCoordinatorTests.currentPageTracks
+   PaginationThenResetsAfterTheFanOut` (snapshots `currentPage` from inside the sleeper, asserts `[2,3]`
+   then nineteen `1`s, reset to `0`).
+
 **Original plan (kept for reference):** Planning was locked; build not started. Decisions below were chosen by the user.
 
 **Decisions (locked):**
@@ -116,7 +135,7 @@ No window toolbar, no `.principal` placement anywhere. Each detail view wraps it
 ## 2. Target design
 
 ```
-┌─ Autoscreener ──────────[ Fetching 7/20 ⟳ ]──────────────┐   ← .principal toolbar item, centred
+┌─ Autoscreener ──────────[ Fetching 7/20… ]──────────────┐   ← .principal toolbar item, centred (no spinner, 2026-06-15)
 │ Sidebar │  <detail content for the selected SidebarItem> │
 └─────────┴────────────────────────────────────────────────┘
 ```
@@ -124,18 +143,18 @@ No window toolbar, no `.principal` placement anywhere. Each detail view wraps it
 - **`FetchStatus` (pure, testable)** — maps coordinator/store state → a render model + label, with a fixed
   precedence so the bar never lies:
   ```
-  sweeping & throttling → .throttling(done,total) "Waiting 7/20…"   (spinner)   ← added 2026-06-14
-  sweeping              → .fetching(done, total)   "Fetching 7/20…"  (spinner)
-  else lastError        → .error(message)          red
-  else paywallMessage   → .paywall(message)        orange
-  else lastSweepAt      → .updated(date)           "Updated 14:32"
-  else                  → .idle                    "—"
+  sweeping & throttling → .throttling(done,total,page?) "Throttling 7/20…"  ← label 2026-06-15, no spinner
+  sweeping              → .fetching(done,total,page?)    "Fetching 7/20…"    (+ " page x" while paginating)
+  else lastError        → .error(message)                red
+  else paywallMessage   → .paywall(message)              orange
+  else lastSweepAt      → .updated(date)                 "Updated 14:32"
+  else                  → .idle                          "—"
   ```
   Live in a new `Features/Main/FetchStatus.swift` as a pure `enum` + `static func resolve(isSweeping:
-  isThrottling:loaded:total:lastError:paywall:lastSweepAt:) -> FetchStatus` and a `displayLabel`. No SwiftUI
-  import. (`isThrottling` defaults `false` and is consulted only while `isSweeping`.)
+  isThrottling:loaded:total:page:lastError:paywall:lastSweepAt:) -> FetchStatus` and a `displayLabel`. No SwiftUI
+  import. (`isThrottling`/`page` default off and are consulted only while `isSweeping`.)
 - **`GlobalFetchStatusView`** (`Features/Main/GlobalFetchStatusView.swift`) — thin renderer: reads the
-  shared coordinator + market store, calls `FetchStatus.resolve(…)`, renders label + conditional spinner /
+  shared coordinator + market store, calls `FetchStatus.resolve(…)`, renders the label (no spinner) /
   colour. a11y: `.accessibilityIdentifier("globalfetchstatus")` (+ value = the label) so XCUITest can read
   the current state.
 
