@@ -273,6 +273,24 @@ private actor DelayRecorder {
     func record(_ ns: UInt64) { delays.append(ns) }
 }
 
+/// Records the [start, end] span of every daily-bars request so a test can pin the window.
+private actor SpanRecorder {
+    private(set) var spans: [TimeInterval] = []
+    func record(_ s: TimeInterval) { spans.append(s) }
+    var maxSpan: TimeInterval { spans.max() ?? 0 }
+}
+
+private struct SpanSpyPriceFeed: CompanyPriceFeedServicing {
+    let recorder: SpanRecorder
+    var barsBySymbol: [String: [HistoricalSummaryBar]]
+    var defaultBars: [HistoricalSummaryBar]
+    func historicalSummary(symbol: String, period: HistoricalSummaryPeriod, startDate: Date,
+                           endDate: Date, limit: Int, page: Int) async throws -> HistoricalSummaryPage {
+        await recorder.record(endDate.timeIntervalSince(startDate))
+        return HistoricalSummaryPage(bars: barsBySymbol[symbol] ?? defaultBars, nextPage: nil)
+    }
+}
+
 // MARK: - Provider factory (every leg defaults to the happy path; override per test)
 
 private func makeProvider(
@@ -487,6 +505,25 @@ private func makeProvider(
 }
 
 // MARK: - Throttle
+
+// MARK: - Daily-bars request window
+
+@Suite struct StockbitDataProviderRequestWindowTests {
+
+    /// Regression for the ELSA 400: Stockbit's `company-price-feed/historical/summary` rejects a
+    /// >1-year range with `INVALID_PARAMETER`. The only live-verified span is ≤ 1 year, which still
+    /// over-covers the engine's longest lookback (`timing.betaLookback` = 252 trading days). The
+    /// provider's daily-bars window must therefore never exceed one year.
+    @Test func requestsAtMostOneYearOfDailyBars() async throws {
+        let recorder = SpanRecorder()
+        let provider = makeProvider(
+            priceFeed: SpanSpyPriceFeed(recorder: recorder,
+                                        barsBySymbol: ["WIFI": wifiBars], defaultBars: indexBars))
+        _ = try await provider.data(for: "WIFI")
+        let oneYear: TimeInterval = 366 * 24 * 60 * 60   // a day of leap-margin over 365
+        #expect(await recorder.maxSpan <= oneYear)
+    }
+}
 
 @Suite struct StockbitDataProviderThrottleTests {
 

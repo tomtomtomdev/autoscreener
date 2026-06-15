@@ -89,8 +89,12 @@ actor StockbitDataProvider: DataProvider {
     private static let globalEquitySymbol = "SP500"
     /// USD/IDR — the rupiah leg of the regime read (a currency, price-only).
     private static let rupiahSymbol = "USDIDR"
-    /// Two calendar years of daily bars comfortably clears `dataIntegrity.minTradingDays` (200).
-    static let defaultHistory: TimeInterval = 2 * 365 * 24 * 60 * 60
+    /// One calendar year of daily bars (~244 IDX trading days) — comfortably clears
+    /// `dataIntegrity.minTradingDays` (200) and over-covers the engine's longest lookback
+    /// (`timing.betaLookback` = 252, which degrades gracefully below its ideal). Capped at one
+    /// year because Stockbit's `company-price-feed/historical/summary` rejects a wider range with
+    /// HTTP 400 `INVALID_PARAMETER` (the ELSA bug); this is the only live-verified span. Do not widen.
+    static let defaultHistory: TimeInterval = 365 * 24 * 60 * 60
 
     init(
         universe: [Ticker],
