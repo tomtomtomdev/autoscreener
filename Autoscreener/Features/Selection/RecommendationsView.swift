@@ -98,8 +98,7 @@ struct RecommendationsView: View {
                 WatchlistSection(vm: watchlist) { selectedTicker = $0 }
             }
             .padding(24)
-            .frame(maxWidth: 960, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 760, minHeight: 560)
         .navigationTitle("Recommendations")
