@@ -13,7 +13,9 @@ nonisolated enum FetchStatus: Equatable {
     /// through a deep paginated screener instead of looking stuck on one counter.
     case fetching(loaded: Int, total: Int, page: Int? = nil)
     /// A sweep is in flight but paused in the anti-burst throttle gap between two
-    /// requests — same progress, but waiting rather than fetching this instant.
+    /// requests — waiting rather than fetching this instant. Carries the same progress
+    /// fields as `.fetching` for `resolve`/`Equatable`, but `displayLabel` renders a bare
+    /// "Throttling…" (no counts/page) so the brief pause reads as waiting, not progress.
     case throttling(loaded: Int, total: Int, page: Int? = nil)
     /// The last sweep surfaced a fetch error.
     case error(String)
@@ -55,7 +57,7 @@ nonisolated enum FetchStatus: Equatable {
     var displayLabel: String {
         switch self {
         case let .fetching(loaded, total, page):   return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
-        case let .throttling(loaded, total, page): return "Throttling \(loaded)/\(total)…" + Self.pageSuffix(page)
+        case .throttling:                          return "Throttling…"
         case let .error(message):                  return message
         case let .paywall(message):                return message
         case let .updated(date):                   return "Updated \(Self.timeFormatter.string(from: date))"
@@ -63,11 +65,11 @@ nonisolated enum FetchStatus: Equatable {
         }
     }
 
-    /// " page x" tail appended to a live-sweep label while a multi-page screener is being
-    /// paginated, empty otherwise.
+    /// " (page x)" tail appended to a `.fetching` label while a multi-page screener is being
+    /// paginated, empty otherwise. Not used by `.throttling`, which renders bare.
     private static func pageSuffix(_ page: Int?) -> String {
         guard let page else { return "" }
-        return " page \(page)"
+        return " (page \(page))"
     }
 
     var tint: Tint {

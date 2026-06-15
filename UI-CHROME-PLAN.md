@@ -83,6 +83,19 @@ Three small status-bar refinements (test-first, `FetchStatusTests` + `DataSweepC
    PaginationThenResetsAfterTheFanOut` (snapshots `currentPage` from inside the sleeper, asserts `[2,3]`
    then nineteen `1`s, reset to `0`).
 
+### Addendum 2026-06-15 — bare "Throttling…", parenthesized "(page x)"
+
+Two label-format tweaks to match the requested wording (test-first, `FetchStatusTests` green):
+
+1. **Bare throttling label.** The `.throttling` case now renders **`Throttling…`** with no counts or page
+   (was `Throttling 7/20…`). The case still carries `loaded/total/page` for `resolve`/`Equatable`, but
+   `displayLabel` ignores them so the brief inter-request pause reads as *waiting*, not progress. The bar
+   flips `Fetching 7/20…` → `Throttling…` → `Fetching 8/20…` each cycle.
+2. **Parenthesized page suffix.** The `.fetching` page suffix is now **` (page x)`** (was ` page x`), e.g.
+   `Fetching 7/20… (page 3)`. `pageSuffix` is reachable only from `.fetching` now (throttling renders bare).
+   Tests: `throttlingLabelIsBareRegardlessOfProgress`, `paginatedFetchingAppendsParenthesizedPageSuffix`
+   (replacing the prior `paginatedLabelsAppendThePageSuffix`).
+
 **Original plan (kept for reference):** Planning was locked; build not started. Decisions below were chosen by the user.
 
 **Decisions (locked):**
@@ -143,8 +156,8 @@ No window toolbar, no `.principal` placement anywhere. Each detail view wraps it
 - **`FetchStatus` (pure, testable)** — maps coordinator/store state → a render model + label, with a fixed
   precedence so the bar never lies:
   ```
-  sweeping & throttling → .throttling(done,total,page?) "Throttling 7/20…"  ← label 2026-06-15, no spinner
-  sweeping              → .fetching(done,total,page?)    "Fetching 7/20…"    (+ " page x" while paginating)
+  sweeping & throttling → .throttling(done,total,page?) "Throttling…"        ← bare label 2026-06-15, no spinner
+  sweeping              → .fetching(done,total,page?)    "Fetching 7/20…"    (+ " (page x)" while paginating)
   else lastError        → .error(message)                red
   else paywallMessage   → .paywall(message)              orange
   else lastSweepAt      → .updated(date)                 "Updated 14:32"

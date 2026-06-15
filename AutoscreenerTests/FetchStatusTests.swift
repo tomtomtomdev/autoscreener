@@ -83,13 +83,15 @@ import Testing
         #expect(FetchStatus.fetching(loaded: 7, total: 20).displayLabel == "Fetching 7/20…")
     }
 
-    @Test func throttlingLabelShowsThrottlingWithProgress() {
-        #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Throttling 7/20…")
+    @Test func throttlingLabelIsBareRegardlessOfProgress() {
+        // The throttle gap is a brief pause between requests; it shows just "Throttling…"
+        // without counts or page, so the bar reads as "waiting" rather than progressing.
+        #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Throttling…")
+        #expect(FetchStatus.throttling(loaded: 7, total: 20, page: 3).displayLabel == "Throttling…")
     }
 
-    @Test func paginatedLabelsAppendThePageSuffix() {
-        #expect(FetchStatus.fetching(loaded: 7, total: 20, page: 3).displayLabel == "Fetching 7/20… page 3")
-        #expect(FetchStatus.throttling(loaded: 7, total: 20, page: 3).displayLabel == "Throttling 7/20… page 3")
+    @Test func paginatedFetchingAppendsParenthesizedPageSuffix() {
+        #expect(FetchStatus.fetching(loaded: 7, total: 20, page: 3).displayLabel == "Fetching 7/20… (page 3)")
     }
 
     @Test func firstPageHasNoPageSuffix() {
