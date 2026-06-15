@@ -106,6 +106,32 @@ private let page2JSON = Data(#"""
 
 // MARK: - Service through APIClient (error mapping + pagination)
 
+// Regression: a propagated price-feed error reaching the Recommendations screen must read as a
+// sentence, not Swift's default "…CompanyPriceFeedError error 0" enum-index formatting (the bug:
+// an expired/un-entitled Stockbit session surfaced the literal text "CompanyPriceFeedError error 0").
+@Suite struct CompanyPriceFeedErrorMessageTests {
+    private let allCases: [CompanyPriceFeedError] = [
+        .unauthorized, .paywall, .network("timed out"), .malformedResponse,
+    ]
+
+    @Test func unauthorizedDoesNotRenderAsErrorZero() {
+        #expect(!CompanyPriceFeedError.unauthorized.localizedDescription.contains("error 0"))
+    }
+
+    @Test func everyCaseHasAReadableSentence() {
+        for error in allCases {
+            let message = error.localizedDescription
+            #expect(!message.isEmpty)
+            #expect(!message.contains("CompanyPriceFeedError"))
+            #expect(!message.contains("error 0"))
+        }
+    }
+
+    @Test func networkCaseIncludesUnderlyingDetail() {
+        #expect(CompanyPriceFeedError.network("timed out").localizedDescription.contains("timed out"))
+    }
+}
+
 @Suite struct CompanyPriceFeedServiceTests {
     private func signedInClient(_ stubs: [StubSession.Stub]) -> APIClient {
         APIClient(session: StubSession(stubs),

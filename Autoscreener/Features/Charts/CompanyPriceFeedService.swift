@@ -32,11 +32,22 @@ nonisolated struct HistoricalSummaryPage: Sendable, Equatable {
     let nextPage: Int?
 }
 
-nonisolated enum CompanyPriceFeedError: Error, Equatable {
+nonisolated enum CompanyPriceFeedError: Error, Equatable, LocalizedError {
     case unauthorized
     case paywall
     case network(String)
     case malformedResponse
+
+    /// `LocalizedError` so a propagated error reaching the Recommendations screen reads as a sentence,
+    /// not Swift's default "…CompanyPriceFeedError error 0" enum-index formatting.
+    var errorDescription: String? {
+        switch self {
+        case .unauthorized:        return "Stockbit session expired — sign in again to load price data."
+        case .paywall:             return "This price data requires a Stockbit Pro subscription."
+        case let .network(detail): return "Couldn't reach the Stockbit price feed: \(detail)"
+        case .malformedResponse:   return "Stockbit returned an unreadable price response."
+        }
+    }
 }
 
 nonisolated protocol CompanyPriceFeedServicing: Sendable {
