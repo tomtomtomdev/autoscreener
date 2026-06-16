@@ -59,8 +59,13 @@ extension CompanyPriceFeedServicing {
     /// Pages through DAILY history in [from, to], returning bars sorted ascending (oldest→newest)
     /// as the engine expects. `maxPages` is a safety cap. NOTE: Phase 1.8 (§7) will add a shared
     /// throttle + per-symbol cache for universe-scale runs; this convenience paginates one symbol.
+    ///
+    /// `pageLimit` defaults to **50** — Stockbit caps this endpoint's `limit` at 50 and rejects more
+    /// with HTTP 400 `INVALID_PARAMETER` (live-verified: 50 OK, 60 rejected; the web client uses 12).
+    /// The lookback is covered by pagination, not page size: 50 × `maxPages` 10 = 500 bars ≥ the
+    /// engine's longest need (`timing.betaLookback` 252). Do NOT raise above 50.
     func dailyBars(symbol: String, from: Date, to: Date,
-                   pageLimit: Int = 1000, maxPages: Int = 10) async throws -> [HistoricalSummaryBar] {
+                   pageLimit: Int = 50, maxPages: Int = 10) async throws -> [HistoricalSummaryBar] {
         var all: [HistoricalSummaryBar] = []
         var page = 1
         while page <= maxPages {

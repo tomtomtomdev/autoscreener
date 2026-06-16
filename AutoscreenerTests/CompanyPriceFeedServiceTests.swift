@@ -34,7 +34,7 @@ private let page2JSON = Data(#"""
     @Test func buildsPathAndQuery() {
         let ep = CompanyPriceFeedService.makeEndpoint(
             symbol: "WIFI", period: .daily,
-            startDate: "2025-06-06", endDate: "2026-06-06", limit: 1000, page: 1)
+            startDate: "2025-06-06", endDate: "2026-06-06", limit: 50, page: 1)
         #expect(ep.method == .get)
         #expect(ep.path == "company-price-feed/historical/summary/WIFI")
         #expect(ep.requiresAuth)
@@ -42,7 +42,7 @@ private let page2JSON = Data(#"""
         #expect(q["period"] == "HS_PERIOD_DAILY")
         #expect(q["start_date"] == "2025-06-06")
         #expect(q["end_date"] == "2026-06-06")
-        #expect(q["limit"] == "1000")
+        #expect(q["limit"] == "50")   // server caps `limit` at 50 (see dailyBarsRequestsAServerLegalPageLimit)
         #expect(q["page"] == "1")
     }
 
@@ -132,6 +132,17 @@ private let page2JSON = Data(#"""
     }
 }
 
+// Records the page `limit` that `dailyBars` requests, returning a single empty page (next_page:nil)
+// so the pagination loop stops after one call — lets a test assert the limit `dailyBars` chooses.
+private actor PageLimitSpy: CompanyPriceFeedServicing {
+    private(set) var requestedLimits: [Int] = []
+    func historicalSummary(symbol: String, period: HistoricalSummaryPeriod,
+                           startDate: Date, endDate: Date, limit: Int, page: Int) async throws -> HistoricalSummaryPage {
+        requestedLimits.append(limit)
+        return HistoricalSummaryPage(bars: [], nextPage: nil)
+    }
+}
+
 @Suite struct CompanyPriceFeedServiceTests {
     private func signedInClient(_ stubs: [StubSession.Stub]) -> APIClient {
         APIClient(session: StubSession(stubs),
@@ -170,5 +181,18 @@ private let page2JSON = Data(#"""
         let bars = try await svc.dailyBars(symbol: "WIFI", from: ymd(2025, 6, 6), to: ymd(2026, 6, 6))
         #expect(bars.count == 3)
         #expect(bars.map(\.date) == [ymd(2026, 6, 3), ymd(2026, 6, 4), ymd(2026, 6, 5)])
+    }
+
+    // Regression: Stockbit caps this endpoint's `limit` at 50 — a request for more returns
+    // 400 INVALID_PARAMETER and (since that's neither AdapterError nor noPriceData) aborts the whole
+    // selection run. `dailyBars` defaulted to pageLimit 1000, so EVERY live universe run failed on the
+    // first ticker. Live-verified vs stockbitbbca.com.har (limit=12 → 200) + a variant probe (50 OK,
+    // 60 → 400). `dailyBars` must request a server-legal page size; pagination covers the lookback.
+    @Test func dailyBarsRequestsAServerLegalPageLimit() async throws {
+        let spy = PageLimitSpy()
+        _ = try await spy.dailyBars(symbol: "BBCA", from: ymd(2025, 6, 16), to: ymd(2026, 6, 16))
+        let limits = await spy.requestedLimits
+        #expect(!limits.isEmpty)
+        #expect(limits.allSatisfy { $0 <= 50 })
     }
 }
