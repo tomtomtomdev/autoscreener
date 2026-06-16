@@ -99,7 +99,7 @@ private func cleanBankFinancials() -> [AnnualFinancials] {
 
 private func bbcaSecurity(price: Decimal) -> SecurityData {
     // Captured BBCA fundamentals (proxseer_collection-2.json, §14): ROE 22.41%, payout 63.17%,
-    // ROA 3.54%, BVPS 2,102.07. Justified P/B ≈ 2.07 → IV ≈ 4,343.
+    // ROA 3.54%, BVPS 2,102.07. Justified P/B ≈ 2.27 (β 1.0; gate-strictness #2) → IV ≈ 4,778.
     let ttm = TTMFinancials(eps: 471.10, bookValuePerShare: 2102.07, netIncome: 58_075 * oneB,
                             operatingCashFlow: 58_075 * oneB, totalAssets: 1_640_831 * oneB,
                             epsGrowthPct: 10.0, currentRatio: 0, debtToEquity: 0, returnOnEquity: 0.2241,
@@ -147,12 +147,12 @@ private func bbcaSecurity(price: Decimal) -> SecurityData {
     }
 
     @Test func bankRunsTheFinancialPathWithMeasuredTiming() async throws {
-        // Priced at its BVPS (2,102) → P/B ≈ 1.0 vs justified ≈ 2.07 → MoS ≈ 52% → recommended.
+        // Priced at its BVPS (2,102) → P/B ≈ 1.0 vs justified ≈ 2.27 → MoS ≈ 56% → recommended.
         let engine = StockSelectionEngine(provider: StubProvider(security: bbcaSecurity(price: 2102)),
                                           config: .balanced)
         let r = try #require(try await engine.run().first, "a cheap bank should be recommended")
         #expect(r.ticker == "BBCA")
-        #expect(abs(r.intrinsicValue - 4343.4) < 1.0)                      // JustifiedPBValuator, not Graham
+        #expect(abs(r.intrinsicValue - 4777.7) < 1.0)                      // JustifiedPBValuator, not Graham
         #expect(r.marginOfSafety > 0.30)
 
         // The audit proves the BANK profile ran — capital-strength + bank scorers, never the industrial
@@ -169,7 +169,7 @@ private func bbcaSecurity(price: Decimal) -> SecurityData {
     }
 
     @Test func bankAtCapturedPriceIsScreenedOutByMoS() async throws {
-        // BBCA at its captured price 5,066 (P/B 2.41) → justified 2.07 → negative MoS → not recommended.
+        // BBCA at its captured price 5,066 (P/B 2.41) → justified 2.27 → negative MoS → not recommended.
         let engine = StockSelectionEngine(provider: StubProvider(security: bbcaSecurity(price: 5066)),
                                           config: .balanced)
         #expect(try await engine.run().isEmpty)

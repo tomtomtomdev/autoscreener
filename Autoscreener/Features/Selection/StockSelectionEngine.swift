@@ -159,7 +159,12 @@ struct SelectionConfig: Sendable, Codable {
         // Justified-P/B valuation: Ke = riskFreeRate + beta·equityRiskPremium; g = (1−payout)·ROE capped ≤ Rf.
         var riskFreeRate: Double            // IDR 10y ≈ 0.065
         var equityRiskPremium: Double       // Damodaran Indonesia ERP ≈ 0.07
-        var beta: Double                    // placeholder bank beta ≈ 1.0–1.2 (§13-A2)
+        var beta: Double                    // bottom-up bank beta ≈ 1.0 (low-beta deposit franchise; §13-A2)
+        // Financial-archetype margin-of-safety floor = regime floor × this multiplier. A justified-P/B IV
+        // is a Damodaran fair-value estimate, not a Graham-number ceiling, and a stable deposit franchise
+        // rarely trades at the 30–45% net-net discounts the industrial floor is calibrated for — so banks
+        // use a lower (but still regime-scaled) bar. Applied in SelectionProfile.requiredMarginOfSafety.
+        var mosFloorMultiplier: Double
         // Bank value scorer: how far actual P/B sits below the ROE-justified P/B earns full credit at…
         var pbDiscountFullCreditAt: Double
         // Bank quality scorer: ROE + ROA (efficiency/cost-to-income skipped in v1 — not structured, §14).
@@ -330,7 +335,7 @@ extension SelectionConfig {
                                  maxPositionPct: 0.07, maxSectorPct: 0.20, maxNames: 6,
                                  weightTilt: ["Quality": 1.4, "EarningsQuality": 1.4, "GrowthLynch": 0.7])),
         bank: .init(minEquityToAssets: 0.06,
-                    riskFreeRate: 0.065, equityRiskPremium: 0.07, beta: 1.1,
+                    riskFreeRate: 0.065, equityRiskPremium: 0.07, beta: 1.0, mosFloorMultiplier: 0.5,
                     pbDiscountFullCreditAt: 0.5,
                     roeFloor: 0.10, roeSpan: 0.15, roeSubWeight: 0.5,
                     roaFloor: 0.005, roaSpan: 0.02, roaSubWeight: 0.3,
@@ -909,6 +914,20 @@ struct SelectionProfile: Sendable {
     let gates: [Gate]
     let scorers: [Scorer]
     let valuator: any Valuator
+
+    /// The margin-of-safety floor this archetype must clear to pass the MoS gate. Industrials use the
+    /// regime policy floor unchanged (byte-for-byte). The financial archetype scales it by
+    /// `bank.mosFloorMultiplier`: a justified-P/B intrinsic value is a Damodaran fair-value estimate, not a
+    /// Graham-number ceiling, and a stable deposit franchise almost never trades at the 30–45% net-net
+    /// discounts that floor is calibrated for, so demanding the full industrial discount would
+    /// structurally exclude every quality bank. The multiplier keeps the regime's relative posture
+    /// (still stricter in risk-off).
+    func requiredMarginOfSafety(policy: RegimePolicy, config: SelectionConfig) -> Ratio {
+        switch archetype {
+        case .industrial: return policy.minMarginOfSafety
+        case .financial:  return policy.minMarginOfSafety * config.bank.mosFloorMultiplier
+        }
+    }
 }
 
 extension SelectionProfile {
@@ -1054,8 +1073,9 @@ struct StockSelectionEngine: Sendable {
             }
 
             let mos = profile.valuator.marginOfSafety(s, config: config)
-            audit.append("MoS \(pct(mos)) vs req \(pct(policy.minMarginOfSafety))")
-            if mos < policy.minMarginOfSafety { continue }
+            let requiredMoS = profile.requiredMarginOfSafety(policy: policy, config: config)
+            audit.append("MoS \(pct(mos)) vs req \(pct(requiredMoS))")
+            if mos < requiredMoS { continue }
 
             var num = 0.0, den = 0.0
             for sc in profile.scorers {

@@ -10,8 +10,9 @@ import Testing
 // golden master (SelectionEngineCharacterizationTests) stays the byte-for-byte unchanged baseline.
 //
 // Bank numbers are anchored to the BBCA capture (proxseer_collection-2.json, §14): ROE 22.41%,
-// payout 63.17%, ROA 3.54%, BVPS 2,102.07, P/B 2.41 — with the locked default bank params
-// (Rf 6.5%, ERP 7%, β 1.1) the justified P/B comes out ~2.07, i.e. BBCA screens as ~14% rich.
+// payout 63.17%, ROA 3.54%, BVPS 2,102.07, P/B 2.41 — with the calibrated default bank params
+// (Rf 6.5%, ERP 7%, β 1.0 — gate-strictness #2 dropped the 1.1 placeholder) the justified P/B comes
+// out ~2.27, i.e. BBCA still screens as ~6% rich at that captured price.
 
 private let fixedDate = Date(timeIntervalSince1970: 0)
 
@@ -153,15 +154,31 @@ private func bankConfig(rf: Double, erp: Double, beta: Double) -> SelectionConfi
     }
 
     @Test func reproducesTheBbcaWorkedExample() {
-        // §14 worked check on real capture values with the locked defaults (Rf 6.5%, ERP 7%, β 1.1):
-        // g = (1−0.6317)·0.2241 ≈ 0.0825 → capped to 0.065; Ke = 0.142; justified P/B ≈ 2.066.
+        // §14 worked check on real capture values with the calibrated defaults (Rf 6.5%, ERP 7%, β 1.0;
+        // gate-strictness #2 lowered β from the 1.1 placeholder): g = (1−0.6317)·0.2241 ≈ 0.0825 → capped
+        // to 0.065; Ke = 0.135; justified P/B = (0.2241−0.065)/(0.135−0.065) ≈ 2.273; IV ≈ 4,777.7.
         let v = JustifiedPBValuator()
         let s = bankSecurity()
-        #expect(abs(v.intrinsicValue(s, config: .balanced) - 4343.4) < 1.0)
-        // Actual P/B 2.41 > justified 2.07 → BBCA is ~14–17% rich → negative margin of safety.
+        #expect(abs(v.intrinsicValue(s, config: .balanced) - 4777.7) < 1.0)
+        // Actual P/B 2.41 > justified 2.27 → BBCA is still ~6% rich → negative margin of safety.
         let mos = v.marginOfSafety(s, config: .balanced)
         #expect(mos < 0)
-        #expect(abs(mos - (-0.166)) < 5e-3)
+        #expect(abs(mos - (-0.060)) < 5e-3)
+    }
+
+    // MARK: - Regression: bank cost-of-equity calibration (gate-strictness #2, β fix).
+    //
+    // The default bank β was a placeholder 1.1 (the code comment flagged it as such), giving Ke 14.2%.
+    // For a low-beta deposit franchise that is too high, and it pushed the ROE-justified P/B so low that
+    // a bank trading BELOW book was scored as OVERVALUED. Live capture (2026-06-16): BBNI at 0.88× book,
+    // ROE 12.6% — under β 1.1 its justified P/B (≈0.82) sat under its price → negative MoS → screened out.
+    // A sub-book bank flagged as expensive is the bug. With the bottom-up β 1.0 (Ke 13.5%) the justified
+    // P/B (≈0.89) clears its price → non-negative MoS. (Grounded in damodaran-valuation: large IDX banks
+    // are low-beta; β is the input most worth correcting.)
+    @Test func subBookValueBankIsNotValuedAsOvervalued() {
+        let s = bankSecurity(price: 880, bvps: 1000, roe: 0.1259, payout: 0.5755)   // BBNI-shaped, P/B 0.88
+        let mos = JustifiedPBValuator().marginOfSafety(s, config: .balanced)
+        #expect(mos > 0)
     }
 
     @Test func lossMakingBankHasNoJustifiedValue() {
@@ -189,7 +206,7 @@ private func bankConfig(rf: Double, erp: Double, beta: Double) -> SelectionConfi
     }
 
     @Test func bankValueScoresZeroWhenRichToJustifiedPB() {
-        // BBCA: actual P/B 2.41 > justified 2.07 → no discount → 0.
+        // BBCA: actual P/B 2.41 > justified 2.27 → no discount → 0.
         #expect(BankValueScorer().score(bankSecurity(), config: .balanced).value == 0)
     }
 
@@ -242,13 +259,13 @@ private func bankConfig(rf: Double, erp: Double, beta: Double) -> SelectionConfi
 @Suite struct BankPipelineTests {
 
     @Test func cheapBankIsRecommendedAndAuditedAsAFinancial() async throws {
-        // P/B ≈ 1.0 (price 2102 ÷ BVPS 2102.07) vs justified 2.07 → IV ≈ 4343, MoS ≈ 52% ≫ 30%.
+        // P/B ≈ 1.0 (price 2102 ÷ BVPS 2102.07) vs justified 2.27 → IV ≈ 4778, MoS ≈ 56% ≫ 15% bank floor.
         let s = bankSecurity(price: 2102)
         let engine = StockSelectionEngine(provider: StubDataProvider(security: s, context: neutralContext()),
                                           config: .balanced)
         let r = try #require(try await engine.run().first)
         #expect(r.ticker == "BBCA")
-        #expect(abs(r.intrinsicValue - 4343.4) < 1.0)         // from JustifiedPBValuator, not Graham
+        #expect(abs(r.intrinsicValue - 4777.7) < 1.0)         // from JustifiedPBValuator, not Graham
         #expect(r.marginOfSafety > 0.30)
         // The audit proves the BANK profile ran — capital-strength gate + bank scorers, never the
         // industrial Solvency/Forensic gates or GrahamValue scorer.
@@ -261,9 +278,26 @@ private func bankConfig(rf: Double, erp: Double, beta: Double) -> SelectionConfi
     }
 
     @Test func richBankIsScreenedOutByTheMoSGate() async throws {
-        // BBCA at its captured price (P/B 2.41) → justified 2.07 → negative MoS → not recommended.
+        // BBCA at its captured price (P/B 2.41) → justified ≈ 2.27 → negative MoS → not recommended.
         let engine = StockSelectionEngine(provider: StubDataProvider(security: bankSecurity(), context: neutralContext()),
                                           config: .balanced)
         #expect(try await engine.run().isEmpty)
+    }
+
+    // Regression (gate-strictness #2, β + bank-specific MoS floor): a quality bank ~18% below its
+    // justified value (BMRI-shaped: ROE 19.2%, P/B 1.38) is NOW recommended. It was screened out before
+    // on two counts — the placeholder β 1.1 understated its justified P/B (MoS only ~11.5%), and the 30%
+    // industrial MoS floor demands a net-net discount banks almost never offer. With the bottom-up β 1.0
+    // (MoS ~18.5%) and the financial-archetype floor (~15% neutral), a "wonderful business at a fair
+    // price" bank finally clears the gate. The < 30% assertion proves the lower bank floor is what admits
+    // it — under the industrial floor it would still be screened out.
+    @Test func qualityBankBelowJustifiedValueClearsTheLowerBankFloor() async throws {
+        let s = bankSecurity(price: 1380, bvps: 1000, roe: 0.1918, payout: 0.7234)   // BMRI-shaped, P/B 1.38
+        let engine = StockSelectionEngine(provider: StubDataProvider(security: s, context: neutralContext()),
+                                          config: .balanced)
+        let r = try #require(try await engine.run().first,
+                             "a quality bank ~18% below fair value should clear the 15% bank floor")
+        #expect(r.marginOfSafety > 0.15)
+        #expect(r.marginOfSafety < 0.30)
     }
 }
