@@ -5,12 +5,16 @@ pipeline "from step 2 onward" (hard gates → governance → MoS). All live in
 `Autoscreener/Features/Selection/StockSelectionEngine.swift`, production preset `.balanced`.
 Each item is grounded in the listed investing skills, not priors.
 
+**✅ ALL FOUR DONE (2026-06-16).** Commits: #1 `533b5d6`, #4 `adba22b`, #3 `2e7b8b9`, #2 `f32f7cd`
+(all on local `main`, unpushed). Every fix shipped with a red→green regression test; the industrial
+golden master held byte-for-byte throughout (only the BBCA bank IV moved, intentionally, in #2).
+
 ## Status
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
 | 1 | NCAV combined with the Graham number via `min` (ceiling) instead of `max` (floor) | 🔴 incorrect | ✅ **DONE** — commit `533b5d6` |
-| 2 | Bank justified-P/B MoS structurally excludes quality IDX banks | 🟠 over-strict (calibration) | ⏳ planned — needs a decision |
+| 2 | Bank justified-P/B MoS structurally excludes quality IDX banks | 🟠 over-strict (calibration) | ✅ **DONE** — β→1.0 + 15% bank floor |
 | 3 | Industrial `SolvencyGate` current-ratio ≥ 1.0 false-negatives negative-WC businesses | 🟡 over-strict | ✅ **DONE** — sector-aware exemption |
 | 4 | Loss-makers / trough cyclicals auto-eliminated (IV = 0 on TTM EPS ≤ 0) | 🟡 over-strict | ✅ **DONE** — *Targeted* variant |
 
@@ -34,7 +38,38 @@ See `SPEC.md` (2026-06-16) and memory `graham-valuator-ncav-floor-fix`.
 
 ---
 
-## ⏳ 2. Bank justified-P/B MoS structurally excludes quality banks
+## ✅ 2. Bank justified-P/B MoS structurally excludes quality banks — DONE (β→1.0 + bank MoS floor)
+
+**Live evidence (`~/Downloads/stockbit.com.har`, 2026-06-16 BBCA session).** It carried the engine's exact
+inputs — `keystats/ratio/v1/BBCA` plus `comparison/{BBCA,BBNI,BBRI,BMRI}/ratios`. Current actual-vs-justified:
+
+| Bank | actual P/B | ROE | justified (β1.1) | MoS | justified (β1.0) | MoS |
+|------|-----------|-----|------|------|------|------|
+| BBCA | 2.99 | 22.4% | 2.07 | −45% | 2.27 | −32% |
+| BBNI | **0.88** | 12.6% | 0.82 | **−8%** | 0.89 | +1% |
+| BBRI | 1.34 | 17.3% | 1.27 | −6% | 1.35 | +1% |
+| BMRI | 1.38 | 19.2% | 1.56 | +12% | 1.69 | +18% |
+
+The smoking gun: under β 1.1 a sub-book bank (BBNI @ 0.88×) was scored ~8% **overvalued** — clearly wrong.
+
+**Decision (user, 2026-06-16):** **(a) recalibrate β → 1.0** AND **(b) a separate ~15% financial-archetype
+MoS floor** (the combination). Grounding (`damodaran-valuation`): large IDX banks are low-beta deposit
+franchises (BBCA regression β ~0.9–1.0); the code already flagged 1.1 as a placeholder. A justified-P/B IV
+is a fair-value estimate (FCFE-style), not a Graham-number ceiling, so a stable bank warrants a smaller
+margin than an industrial net-net. The **g-cap is kept** (Damodaran terminal discipline) — it only ever
+binds BBCA among these names (the others' retention·ROE < Rf), so it changes no buy decision.
+
+**Fix:** `bank.beta` 1.1→1.0 (Ke 14.2%→13.5%); new `bank.mosFloorMultiplier` (0.5); new
+`SelectionProfile.requiredMarginOfSafety(policy:config:)` (industrial → policy floor unchanged → byte-for-byte;
+financial → policy floor × multiplier ≈ 15% neutral); engine MoS gate calls it. Commit `f32f7cd`.
+
+**Tests:** `subBookValueBankIsNotValuedAsOvervalued` (BBNI-shaped MoS −7.6%→+1% — red→green);
+`qualityBankBelowJustifiedValueClearsTheLowerBankFloor` (BMRI-shaped MoS 18.5%, recommended under the 15%
+floor, asserted < 30% to prove the lower floor admits it — red→green). BBCA golden values updated
+intentionally (IV 4,343→4,778, justified P/B 2.07→2.27) like the WIFI change in #1. Full `AutoscreenerTests`:
+**TEST SUCCEEDED**; industrial golden master byte-for-byte.
+
+### Original plan (kept for reference)
 
 **Where:** `JustifiedPBValuator` / `BankValuation.justifiedPriceToBook` (~line 699); bank params
 line 326 (`riskFreeRate 0.065, equityRiskPremium 0.07, beta 1.1` ⇒ `Ke = 0.142`).
@@ -188,10 +223,20 @@ byte-for-byte, or update the golden values intentionally (like the WIFI change i
 
 ---
 
-## Suggested order
+## Order followed (all complete)
 
-1. **#4** next — it's the cleanest (a grounded one-spot change with a clear test story), and it
-   pairs naturally with #1 (both are `GrahamValuator` correctness).
-2. **#3** — mechanical once a sector-policy seam is chosen.
-3. **#2** — last; it's a calibration call that wants an explicit user decision (which of a/b/c) and
-   ideally a live BBCA/BMRI sanity check against the authenticated feed.
+1. **#1** NCAV floor (`533b5d6`) — done before this session.
+2. **#4** trough-year EPS (`adba22b`) — *Targeted* variant.
+3. **#3** sector-aware solvency exemption (`2e7b8b9`).
+4. **#2** bank β→1.0 + 15% financial MoS floor (`f32f7cd`) — validated against the live
+   `stockbit.com.har` BBCA/BBNI/BBRI/BMRI capture.
+
+## Possible follow-ups (optional, not blocking)
+
+- **Push to `origin`** — all four commits are local-only.
+- **Truly-LIVE audit** — run `selectionRunner.run()` against the authenticated feed to see the new
+  picks end-to-end (couldn't from this session; needs Keychain/creds).
+- **Per-bank measured β** (the #2 "Measure β per-bank" option not taken) — use `FactorRegression` for
+  each bank like the industrial timing leg, instead of the fixed 1.0.
+- **More bank captures** — only BBCA's full keystats was in the HAR; BBNI/BBRI/BMRI came from the
+  lighter `comparison/ratios`. A multi-bank keystats pull would let #2 be re-validated more broadly.
