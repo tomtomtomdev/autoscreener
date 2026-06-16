@@ -20,8 +20,9 @@ private func flatBars(count: Int, close: Decimal = 1000, value: Decimal) -> [OHL
     }
 }
 
-/// Five clean years matching the characterization mother: rising NI, CFO 1.2× NI, flat receivables,
-/// NCAV/share 2,500 so the Graham number (~2,012) is the binding intrinsic value.
+/// Five clean years matching the characterization mother: rising NI, CFO 1.2× NI, flat receivables, a
+/// consistent balance sheet with negative NCAV (CA 1,500B < total liabilities 2,000B), so the
+/// earnings-based Graham number (~2,012) is the binding intrinsic value.
 private func cleanFinancials() -> [AnnualFinancials] {
     let b: Decimal = 1_000_000_000
     let nis: [Decimal] = [100, 110, 120, 130, 140].map { Decimal($0) * b }
@@ -31,8 +32,8 @@ private func cleanFinancials() -> [AnnualFinancials] {
         AnnualFinancials(
             year: 2021 + i,
             revenue: revs[i], netIncome: nis[i], operatingCashFlow: cfos[i],
-            totalAssets: Decimal(2_000) * b, totalLiabilities: Decimal(2_000) * b,
-            currentAssets: Decimal(4_500) * b, currentLiabilities: Decimal(1_000) * b,
+            totalAssets: Decimal(3_000) * b, totalLiabilities: Decimal(2_000) * b,
+            currentAssets: Decimal(1_500) * b, currentLiabilities: Decimal(1_000) * b,
             shareholderEquity: Decimal(1_000) * b, receivables: Decimal(50) * b,
             sharesOutstanding: b)
     }

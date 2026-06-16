@@ -672,8 +672,13 @@ extension Valuator {
     }
 }
 
-/// Industrial intrinsic value: min(Graham number, NCAV/share), gated by config. This is the
-/// pre-Phase-2 `Valuator` logic verbatim — only its home changed (free enum → protocol witness).
+/// Industrial intrinsic value: max(Graham number, NCAV/share), gated by config. The earnings-based
+/// Graham number is a fair-value CEILING (it bakes in P/E ≤ 15 and P/B ≤ 1.5); NCAV — net current
+/// assets less ALL liabilities — is Graham's separate "net-net" liquidation FLOOR (The Intelligent
+/// Investor, ch. 14–15). A business is worth at least its net liquid backing, so NCAV can only RAISE
+/// intrinsic value, never cap it: intrinsic value is the GREATER of the two. (Was `min`, which valued a
+/// cash-rich company *below* its own liquidation value and silently sank the margin-of-safety gate for
+/// any positive-NCAV name — see GrahamValuatorTests.)
 struct GrahamValuator: Valuator {
     func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double {
         var candidates: [Double] = []
@@ -685,7 +690,7 @@ struct GrahamValuator: Valuator {
             let ncav = nsDouble(f.currentAssets - f.totalLiabilities) / nsDouble(f.sharesOutstanding)
             if ncav > 0 { candidates.append(ncav) }
         }
-        return candidates.min() ?? 0
+        return candidates.max() ?? 0
     }
 }
 

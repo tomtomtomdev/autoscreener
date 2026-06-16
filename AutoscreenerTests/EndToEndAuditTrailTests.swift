@@ -58,8 +58,9 @@ private struct StubProvider: DataProvider {
 
 // MARK: - Industrial (WIFI-shaped): a clean, cheap technology name.
 
-/// Five clean years (margin stable, net income rising, CFO 1.2× NI) and a balance sheet whose NCAV is
-/// above the Graham number, so the Graham number (≈6,364) is the binding intrinsic value.
+/// Five clean years (margin stable, net income rising, CFO 1.2× NI) and a consistent, cash-rich balance
+/// sheet (current assets 10,000B ≤ total assets 12,000B) whose NCAV ≈ 8,000 exceeds the earnings-based
+/// Graham number (≈6,364), so the net-current-asset floor is the binding intrinsic value.
 private func cleanIndustrialFinancials() -> [AnnualFinancials] {
     let nis: [Decimal] = [300, 330, 360, 400, 450].map { $0 * oneB }
     let revs: [Decimal] = [3000, 3300, 3600, 4000, 4500].map { $0 * oneB }
@@ -121,8 +122,10 @@ private func bbcaSecurity(price: Decimal) -> SecurityData {
         let r = try #require(try await engine.run().first, "a clean, cheap industrial should be recommended")
         #expect(r.ticker == "WIFI")
 
-        // Intrinsic value is the Graham number √(22.5·eps·bvps) = √(22.5·900·2000) ≈ 6,364 (NCAV is higher).
-        #expect(abs(r.intrinsicValue - 6363.96) < 1.0)
+        // Intrinsic value is the net-current-asset floor: NCAV = (CA 10,000B − TL 2,000B)/1e9 = 8,000,
+        // above the earnings-based Graham number √(22.5·900·2000) ≈ 6,364 — this cash-rich name is worth
+        // at least its liquidation value (GrahamValuator: IV = max(Graham, NCAV); see GrahamValuatorTests).
+        #expect(abs(r.intrinsicValue - 8000.0) < 1.0)
         #expect(r.marginOfSafety > 0.30)                                   // cheap → clears the neutral gate
 
         // The audit trail is the industrial pipeline, in order, end to end.

@@ -39,7 +39,7 @@ private func makeFinancials(
     netIncome: Decimal = 100,        // billions; positive ⇒ profitable
     cfoMultiple: Double = 1.2,
     revenue: Decimal = 1000,         // billions, flat
-    currentAssets: Decimal = 4500,   // billions
+    currentAssets: Decimal = 1500,   // billions; < total liabilities ⇒ NCAV negative by default
     totalLiabilities: Decimal = 2000 // billions  (NCAV/share = (CA − TL)/shares)
 ) -> [AnnualFinancials] {
     let cfo = netIncome * Decimal(cfoMultiple)
@@ -103,7 +103,8 @@ private let zeroExposure = RegimePolicy(regime: .riskOff, minMarginOfSafety: 0.9
 
 private let anyPosition = HeldPosition(ticker: "HELD", shares: 1000, avgCost: 1000)
 
-// Industrial IV here = min(Graham √(22.5·150·1200) ≈ 2012, NCAV/share (4500−2000)B/1e9 = 2500) ≈ 2012.
+// Industrial IV here = Graham √(22.5·150·1200) ≈ 2012; NCAV is negative (CA 1,500B < TL 2,000B) so the
+// earnings-based Graham number binds (IV = max(Graham, NCAV), and a non-positive NCAV is never a candidate).
 
 // MARK: - 1. Single-name decisions
 
@@ -325,7 +326,8 @@ private func heldWithThesis(_ t: EntryThesis, ticker: Ticker = "HELD", avgCost: 
     HeldPosition(ticker: ticker, shares: 1000, avgCost: avgCost, thesis: t)
 }
 
-// Industrial Graham IV for makeSecurity = √(22.5 · eps · 1200), capped by NCAV/share 2500.
+// Industrial Graham IV for makeSecurity = √(22.5 · eps · 1200). NCAV is negative (default CA 1,500B <
+// TL 2,000B), so the earnings-based Graham number is the binding IV and tracks eps:
 //   eps 150 → √(22.5·150·1200) ≈ 2012   (the baseline "entry" IV)
 //   eps  60 → √(22.5· 60·1200) ≈ 1273   (≈ −37% vs 2012: a collapse)
 //   eps 130 → √(22.5·130·1200) ≈ 1873   (≈  −7% vs 2012: a mild dip)
