@@ -19,7 +19,9 @@ struct ContentView: View {
             // Skip the Keychain probe when the app is launched under any test runner
             // (xctest host or UI-test SUT) — otherwise each fresh Debug build re-prompts
             // for ACL trust on the stockbit-tokens item and stalls the runner.
-            guard !ProcessInfo.processInfo.isRunningTests else { return }
+            // Also skip under the headless `-RunSelectionAudit` run: it does its own token load and
+            // engine fan-out, and the continuous GUI sweep would compete for the throttled live API.
+            guard !ProcessInfo.processInfo.isRunningTests, !SelectionAudit.isRequested else { return }
             if auth.phase == .unknown {
                 auth.phase = await AppDependencies.shared.tokens.load() != nil ? .signedIn : .signedOut
             }

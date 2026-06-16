@@ -12,6 +12,12 @@ import AppKit
 
 @main
 struct AutoscreenerApp: App {
+    init() {
+        // Headless live-audit hook (`-RunSelectionAudit`): runs the engine against the authenticated
+        // feed, prints a report, and exits. No-op on a normal launch. See `SelectionAudit`.
+        SelectionAudit.runIfRequested()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
