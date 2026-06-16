@@ -73,4 +73,64 @@ import Testing
         let mos = GrahamValuator().marginOfSafety(s, config: .balanced)
         #expect(abs(mos - (1.0 / 3.0)) < 1e-6)
     }
+
+    // MARK: - Regression: a single trough year must not zero a normally-profitable cyclical (bug #4).
+    //
+    // The Graham Number's earnings input is the AVERAGE EPS of the recent window, not a single trailing
+    // year (intelligent-investor: the Graham Number "uses average of last 3 years"; the defensive P/E
+    // criterion is likewise "≤ 15× average earnings, last 3 years"). The valuator fed it the single TTM
+    // EPS, so any name with a negative trailing year got intrinsic value 0 and was eliminated by the MoS
+    // gate before it was ever scored — wrongly killing cyclicals that are normally profitable. The
+    // *targeted* fix falls back to the 3-yr average ONLY when the trailing year is a loss/zero, so every
+    // currently-profitable name stays byte-for-byte unchanged while a persistent loss-maker (negative
+    // average) is still correctly excluded.
+
+    /// A multi-year industrial with a chosen annual net-income series (billions, 1e9 shares each, so each
+    /// year's EPS equals its billions value) and an explicit, possibly negative, TTM EPS. The balance
+    /// sheet is benign filler; `currentAssetsB < totalLiabilitiesB` keeps NCAV non-positive so the
+    /// earnings-based Graham number is the sole intrinsic-value candidate.
+    private func cyclical(annualNIb: [Decimal], ttmEPS: Decimal, bvps: Decimal = 1000, price: Decimal = 1000,
+                          currentAssetsB: Decimal = 800, totalLiabilitiesB: Decimal = 1000) -> SecurityData {
+        let financials = annualNIb.enumerated().map { i, ni in
+            AnnualFinancials(
+                year: 2023 + i, revenue: 1000 * B, netIncome: ni * B, operatingCashFlow: ni * B,
+                totalAssets: 5000 * B, totalLiabilities: totalLiabilitiesB * B,
+                currentAssets: currentAssetsB * B, currentLiabilities: 500 * B,
+                shareholderEquity: 1000 * B, receivables: 50 * B, sharesOutstanding: B)
+        }
+        let ttm = TTMFinancials(eps: ttmEPS, bookValuePerShare: bvps, netIncome: ttmEPS * B,
+                                operatingCashFlow: ttmEPS * B, totalAssets: 5000 * B,
+                                epsGrowthPct: 10, currentRatio: 2.0, debtToEquity: 0.5, returnOnEquity: 0.15)
+        return SecurityData(ticker: "CYC", sector: "Industrials", price: price,
+                            sharesOutstanding: B, freeFloatPct: 0.4, financials: financials, ttm: ttm,
+                            dailyBars: [], foreignNetFlow: [], brokerAccumulationSignal: 0,
+                            sectorIndexBars: [], marketIndexBars: [])
+    }
+
+    /// THE BUG: a trough cyclical — negative TTM EPS (−20) but a clearly positive 3-yr average
+    /// (150, 170, −20 ⇒ avg 100). Graham number = √(22.5·100·1000) = exactly 1,500. Under the old
+    /// single-trailing-year rule this name had intrinsic value 0 (no earnings candidate, NCAV negative)
+    /// and was screened out before scoring.
+    @Test func troughYearDoesNotZeroANormallyProfitableCyclical() {
+        let s = cyclical(annualNIb: [150, 170, -20], ttmEPS: -20)
+        let iv = GrahamValuator().intrinsicValue(s, config: .balanced)
+        #expect(abs(iv - 1500) < 1e-6)
+    }
+
+    /// No-regression: a persistent loss-maker (negative 3-yr average) has no positive earnings candidate
+    /// and a non-positive NCAV, so intrinsic value stays 0 and the name remains correctly excluded.
+    @Test func persistentLossMakerStaysExcludedAtZeroIntrinsicValue() {
+        let s = cyclical(annualNIb: [-30, -20, -10], ttmEPS: -10)
+        let iv = GrahamValuator().intrinsicValue(s, config: .balanced)
+        #expect(iv == 0)
+    }
+
+    /// No-regression (the "targeted" decision): when the trailing year is POSITIVE the valuator keeps
+    /// using the TTM EPS (150), NOT the lower 3-yr average (110) — so every currently-profitable name is
+    /// byte-for-byte unchanged. IV = √(22.5·150·1000) ≈ 1,837.1, not √(22.5·110·1000) ≈ 1,573.2.
+    @Test func positiveTrailingYearStillUsesTTMEPSNotTheAverage() {
+        let s = cyclical(annualNIb: [100, 110, 120], ttmEPS: 150)
+        let iv = GrahamValuator().intrinsicValue(s, config: .balanced)
+        #expect(abs(iv - (22.5 * 150 * 1000).squareRoot()) < 1e-6)
+    }
 }

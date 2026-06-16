@@ -80,6 +80,7 @@ struct SelectionConfig: Sendable, Codable {
         var grahamConstant: Double          // conventionally 22.5
         var useGrahamNumber: Bool
         var useNCAV: Bool
+        var normalizedEpsYears: Int         // Graham's earnings input = average EPS of the last N years
     }
     struct Weights: Sendable, Codable {     // base scorer weights (pre-tilt)
         var grahamValue: Double
@@ -296,7 +297,7 @@ extension SelectionConfig {
         dataIntegrity: .init(minYearsFinancials: 5, minTradingDays: 200),
         forensic: .init(recentYears: 3, cfoToNiFloor: 0.6, receivablesVsRevenueGap: 0.50, accrualsMax: 0.15),
         solvency: .init(minCurrentRatio: 1.0, maxDebtToEquity: 2.0),
-        valuation: .init(grahamConstant: 22.5, useGrahamNumber: true, useNCAV: true),
+        valuation: .init(grahamConstant: 22.5, useGrahamNumber: true, useNCAV: true, normalizedEpsYears: 3),
         weights: .init(grahamValue: 0.30, quality: 0.25, growthLynch: 0.20, earningsQuality: 0.15),
         grahamValue: .init(mosFullCreditAt: 0.5, mosSubWeight: 0.6, pbTarget: 1.5,
                            pbSubWeight: 0.2, currentRatioSpan: 1.0, currentRatioSubWeight: 0.2),
@@ -682,7 +683,7 @@ extension Valuator {
 struct GrahamValuator: Valuator {
     func intrinsicValue(_ s: SecurityData, config: SelectionConfig) -> Double {
         var candidates: [Double] = []
-        let eps = nsDouble(s.ttm.eps), bvps = nsDouble(s.ttm.bookValuePerShare)
+        let eps = grahamEPS(s, config: config), bvps = nsDouble(s.ttm.bookValuePerShare)
         if config.valuation.useGrahamNumber, eps > 0, bvps > 0 {
             candidates.append((config.valuation.grahamConstant * eps * bvps).squareRoot())
         }
@@ -691,6 +692,24 @@ struct GrahamValuator: Valuator {
             if ncav > 0 { candidates.append(ncav) }
         }
         return candidates.max() ?? 0
+    }
+
+    /// Graham's earnings input is the AVERAGE EPS of the recent window, not a single trailing year (The
+    /// Intelligent Investor: the Graham Number "uses average of last 3 years"; the defensive P/E test is
+    /// likewise "≤ 15× average earnings, last 3 years"). We keep the trailing TTM EPS while it is positive
+    /// — so every currently-profitable name stays byte-for-byte unchanged — and fall back to the multi-year
+    /// average ONLY when the trailing year is a loss/zero. That stops one trough year from zeroing a
+    /// normally-profitable cyclical's intrinsic value (which the MoS gate then eliminated before scoring),
+    /// while a persistent loss-maker (negative average) still yields no positive candidate and is correctly
+    /// excluded. Per-year EPS is reconstructed as net income ÷ shares; if no usable annual history exists
+    /// the TTM value stands.
+    private func grahamEPS(_ s: SecurityData, config: SelectionConfig) -> Double {
+        let ttmEPS = nsDouble(s.ttm.eps)
+        if ttmEPS > 0 { return ttmEPS }
+        let recent = s.financials.suffix(config.valuation.normalizedEpsYears).filter { $0.sharesOutstanding > 0 }
+        guard !recent.isEmpty else { return ttmEPS }
+        let series = recent.map { nsDouble($0.netIncome) / nsDouble($0.sharesOutstanding) }
+        return series.reduce(0, +) / Double(series.count)
     }
 }
 

@@ -12,7 +12,7 @@ Each item is grounded in the listed investing skills, not priors.
 | 1 | NCAV combined with the Graham number via `min` (ceiling) instead of `max` (floor) | 🔴 incorrect | ✅ **DONE** — commit `533b5d6` |
 | 2 | Bank justified-P/B MoS structurally excludes quality IDX banks | 🟠 over-strict (calibration) | ⏳ planned — needs a decision |
 | 3 | Industrial `SolvencyGate` current-ratio ≥ 1.0 false-negatives negative-WC businesses | 🟡 over-strict | ⏳ planned |
-| 4 | Loss-makers / trough cyclicals auto-eliminated (IV = 0 on TTM EPS ≤ 0) | 🟡 over-strict | ⏳ planned — clean grounded fix available |
+| 4 | Loss-makers / trough cyclicals auto-eliminated (IV = 0 on TTM EPS ≤ 0) | 🟡 over-strict | ✅ **DONE** — *Targeted* variant |
 
 Workflow for each (non-negotiable, per `CLAUDE.md`): green baseline → failing regression test
 (Kent Beck Regression Test pattern) → minimal production fix → green + golden master → commit.
@@ -100,7 +100,35 @@ failing.
 
 ---
 
-## ⏳ 4. Loss-makers / trough cyclicals auto-eliminated (clean grounded fix available)
+## ✅ 4. Loss-makers / trough cyclicals auto-eliminated — DONE (*Targeted* variant)
+
+**Decision (user, 2026-06-16):** of the two viable approaches the audit surfaced, took the **Targeted**
+one — use the 3-yr average EPS *only when the trailing TTM EPS ≤ 0*; keep TTM EPS while positive. This
+fixes the documented elimination bug with a **byte-for-byte golden master** (no current fixture has a
+negative TTM EPS, so no end-to-end / characterization assertion moved) and *no audit-trail inconsistency*
+(profitable names use TTM EPS in both the valuator and `GrahamValueScorer`; a trough name simply skips the
+scorer's MoS sub-credit, so the two never print conflicting Graham numbers). The rejected "Graham-pure"
+variant (always average, in valuator *and* scorer) would have been more literal but intentionally churned
+the GOOD/WIFI composite/weight/audit golden values.
+
+**Why this is grounded, not a fixture hack.** `intelligent-investor` is explicit that the Graham Number's
+earnings input is the **average of the last 3 years** (and the defensive P/E test is "≤ 15× average
+earnings, last 3 years"). Trailing EPS is the natural input while positive; the multi-year average is the
+safeguard against a single anomalous down year — applied precisely when the trailing year is a loss.
+
+**Fix:** new `GrahamValuator.grahamEPS(_:config:)` — returns TTM EPS when `> 0`, else the average of
+`financials.suffix(normalizedEpsYears)` net income ÷ shares (years with 0 shares filtered; TTM value
+stands if no usable history). New config field `ValuationParams.normalizedEpsYears` (= 3 in `.balanced`;
+`SelectionConfig` is `Codable` but never persisted, so the added field breaks nothing). NCAV path
+untouched.
+
+**Tests (Regression Test pattern, `GrahamValuatorTests`):** `troughYearDoesNotZeroANormallyProfitableCyclical`
+(NI [150,170,−20], TTM −20 ⇒ avg 100 ⇒ IV √(22.5·100·1000) = 1,500; was 0 — **red→green**);
+`persistentLossMakerStaysExcludedAtZeroIntrinsicValue` (NI [−30,−20,−10] ⇒ avg < 0 ⇒ IV 0 — no-regression);
+`positiveTrailingYearStillUsesTTMEPSNotTheAverage` (TTM 150 > avg 110 ⇒ IV uses 150, pins the Targeted
+decision). Full `AutoscreenerTests`: **780 passing, TEST SUCCEEDED**, golden master byte-for-byte.
+
+### Original plan (kept for reference)
 
 **Where:** `GrahamValuator.intrinsicValue` uses **`s.ttm.eps`** (single trailing year). If TTM
 EPS ≤ 0 (and NCAV ≤ 0) ⇒ no candidate ⇒ IV 0 ⇒ `marginOfSafety` returns −1 ⇒ MoS gate fails.
