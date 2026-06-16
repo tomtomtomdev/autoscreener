@@ -75,6 +75,10 @@ struct SelectionConfig: Sendable, Codable {
     struct Solvency: Sendable, Codable {
         var minCurrentRatio: Ratio
         var maxDebtToEquity: Ratio
+        // IDX-IC sectors (normalized: lowercased + trimmed) exempt from the current-ratio floor because
+        // they run negative working capital BY DESIGN — regulated/utility/telco and supplier-financed
+        // staples & retail. Leverage (maxDebtToEquity) is still gated for them. See SolvencyGate.
+        var currentRatioExemptSectors: Set<String>
     }
     struct ValuationParams: Sendable, Codable {
         var grahamConstant: Double          // conventionally 22.5
@@ -296,7 +300,9 @@ extension SelectionConfig {
         liquidity: .init(minAvgDailyValue: 5_000_000_000, minFreeFloat: 0.15, advWindow: 20),
         dataIntegrity: .init(minYearsFinancials: 5, minTradingDays: 200),
         forensic: .init(recentYears: 3, cfoToNiFloor: 0.6, receivablesVsRevenueGap: 0.50, accrualsMax: 0.15),
-        solvency: .init(minCurrentRatio: 1.0, maxDebtToEquity: 2.0),
+        solvency: .init(minCurrentRatio: 1.0, maxDebtToEquity: 2.0,
+                        currentRatioExemptSectors: ["infrastruktur", "barang konsumen primer",
+                                                    "barang konsumen non-primer"]),
         valuation: .init(grahamConstant: 22.5, useGrahamNumber: true, useNCAV: true, normalizedEpsYears: 3),
         weights: .init(grahamValue: 0.30, quality: 0.25, growthLynch: 0.20, earningsQuality: 0.15),
         grahamValue: .init(mosFullCreditAt: 0.5, mosSubWeight: 0.6, pbTarget: 1.5,
@@ -522,7 +528,16 @@ struct ForensicGate: Gate {
 struct SolvencyGate: Gate {
     let name = "Solvency"
     func evaluate(_ s: SecurityData, config: SelectionConfig, policy: RegimePolicy) -> Verdict {
-        if s.ttm.currentRatio < config.solvency.minCurrentRatio { return .fail(reason: "current ratio low") }
+        // The current-ratio floor is Graham's 1930s industrial-economy liquidity test; it false-fails the
+        // negative-working-capital business models (regulated/utility/telco, supplier-financed staples and
+        // retail) that run a current ratio < 1 BY DESIGN yet are sound. Graham exempts "utilities/regulated
+        // firms" from the ratio and warns the old thresholds break for modern asset-light businesses, so
+        // those IDX-IC sectors skip this test. Leverage is still gated for EVERY name by the D/E check.
+        let sector = s.sector.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !config.solvency.currentRatioExemptSectors.contains(sector),
+           s.ttm.currentRatio < config.solvency.minCurrentRatio {
+            return .fail(reason: "current ratio low")
+        }
         if s.ttm.debtToEquity > config.solvency.maxDebtToEquity { return .fail(reason: "D/E high") }
         return .pass
     }

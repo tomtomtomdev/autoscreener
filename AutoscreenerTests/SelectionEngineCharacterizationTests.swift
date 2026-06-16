@@ -174,6 +174,39 @@ private func riskOffContext() -> MarketContext {
         let s = makeSecurity(debtToEquity: 3.0)
         #expect(failReason(SolvencyGate().evaluate(s, config: .balanced, policy: neutral)) == "D/E high")
     }
+
+    // MARK: - Regression: sector-aware current-ratio floor (selection-gate-strictness bug #3).
+    //
+    // Graham's current-ratio ≥ floor is an industrial-economy liquidity test. The negative-working-capital
+    // business models — telco/utilities/regulated (IDX-IC "Infrastruktur") and supplier-financed
+    // staples/retail ("Barang Konsumen Primer" / "Barang Konsumen Non-Primer") — run a current ratio < 1
+    // BY DESIGN yet are sound; the flat 1.0 floor false-failed them before they were ever scored. Graham
+    // himself exempts "utilities/regulated firms" from the ratio and warns the 1930s thresholds break for
+    // modern asset-light businesses (graham-financial-statements). Those sectors are exempt here; leverage
+    // is still gated for EVERY name by the debt-to-equity check, so the exemption never blanket-passes an
+    // over-levered company.
+
+    /// THE BUG: a sound telco/utility-type name ("Infrastruktur") with a by-design current ratio of 0.6
+    /// and healthy leverage. The flat floor failed it ("current ratio low"); the sector exemption now lets
+    /// it through to scoring.
+    @Test func negativeWorkingCapitalSectorIsExemptFromTheCurrentRatioFloor() {
+        let s = makeSecurity(sector: "Infrastruktur", currentRatio: 0.6, debtToEquity: 0.8)
+        #expect(isPass(SolvencyGate().evaluate(s, config: .balanced, policy: neutral)))
+    }
+
+    /// No-regression: the exemption is sector-scoped. A non-exempt industrial with the same low current
+    /// ratio still fails — the flat floor stands for the businesses Graham's liquidity test is meant for.
+    @Test func nonExemptSectorStillFailsOnLowCurrentRatio() {
+        let s = makeSecurity(sector: "Perindustrian", currentRatio: 0.6)
+        #expect(failReason(SolvencyGate().evaluate(s, config: .balanced, policy: neutral)) == "current ratio low")
+    }
+
+    /// No-regression: the exemption removes only the current-ratio test, never the leverage guard. An
+    /// exempt-sector name that is genuinely over-levered still fails on debt-to-equity.
+    @Test func exemptSectorStillFailsOnHighDebtToEquity() {
+        let s = makeSecurity(sector: "Infrastruktur", currentRatio: 0.6, debtToEquity: 3.0)
+        #expect(failReason(SolvencyGate().evaluate(s, config: .balanced, policy: neutral)) == "D/E high")
+    }
 }
 
 // MARK: - Full pipeline golden master
