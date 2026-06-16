@@ -11,7 +11,7 @@ Each item is grounded in the listed investing skills, not priors.
 |---|-------|----------|--------|
 | 1 | NCAV combined with the Graham number via `min` (ceiling) instead of `max` (floor) | 🔴 incorrect | ✅ **DONE** — commit `533b5d6` |
 | 2 | Bank justified-P/B MoS structurally excludes quality IDX banks | 🟠 over-strict (calibration) | ⏳ planned — needs a decision |
-| 3 | Industrial `SolvencyGate` current-ratio ≥ 1.0 false-negatives negative-WC businesses | 🟡 over-strict | ⏳ planned |
+| 3 | Industrial `SolvencyGate` current-ratio ≥ 1.0 false-negatives negative-WC businesses | 🟡 over-strict | ✅ **DONE** — sector-aware exemption |
 | 4 | Loss-makers / trough cyclicals auto-eliminated (IV = 0 on TTM EPS ≤ 0) | 🟡 over-strict | ✅ **DONE** — *Targeted* variant |
 
 Workflow for each (non-negotiable, per `CLAUDE.md`): green baseline → failing regression test
@@ -69,7 +69,34 @@ bank fixtures in `BankProfileTests`. Industrial path untouched.
 
 ---
 
-## ⏳ 3. Industrial SolvencyGate current-ratio ≥ 1.0 false-negatives negative-WC businesses
+## ✅ 3. Industrial SolvencyGate current-ratio ≥ 1.0 false-negatives negative-WC businesses — DONE
+
+**Decision (user, 2026-06-16):** **sector-aware exemption**, *exempt entirely*. The plan's candidate (b)
+(interest-coverage / quick ratio) turned out **infeasible** — the engine's `AnnualFinancials`/`TTMFinancials`
+carry no interest-expense, EBIT, or inventory fields, so neither times-interest-earned nor the acid-test
+ratio is computable without new data-provider plumbing. So (a) was the path.
+
+**Grounding (`graham-financial-statements`, consulted not priors):** the current-ratio ≥ 2.0 standard "is
+tolerable lower **only for utilities/regulated firms**," and the skill explicitly directs us to "flag where
+a modern asset-light or regulated business legitimately departs from [the 1930s thresholds], and lean on the
+*reasoning* behind a standard rather than applying it mechanically." That is a direct mandate for the
+carve-out.
+
+**Fix:** new `SelectionConfig.Solvency.currentRatioExemptSectors` (normalized lowercase IDX-IC strings:
+`infrastruktur`, `barang konsumen primer`, `barang konsumen non-primer`). `SolvencyGate` skips the
+current-ratio test for those sectors; the **debt-to-equity guard still runs for every name**, so the
+exemption never blanket-passes an over-levered company. Sector strings verified exhaustive via the provider
+(`SelectionAdapters.sectorIndexBySector`, 11 canonical IDX-IC sectors). Banks are unaffected (financial
+archetype uses `CapitalStrengthGate`, not `SolvencyGate`).
+
+**Tests (`GateCharacterizationTests`):** `negativeWorkingCapitalSectorIsExemptFromTheCurrentRatioFloor`
+(Infrastruktur @ current 0.6 now passes — red→green); `nonExemptSectorStillFailsOnLowCurrentRatio`
+(Perindustrian @ 0.6 still fails — no-regression); `exemptSectorStillFailsOnHighDebtToEquity` (exempt sector
+@ D/E 3.0 still fails on leverage — red→green). All existing fixtures use other sector strings
+(`Industrials`/`Teknologi`/`Keuangan`), so full `AutoscreenerTests`: **TEST SUCCEEDED**, golden master
+byte-for-byte.
+
+### Original plan (kept for reference)
 
 **Where:** `SolvencyGate.evaluate` (line 524): `if s.ttm.currentRatio < config.solvency.minCurrentRatio
 { fail }`; `.balanced` sets `minCurrentRatio: 1.0` (line 298).
