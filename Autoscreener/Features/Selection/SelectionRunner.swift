@@ -75,6 +75,46 @@ extension AppDependencies {
                                 evaluator: ExitEvaluator(config: config))
     }
 
+    // MARK: - Cache-backed path (the Recommendations screen)
+
+    /// The sweep's cache-warming step (live only): fetch each watchlist ∪ held name's `SecurityData`
+    /// and the regime context ONCE through the shared throttle, writing them to `SecurityDataStore`.
+    /// This is the single place the per-symbol fan-out runs — moved off the Recommendations tab and
+    /// onto the background sweep, so the screen ranks from cache. A name that can't be valued
+    /// (`AdapterError` / no price) is simply not cached; `CachedDataProvider` reports it as a skip.
+    func warmSecurityCache(config: SelectionConfig = .balanced) async {
+        let watchlist = await watchlistUniverse()
+        let held = Array(paperTradingStore.state.positions.keys)
+        let universe = Array(Set(watchlist + held)).sorted()
+        guard !universe.isEmpty else { return }
+
+        let provider = makeProvider(universe: universe, config: config)
+        let now = marketClock.now()
+        if let context = try? await provider.marketContext() {
+            securityDataStore.updateContext(context, at: now)
+        }
+        for t in universe {
+            if let data = try? await provider.data(for: t) {
+                securityDataStore.update(data, at: now)
+            }
+        }
+    }
+
+    /// A point-in-time read of the still-fresh cache (entries + regime context), taken once on the main
+    /// actor so the `CachedDataProvider` it feeds stays a pure value the engine reads without actor hops.
+    private func cachedSnapshot() -> (data: [Ticker: SecurityData], context: MarketContext?) {
+        securityDataStore.freshSnapshot(asOf: marketClock.now())
+    }
+
+    /// The buy engine over the cached snapshot — `CachedDataProvider` replaces the live fan-out.
+    private func makeCachedSelectionEngine(
+        universe: [Ticker], snapshot: (data: [Ticker: SecurityData], context: MarketContext?),
+        config: SelectionConfig) -> StockSelectionEngine {
+        StockSelectionEngine(
+            provider: CachedDataProvider(cached: snapshot.data, context: snapshot.context, tickers: universe),
+            config: config)
+    }
+
     /// The "Positions to Review" screen source: hold/trim/exit verdicts for the current paper book under
     /// `config`. Under `-UITestFixtures` returns canned decisions so the screen renders offline; an empty
     /// book short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
@@ -82,11 +122,22 @@ extension AppDependencies {
         if ProcessInfo.processInfo.isUITestFixtures {
             return ReviewOutcome(decisions: UITestFixtures.exitDecisions, skipped: [])
         }
-        guard !paperTradingStore.state.positions.isEmpty else {
+        let held = Array(paperTradingStore.state.positions.keys)
+        guard !held.isEmpty else {
             return ReviewOutcome(decisions: [], skipped: [])
         }
+        // Read from the sweep-filled cache, never fetch. A cold cache (no regime context / no fresh held
+        // name) ⇒ "waiting for the sweep" rather than re-valuing live on the screen.
+        let snapshot = cachedSnapshot()
+        guard snapshot.context != nil, held.contains(where: { snapshot.data[$0] != nil }) else {
+            return ReviewOutcome(decisions: [], skipped: [], awaitingData: true)
+        }
+        let reviewer = PositionReviewer(
+            holdings: paperTradingStore,
+            provider: CachedDataProvider(cached: snapshot.data, context: snapshot.context, tickers: held),
+            evaluator: ExitEvaluator(config: config))
         let collector = SkipCollector()
-        let decisions = try await makePositionReviewer(config: config).review { collector.add($0) }
+        let decisions = try await reviewer.review { collector.add($0) }
         let skipped = collector.all
         for s in skipped { selectionLog.notice("review skipped \(s.ticker, privacy: .public): \(s.reason, privacy: .public)") }
         return ReviewOutcome(decisions: decisions, skipped: skipped)
@@ -99,23 +150,28 @@ extension AppDependencies {
         WatchlistComposer.compose(screenerStore.snapshots).rows.map(\.symbol)
     }
 
-    /// The thin headless Tier-A entry point: rank the composite-Watchlist universe under `config`.
-    var selectionRunner: SelectionRunner {
-        SelectionRunner(
-            universeSource: { await self.watchlistUniverse() },
-            makeEngine: { self.makeSelectionEngine(universe: $0, config: $1) })
-    }
-
-    /// The "Today's Picks" screen source: the ranked, audited recommendations for the
-    /// composite-Watchlist universe under `config`. Under `-UITestFixtures` it returns canned picks
-    /// so the screen renders deterministically offline (the per-ticker leaf services are empty stubs
-    /// under fixtures, so the live engine fan-out isn't exercised there); live, it runs the headless
-    /// `selectionRunner`. `TodaysPicksViewModel` injects this as its default source.
+    /// The "Today's Picks" screen source: the ranked, audited recommendations for the composite-Watchlist
+    /// universe under `config`. Reads the sweep-filled `SecurityDataStore` through `CachedDataProvider` —
+    /// it NEVER fetches per-ticker on tab open (the slow path that left the screen on "Sizing…"). Under
+    /// `-UITestFixtures` it returns canned picks so the screen renders deterministically offline. Live, a
+    /// cold cache (no regime context / no fresh candidate) short-circuits to `awaitingData` so the screen
+    /// says "waiting for the sweep" instead of "no picks". `TodaysPicksViewModel` injects this as its source.
     func todaysPicks(config: SelectionConfig = .balanced) async throws -> SelectionOutcome {
         if ProcessInfo.processInfo.isUITestFixtures {
             let skipped = ProcessInfo.processInfo.isUITestSkippedFixture ? UITestFixtures.skippedNames : []
             return SelectionOutcome(recommendations: UITestFixtures.recommendations, skipped: skipped)
         }
-        return try await selectionRunner.run(config: config)
+        let universe = await watchlistUniverse()
+        // An empty/blocked Watchlist is a genuine "no picks", not a cold cache — don't show "waiting".
+        guard !universe.isEmpty else { return SelectionOutcome(recommendations: [], skipped: []) }
+        let snapshot = cachedSnapshot()
+        // Cold cache: no regime context, or not one candidate cached yet ⇒ wait for the sweep.
+        guard snapshot.context != nil, universe.contains(where: { snapshot.data[$0] != nil }) else {
+            return SelectionOutcome(recommendations: [], skipped: [], awaitingData: true)
+        }
+        let runner = SelectionRunner(
+            universeSource: { universe },
+            makeEngine: { self.makeCachedSelectionEngine(universe: $0, snapshot: snapshot, config: $1) })
+        return try await runner.run(config: config)
     }
 }

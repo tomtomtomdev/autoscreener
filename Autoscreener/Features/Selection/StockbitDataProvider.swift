@@ -33,12 +33,17 @@ nonisolated enum SelectionProviderError: Error, Equatable, LocalizedError {
     /// Every market-wide regime input failed/was absent — refuse to score a phantom regime
     /// (mirrors `RegimeViewModel` surfacing an error rather than reading an empty factor list, §1.7).
     case noRegimeInputs
+    /// The cache-backed provider (`CachedDataProvider`) has no fresh entry for this name yet — the
+    /// sweep hasn't reached it. Surfaced as a SKIP (not a fetch): the cached read never falls back to
+    /// the network, per the screen's "show what's cached" contract.
+    case notCached(Ticker)
 
     /// `LocalizedError` so a propagated/skipped provider error reads as a sentence, not "error 0".
     var errorDescription: String? {
         switch self {
         case let .noPriceData(t):  return "\(t): no price data — can't value this name."
         case .noRegimeInputs:      return "No market regime inputs available."
+        case let .notCached(t):    return "\(t): not yet swept — waiting for the data sweep."
         }
     }
 }

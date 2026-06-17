@@ -24,6 +24,10 @@ final class PositionReviewViewModel {
     /// nothing to do" (the empty state) from "haven't loaded yet". A failed load leaves it false.
     private(set) var hasLoaded = false
 
+    /// True when the selection cache is still cold for the held names (sweep hasn't warmed it). Mirrors
+    /// `TodaysPicksViewModel.awaitingData`; left un-`hasLoaded` so a re-appearance retries.
+    private(set) var awaitingData = false
+
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> ReviewOutcome
     /// Where the verdicts are cached so the paper-trading allocator can act on them without re-running
@@ -51,8 +55,9 @@ final class PositionReviewViewModel {
             let outcome = try await source(config)
             decisions = outcome.decisions
             skipped = outcome.skipped
+            awaitingData = outcome.awaitingData
             exitDecisionsStore.update(decisions)   // feed the allocator's Gate-5 cache
-            hasLoaded = true            // an empty result is still a successful review
+            hasLoaded = !outcome.awaitingData       // cold cache isn't "reviewed" — retry on next appearance
         } catch {
             self.error = error.localizedDescription
         }

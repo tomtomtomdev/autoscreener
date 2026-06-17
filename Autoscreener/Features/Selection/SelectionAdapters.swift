@@ -58,15 +58,20 @@ nonisolated final class SkipCollector: @unchecked Sendable {
 }
 
 /// Buy-side run result: the ranked recommendations plus the names skipped while assembling them.
+/// `awaitingData` is set when the sweep-filled cache is still cold (no regime context / no fresh
+/// entries), so the screen shows a "waiting for the sweep" state instead of a misleading "no picks".
 nonisolated struct SelectionOutcome: Sendable {
     let recommendations: [Recommendation]
     let skipped: [SkippedName]
+    var awaitingData: Bool = false
 }
 
 /// Sell-side review result: the hold/trim/exit verdicts plus the held names skipped while re-valuing.
+/// `awaitingData` mirrors `SelectionOutcome` — a cold selection cache means "wait", not "nothing to do".
 nonisolated struct ReviewOutcome: Sendable {
     let decisions: [ExitDecision]
     let skipped: [SkippedName]
+    var awaitingData: Bool = false
 }
 
 enum SelectionFundamentals {

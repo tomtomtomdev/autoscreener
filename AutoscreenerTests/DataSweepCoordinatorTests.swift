@@ -58,7 +58,8 @@ enum SweepTestKit {
                             closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
                             macroTTL: TimeInterval = 12 * 60 * 60,
                             sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in },
-                            postSweep: DataSweepCoordinator.PostSweep? = nil) -> DataSweepCoordinator {
+                            postSweep: DataSweepCoordinator.PostSweep? = nil,
+                            securitySweep: DataSweepCoordinator.SecuritySweep? = nil) -> DataSweepCoordinator {
         DataSweepCoordinator(
             store: store, marketStore: marketStore ?? MarketDataStore(fileURL: nil, loadFromDisk: false),
             clock: clock,
@@ -68,7 +69,7 @@ enum SweepTestKit {
             catalog: catalog, constituents: constituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
             openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
-            postSweep: postSweep)
+            postSweep: postSweep, securitySweep: securitySweep)
     }
 
     static let orderedTemplateIDs = [
@@ -456,6 +457,36 @@ enum SweepTestKit {
         await coord.runSweep(includeIDX: false)   // around-the-clock legs only, regime frozen
 
         #expect(counter.calls == 0)   // never auto-rebalance on stale (closed-session) data
+    }
+
+    @Test func securitySweepWarmsTheCacheOnAFullSweepBeforePostSweep() async {
+        let order = SweepOrderLog()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog,
+            postSweep: { await order.record("post") },
+            securitySweep: { await order.record("warm") })
+
+        await coord.runSweep(includeIDX: true)
+
+        #expect(await order.steps == ["warm", "post"])   // cache warmed before the autopilot reads it
+    }
+
+    @Test func securitySweepDoesNotFireOnAClosedOnlySweep() async {
+        let counter = PostSweepCounter()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            securitySweep: { counter.bump() })
+
+        await coord.runSweep(includeIDX: false)   // IDX legs frozen, so no per-symbol warm either
+
+        #expect(counter.calls == 0)
+    }
+
+    @MainActor final class SweepOrderLog {
+        private(set) var steps: [String] = []
+        func record(_ step: String) { steps.append(step) }
     }
 
     @Test func marketQuotesAreThrottledSeriallyAfterTheFirst() async {

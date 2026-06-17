@@ -179,6 +179,16 @@ struct RecommendationsView: View {
         } else if let error = vm.error {
             ContentUnavailableView("Recommendations unavailable", systemImage: "exclamationmark.triangle",
                                    description: Text(error))
+        } else if vm.awaitingData {
+            // Cache still cold: the engine ranks from the sweep-filled cache, which hasn't been warmed
+            // yet (e.g. a fresh launch, or the first sweep after market open). Honest "waiting" rather
+            // than a misleading "nothing to act on". The sweep refills it; revisiting the tab retries.
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Waiting for the data sweep to gather today's figures…").foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("recommendations.awaitingData")
         } else if vm.hasLoaded {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Nothing to act on today — nothing in the watchlist clears the engine's gates and margin of safety under the current regime, and every holding's thesis is intact. Being patient when there's nothing to do is itself a discipline.",

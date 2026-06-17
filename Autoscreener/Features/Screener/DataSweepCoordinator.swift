@@ -78,8 +78,15 @@ final class DataSweepCoordinator {
     /// prices + regime are fresh). The app wires this to the paper-trading autopilot's once-per-day
     /// auto-rebalance; defaulted `nil` so every existing caller and test is byte-for-byte unchanged.
     private let postSweep: PostSweep?
+    /// Optional cache-warming step, run on the main actor after a full IDX-inclusive sweep's prices +
+    /// regime land, BEFORE `postSweep`. The app wires this to fill `SecurityDataStore` (the per-symbol
+    /// data the Recommendations engine ranks from) so the screen reads cache instead of fetching live —
+    /// and so the autopilot in `postSweep` rebalances off a warm cache. Defaulted `nil` so existing
+    /// callers/tests are unchanged. Like `postSweep`, it only runs on full IDX sweeps (frozen at close).
+    private let securitySweep: SecuritySweep?
 
     typealias PostSweep = @MainActor () async -> Void
+    typealias SecuritySweep = @MainActor () async -> Void
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var didStart = false
@@ -135,7 +142,8 @@ final class DataSweepCoordinator {
          closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
          macroTTL: TimeInterval = 12 * 60 * 60,
          sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) },
-         postSweep: PostSweep? = nil) {
+         postSweep: PostSweep? = nil,
+         securitySweep: SecuritySweep? = nil) {
         self.store = store
         self.marketStore = marketStore
         self.clock = clock
@@ -158,6 +166,7 @@ final class DataSweepCoordinator {
         self.closedGapRange = closedGapRange
         self.sleeper = sleeper
         self.postSweep = postSweep
+        self.securitySweep = securitySweep
     }
 
     /// Idempotent. In production launches the continuous market-hours loop; under
@@ -215,6 +224,12 @@ final class DataSweepCoordinator {
         await sweepMarketQuotes(includeIDX: idx)
         if idx { await sweepRegime() }
         marketStore.markSweepComplete(at: clock.now())
+
+        // After a full IDX sweep (fresh prices + regime), warm the per-symbol selection cache so the
+        // Recommendations engine ranks from `SecurityDataStore` instead of fetching live on tab open.
+        // Runs before `postSweep` so the autopilot rebalances off the freshly-warmed cache. Frozen on
+        // closed-only sweeps (like the IDX legs above); a manual `refreshNow()` forces it after close.
+        if idx, let securitySweep { await securitySweep() }
 
         // After a full IDX sweep (fresh prices + regime), run the optional post-sweep step — the
         // paper-trading autopilot's once-per-day auto-rebalance. Skipped on closed-only sweeps so it

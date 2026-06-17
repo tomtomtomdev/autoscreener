@@ -26,6 +26,11 @@ final class TodaysPicksViewModel {
     /// failed load leaves it false, so the next appearance retries.
     private(set) var hasLoaded = false
 
+    /// True when the selection cache is still cold (the sweep hasn't warmed it yet): the screen shows a
+    /// "waiting for the sweep" note instead of "no picks". Left un-`hasLoaded` so a re-appearance retries
+    /// once the sweep fills the cache.
+    private(set) var awaitingData = false
+
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> SelectionOutcome
     /// Where the ranked picks are cached so the paper-trading flow can snapshot an `EntryThesis` cheaply
@@ -50,8 +55,9 @@ final class TodaysPicksViewModel {
             let outcome = try await source(config)
             picks = outcome.recommendations
             skipped = outcome.skipped
+            awaitingData = outcome.awaitingData
             recommendationsStore.update(picks)   // feed the Gate-5 entry-thesis cache (Phase 3)
-            hasLoaded = true            // an empty result is still a successful load
+            hasLoaded = !outcome.awaitingData     // cold cache isn't "loaded" — retry on next appearance
         } catch {
             self.error = error.localizedDescription
         }

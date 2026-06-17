@@ -1049,6 +1049,8 @@ struct StockSelectionEngine: Sendable {
                 onSkip(SkippedName(ticker: t, reason: error.localizedDescription)); continue
             } catch let error as SelectionProviderError where error == .noPriceData(t) {
                 onSkip(SkippedName(ticker: t, reason: error.localizedDescription)); continue
+            } catch let error as SelectionProviderError where error == .notCached(t) {
+                onSkip(SkippedName(ticker: t, reason: error.localizedDescription)); continue
             }
             let profile = profileSelector(s)
             var audit = ["regime=\(policy.regime.rawValue)"]

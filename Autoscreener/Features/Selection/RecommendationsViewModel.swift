@@ -84,6 +84,10 @@ final class RecommendationsViewModel {
     var error: String?  { picks.error ?? positions.error }
     var hasLoaded: Bool { picks.hasLoaded && positions.hasLoaded }
 
+    /// Either side is still waiting on the sweep to warm the selection cache — the screen shows a
+    /// "waiting for the data sweep" note rather than the initial spinner or a misleading empty state.
+    var awaitingData: Bool { picks.awaitingData || positions.awaitingData }
+
     /// Fan both loads out concurrently. Each child keeps its own cache / `force` semantics and its own
     /// store write, so the allocator's caches are fed exactly as they were by the two separate screens.
     func load(force: Bool = false) async {

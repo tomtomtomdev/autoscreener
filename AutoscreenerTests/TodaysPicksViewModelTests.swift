@@ -26,6 +26,7 @@ import Testing
         private(set) var callCount = 0
         var result: [Recommendation] = []
         var skipped: [SkippedName] = []
+        var awaitingData = false
         var error: Error?
         var loadingWhenCalled: Bool?
         weak var vm: TodaysPicksViewModel?
@@ -34,7 +35,7 @@ import Testing
             callCount += 1
             loadingWhenCalled = vm?.isLoading
             if let error { throw error }
-            return SelectionOutcome(recommendations: result, skipped: skipped)
+            return SelectionOutcome(recommendations: result, skipped: skipped, awaitingData: awaitingData)
         }
     }
 
@@ -105,6 +106,23 @@ import Testing
 
         await vm.load()                 // fails → not marked loaded
         await vm.load()                 // retries without force
+        #expect(spy.callCount == 2)
+    }
+
+    // MARK: - Cold cache: "waiting for the sweep" (the cache-backed path)
+
+    @Test func aColdCacheSurfacesAwaitingDataAndStaysUnloadedSoItRetries() async {
+        let spy = SourceSpy()
+        spy.awaitingData = true          // sweep hasn't warmed the selection cache yet
+        let vm = TodaysPicksViewModel(source: spy.source)
+
+        await vm.load()
+
+        #expect(vm.awaitingData)         // drives the screen's "waiting for the sweep" note
+        #expect(vm.error == nil)         // not a failure
+        #expect(vm.hasLoaded == false)   // left unloaded so a re-appearance retries once warmed
+
+        await vm.load()                  // retries without force (unlike a successful load)
         #expect(spy.callCount == 2)
     }
 

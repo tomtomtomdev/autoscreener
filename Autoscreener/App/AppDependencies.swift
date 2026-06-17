@@ -68,6 +68,10 @@ final class AppDependencies {
     // allocator reads it when building a plan so a flagged name is forced out / not re-bought — without
     // re-running the expensive holdings review on every rebalance.
     let exitDecisionsStore = ExitDecisionsStore()
+    // Per-symbol `SecurityData` cache the sweep fills (`warmSecurityCache`) so the Recommendations
+    // engine ranks from cache instead of fetching per ticker on tab open. Not persisted; refilled each
+    // full IDX sweep. Read via `CachedDataProvider` in `todaysPicks` / `reviewPositions`.
+    let securityDataStore = SecurityDataStore()
     // Hands-free paper trading: after each full sweep the coordinator calls this autopilot, which
     // auto-rebalances the book off the recommendations once per trading day. The manual screen drives it
     // too. Its engine sources default to the `shared` closures (resolved lazily, post-init).
@@ -157,6 +161,15 @@ final class AppDependencies {
             postSweep = { [autopilot, clock] in await autopilot.runIfDue(now: clock.now()) }
         }
 
+        // Live only: after each full IDX sweep, warm the per-symbol selection cache so the
+        // Recommendations screen ranks from cache (no live fan-out on tab open) and the autopilot
+        // rebalances off it. References `shared` lazily (like the autopilot sources) to avoid a
+        // `self` capture during init; under fixtures/tests the screen uses canned data, so nil.
+        var securitySweep: DataSweepCoordinator.SecuritySweep? = nil
+        if !headless {
+            securitySweep = { await AppDependencies.shared.warmSecurityCache() }
+        }
+
         self.dataSweepCoordinator = DataSweepCoordinator(
             store: cacheStore, marketStore: marketStore, clock: clock,
             paywall: self.paywallService,
@@ -172,7 +185,8 @@ final class AppDependencies {
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).
             sleeper: headless ? { _ in } : { try await Task.sleep(nanoseconds: $0) },
-            postSweep: postSweep)
+            postSweep: postSweep,
+            securitySweep: securitySweep)
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).

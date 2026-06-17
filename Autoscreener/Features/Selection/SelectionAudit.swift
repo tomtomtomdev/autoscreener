@@ -140,15 +140,19 @@ enum SelectionAudit {
         emit("GATE-5 POSITION REVIEW — live paper book")
         emit("──────────────────────────────────────────────")
         do {
-            let outcome = try await deps.reviewPositions(config: .balanced)
-            if outcome.decisions.isEmpty {
+            // The audit is a one-shot CLI with no data sweep, so it reviews LIVE (the screen's
+            // `reviewPositions` reads the sweep-warmed cache, which would be cold here).
+            let collector = SkipCollector()
+            let decisions = try await deps.makePositionReviewer(config: .balanced)
+                .review { collector.add($0) }
+            if decisions.isEmpty {
                 emit("  (paper book is empty — nothing to review)")
             }
-            for d in outcome.decisions {
+            for d in decisions {
                 emit("  \(d.action.rawValue.uppercased())  \(d.ticker) — \(d.reason)")
                 for line in d.audit { emit("        · \(line)") }
             }
-            reportSkips(outcome.skipped)
+            reportSkips(collector.all)
         } catch {
             emit("  ✗ REVIEW ERROR: \(error.localizedDescription)")
         }
