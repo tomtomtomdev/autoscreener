@@ -74,7 +74,7 @@ final class AppDependencies {
     private init() {
         let useFixtures = ProcessInfo.processInfo.isUITestFixtures
         let store = KeychainTokenStore()
-        let session = LoggingHTTPSession(URLSession.shared)
+        let session = LoggingHTTPSession(HTTPSessionFactory.makeSession())
         let login = LoginService(session: session, tokens: store)
         let verifier = DeviceVerificationService(session: session)
         let client = APIClient(session: session, tokens: store)
