@@ -175,10 +175,11 @@ private enum WatchlistRowMetrics {
 // MARK: - Formatting (file-private, shared by the section + its rows)
 
 private func formatScore(_ v: Double) -> String {
+    // Weights are scaled so every matched-weight sum is a whole number — show it as one.
     let f = NumberFormatter()
     f.numberStyle = .decimal
-    f.minimumFractionDigits = 1
-    f.maximumFractionDigits = 1
+    f.minimumFractionDigits = 0
+    f.maximumFractionDigits = 0
     return f.string(from: NSNumber(value: v)) ?? String(v)
 }
 

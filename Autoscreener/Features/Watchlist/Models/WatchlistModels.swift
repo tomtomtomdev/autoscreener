@@ -30,28 +30,32 @@ nonisolated enum BandarScreenerKind: String, CaseIterable, Codable, Sendable {
     case liquidityFloor
     case intradayLiquidity
 
+    /// Composite-score weight per rule. These are 2× the `bandar-master.json` spec
+    /// ratios so the smallest weight is 1.0 (not 0.5) — the matched-weight sum is then
+    /// always a whole number, and the displayed composite score reads as an integer.
+    /// The relative ranking is unchanged (every weight scaled by the same factor).
     var weight: Double {
         switch self {
-        case .accumulating:      return 2.0
-        case .aboveMA20:         return 1.5
-        case .shiftToday:        return 2.0
-        case .accumDistPositive: return 1.5
-        case .foreignFlow1M:     return 1.0
-        case .foreignFlow6M:     return 1.5
-        case .foreignFlow3M:     return 1.0
-        case .foreignBuyStreak:  return 1.0
-        case .freshForeignBuy:   return 1.5
-        case .freqSpike:         return 1.0
-        case .volumeSpike:       return 1.0
-        case .above50MA:         return 0.5
-        case .above200MA:        return 1.0
-        case .earningsYield:     return 1.0
-        case .pbvBelow2:         return 1.0
-        case .roeQuality:        return 1.0
-        case .fcfPositive:       return 1.0
-        case .manageableDebt:    return 1.0
-        case .liquidityFloor:    return 0.5
-        case .intradayLiquidity: return 0.5
+        case .accumulating:      return 4.0
+        case .aboveMA20:         return 3.0
+        case .shiftToday:        return 4.0
+        case .accumDistPositive: return 3.0
+        case .foreignFlow1M:     return 2.0
+        case .foreignFlow6M:     return 3.0
+        case .foreignFlow3M:     return 2.0
+        case .foreignBuyStreak:  return 2.0
+        case .freshForeignBuy:   return 3.0
+        case .freqSpike:         return 2.0
+        case .volumeSpike:       return 2.0
+        case .above50MA:         return 1.0
+        case .above200MA:        return 2.0
+        case .earningsYield:     return 2.0
+        case .pbvBelow2:         return 2.0
+        case .roeQuality:        return 2.0
+        case .fcfPositive:       return 2.0
+        case .manageableDebt:    return 2.0
+        case .liquidityFloor:    return 1.0
+        case .intradayLiquidity: return 1.0
         }
     }
 

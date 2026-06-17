@@ -83,10 +83,10 @@ import Testing
         // Top name has 4× the conviction of the rest. √-damping must pull its weight
         // well below the 80% a raw-proportional split would hand it.
         let rows = [
-            WatchlistRow(symbol: "AAA", name: "AAA", matchedScreeners: [.accumulating, .shiftToday]), // score 4.0
-            WatchlistRow(symbol: "BBB", name: "BBB", matchedScreeners: [.foreignFlow1M]),              // 1.0
-            WatchlistRow(symbol: "CCC", name: "CCC", matchedScreeners: [.foreignFlow3M]),              // 1.0
-            WatchlistRow(symbol: "DDD", name: "DDD", matchedScreeners: [.freqSpike]),                  // 1.0
+            WatchlistRow(symbol: "AAA", name: "AAA", matchedScreeners: [.accumulating, .shiftToday]), // score 8.0
+            WatchlistRow(symbol: "BBB", name: "BBB", matchedScreeners: [.foreignFlow1M]),              // 2.0
+            WatchlistRow(symbol: "CCC", name: "CCC", matchedScreeners: [.foreignFlow3M]),              // 2.0
+            WatchlistRow(symbol: "DDD", name: "DDD", matchedScreeners: [.freqSpike]),                  // 2.0
         ]
         let prices = Dictionary(uniqueKeysWithValues: rows.map { ($0.symbol, 1_000.0) })
         var cfg = AllocationConfig.standard

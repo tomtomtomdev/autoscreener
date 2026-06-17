@@ -5,30 +5,31 @@ import Testing
 // MARK: - Model
 
 @Suite struct BandarScreenerKindTests {
-    /// Pins the rule weights to the values in `bandar-master.json` (Ulysees repo).
-    /// If any future edit silently changes these, the watchlist's score loses its
-    /// link to the published spec.
+    /// Pins the rule weights to 2× the `bandar-master.json` spec ratios (Ulysees repo) —
+    /// scaled so the minimum weight is 1.0 and composite scores are whole numbers, while
+    /// the relative ranking matches the published spec. If any future edit silently
+    /// changes these, the watchlist's score loses its link to the published spec.
     @Test func weightsMatchMasterJSONSpec() {
-        #expect(BandarScreenerKind.accumulating.weight       == 2.0)
-        #expect(BandarScreenerKind.aboveMA20.weight          == 1.5)
-        #expect(BandarScreenerKind.shiftToday.weight         == 2.0)
-        #expect(BandarScreenerKind.accumDistPositive.weight  == 1.5)
-        #expect(BandarScreenerKind.foreignFlow1M.weight      == 1.0)
-        #expect(BandarScreenerKind.foreignFlow6M.weight      == 1.5)
-        #expect(BandarScreenerKind.foreignFlow3M.weight      == 1.0)
-        #expect(BandarScreenerKind.foreignBuyStreak.weight   == 1.0)
-        #expect(BandarScreenerKind.freshForeignBuy.weight    == 1.5)
-        #expect(BandarScreenerKind.freqSpike.weight          == 1.0)
-        #expect(BandarScreenerKind.volumeSpike.weight        == 1.0)
-        #expect(BandarScreenerKind.above50MA.weight          == 0.5)
-        #expect(BandarScreenerKind.above200MA.weight         == 1.0)
-        #expect(BandarScreenerKind.earningsYield.weight      == 1.0)
-        #expect(BandarScreenerKind.pbvBelow2.weight          == 1.0)
-        #expect(BandarScreenerKind.roeQuality.weight         == 1.0)
-        #expect(BandarScreenerKind.fcfPositive.weight        == 1.0)
-        #expect(BandarScreenerKind.manageableDebt.weight     == 1.0)
-        #expect(BandarScreenerKind.liquidityFloor.weight     == 0.5)
-        #expect(BandarScreenerKind.intradayLiquidity.weight  == 0.5)
+        #expect(BandarScreenerKind.accumulating.weight       == 4.0)
+        #expect(BandarScreenerKind.aboveMA20.weight          == 3.0)
+        #expect(BandarScreenerKind.shiftToday.weight         == 4.0)
+        #expect(BandarScreenerKind.accumDistPositive.weight  == 3.0)
+        #expect(BandarScreenerKind.foreignFlow1M.weight      == 2.0)
+        #expect(BandarScreenerKind.foreignFlow6M.weight      == 3.0)
+        #expect(BandarScreenerKind.foreignFlow3M.weight      == 2.0)
+        #expect(BandarScreenerKind.foreignBuyStreak.weight   == 2.0)
+        #expect(BandarScreenerKind.freshForeignBuy.weight    == 3.0)
+        #expect(BandarScreenerKind.freqSpike.weight          == 2.0)
+        #expect(BandarScreenerKind.volumeSpike.weight        == 2.0)
+        #expect(BandarScreenerKind.above50MA.weight          == 1.0)
+        #expect(BandarScreenerKind.above200MA.weight         == 2.0)
+        #expect(BandarScreenerKind.earningsYield.weight      == 2.0)
+        #expect(BandarScreenerKind.pbvBelow2.weight          == 2.0)
+        #expect(BandarScreenerKind.roeQuality.weight         == 2.0)
+        #expect(BandarScreenerKind.fcfPositive.weight        == 2.0)
+        #expect(BandarScreenerKind.manageableDebt.weight     == 2.0)
+        #expect(BandarScreenerKind.liquidityFloor.weight     == 1.0)
+        #expect(BandarScreenerKind.intradayLiquidity.weight  == 1.0)
     }
 
     @Test func templateIDsMatchSidebarMapping() {
@@ -57,7 +58,7 @@ import Testing
     }
 
     /// `fresh-foreign-buy` shares metric 13561 with `foreign-buy-streak` but is a
-    /// distinct, heavier-weighted (1.5 vs 1.0) smart-money-flow rule — not a veto gate.
+    /// distinct, heavier-weighted (3.0 vs 2.0) smart-money-flow rule — not a veto gate.
     @Test func freshForeignBuyIsNonVetoSmartMoneyRule() {
         #expect(BandarScreenerKind.freshForeignBuy.isVeto == false)
         #expect(BandarScreenerKind.freshForeignBuy.displayName == "Fresh Foreign Buy")
@@ -85,7 +86,7 @@ import Testing
     /// gates. Adding them must not expand the veto set beyond the two liquidity floors.
     @Test func fundamentalRulesAreNonVetoWeightedOne() {
         for kind in [BandarScreenerKind.earningsYield, .pbvBelow2, .roeQuality, .fcfPositive, .manageableDebt] {
-            #expect(kind.weight == 1.0)
+            #expect(kind.weight == 2.0)
             #expect(kind.isVeto == false)
         }
         #expect(BandarScreenerKind.earningsYield.displayName == "Earnings Yield ≥8%")
@@ -100,9 +101,9 @@ import Testing
     /// max possible composite score. Hardcoding it (e.g., "max 5.5") goes stale
     /// the moment a new kind is added — derive from `allCases` instead.
     @Test func maxCompositeScoreSumsAllKindWeights() {
-        // 2.0+1.5+2.0+1.5+1.0+1.5+1.0+1.0+1.5 + 1.0+1.0+0.5+1.0 + 0.5+0.5 = 17.5
-        // + fundamentals (5 × 1.0 = 5.0) = 22.5
-        #expect(BandarScreenerKind.maxCompositeScore == 22.5)
+        // 2× the spec ratios: 4+3+4+3+2+3+2+2+3 + 2+2+1+2 + 1+1 = 35
+        // + fundamentals (5 × 2.0 = 10) = 45
+        #expect(BandarScreenerKind.maxCompositeScore == 45.0)
     }
 }
 
@@ -110,24 +111,24 @@ import Testing
     @Test func scoreSumsWeightsOfMatchedScreeners() {
         let allFour = WatchlistRow(symbol: "Q", name: "Q",
                                    matchedScreeners: [.accumulating, .aboveMA20, .shiftToday, .accumDistPositive])
-        // 2.0 + 1.5 + 2.0 + 1.5 = 7.0
-        #expect(allFour.score == 7.0)
+        // 4.0 + 3.0 + 4.0 + 3.0 = 14.0
+        #expect(allFour.score == 14.0)
 
         let allThree = WatchlistRow(symbol: "X", name: "X",
                                     matchedScreeners: [.accumulating, .aboveMA20, .shiftToday])
-        #expect(allThree.score == 5.5)
+        #expect(allThree.score == 11.0)
 
         let accAndShift = WatchlistRow(symbol: "Y", name: "Y",
                                        matchedScreeners: [.accumulating, .shiftToday])
-        #expect(accAndShift.score == 4.0)
+        #expect(accAndShift.score == 8.0)
 
         let aboveOnly = WatchlistRow(symbol: "Z", name: "Z",
                                      matchedScreeners: [.aboveMA20])
-        #expect(aboveOnly.score == 1.5)
+        #expect(aboveOnly.score == 3.0)
 
         let accOnly = WatchlistRow(symbol: "W", name: "W",
                                    matchedScreeners: [.accumulating])
-        #expect(accOnly.score == 2.0)
+        #expect(accOnly.score == 4.0)
 
         let none = WatchlistRow(symbol: "N", name: "N", matchedScreeners: [])
         #expect(none.score == 0.0)
@@ -301,10 +302,10 @@ enum WatchlistTestHelpers {
         ])
         let byID = Dictionary(uniqueKeysWithValues: result.rows.map { ($0.symbol, $0) })
         #expect(result.rows.count == 4)
-        #expect(byID["BBCA"]?.score == 7.0)   // 2.0+1.5+2.0+1.5
-        #expect(byID["BBRI"]?.score == 4.0)   // 2.0+2.0
-        #expect(byID["CARE"]?.score == 1.5)
-        #expect(byID["DSSA"]?.score == 1.5)
+        #expect(byID["BBCA"]?.score == 14.0)  // 4.0+3.0+4.0+3.0
+        #expect(byID["BBRI"]?.score == 8.0)   // 4.0+4.0
+        #expect(byID["CARE"]?.score == 3.0)
+        #expect(byID["DSSA"]?.score == 3.0)
     }
 
     @Test func sortsByScoreDescThenSymbolAsc() {
@@ -314,7 +315,7 @@ enum WatchlistTestHelpers {
             .shiftToday: snap(.shiftToday, ["AAA", "ZZZ"]),
             .accumDistPositive: snap(.accumDistPositive, ["AAA", "ZZZ"]),
         ])
-        #expect(result.rows.map(\.symbol) == ["AAA", "ZZZ", "MMM"])  // 7.0, 7.0(tie→symbol), 2.0
+        #expect(result.rows.map(\.symbol) == ["AAA", "ZZZ", "MMM"])  // 14.0, 14.0(tie→symbol), 4.0
     }
 
     /// With both veto gates present, a stock must appear in BOTH to survive.
