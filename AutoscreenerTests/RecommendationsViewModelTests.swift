@@ -12,10 +12,10 @@ import Testing
 
     // MARK: Object Mothers
 
-    private func rec(_ ticker: Ticker, weight: Double = 0.05) -> Recommendation {
+    private func rec(_ ticker: Ticker, weight: Double = 0.05, conviction: Double = 0.6) -> Recommendation {
         Recommendation(ticker: ticker, compositeScore: 0.6, intrinsicValue: 1_000,
-                       marginOfSafety: 0.2, conviction: 0.6, suggestedWeight: weight,
-                       audit: ["→ conviction 0.60 weight 5%"])
+                       marginOfSafety: 0.2, conviction: conviction, suggestedWeight: weight,
+                       audit: ["→ conviction \(String(format: "%.2f", conviction)) weight 5%"])
     }
 
     private func dec(_ ticker: Ticker, _ action: ExitAction) -> ExitDecision {
@@ -77,6 +77,28 @@ import Testing
         } else {
             Issue.record("WIFI should survive as a verdict (held), not a buy")
         }
+    }
+
+    @Test func mergeOrdersBuysByConvictionDescendingThenTicker() {
+        // Within the buy group, conviction wins over ticker: ZZZZ (higher conviction) leads AAAA
+        // even though it sorts later alphabetically. CCCC ties ZZZZ on conviction → ticker breaks it.
+        let rows = RecommendationsViewModel.merge(
+            picks: [rec("AAAA", conviction: 0.30),
+                    rec("ZZZZ", conviction: 0.90),
+                    rec("CCCC", conviction: 0.90)],
+            decisions: [])
+
+        #expect(rows.map(\.ticker) == ["CCCC", "ZZZZ", "AAAA"])
+    }
+
+    @Test func verdictsStillLeadBuysRegardlessOfConviction() {
+        // Urgency stays the primary key: a top-conviction buy never jumps ahead of an exit/trim
+        // verdict, and a plain hold still sorts last.
+        let rows = RecommendationsViewModel.merge(
+            picks: [rec("HIGH", conviction: 0.99)],
+            decisions: [dec("EEEE", .exit), dec("HHHH", .hold)])
+
+        #expect(rows.map(\.ticker) == ["EEEE", "HIGH", "HHHH"])
     }
 
     @Test func mergeOfEmptyInputsIsEmpty() {

@@ -93,13 +93,19 @@ final class RecommendationsViewModel {
     }
 
     /// Pure merge: dedupe by ticker (a held name's exit verdict WINS over a fresh buy signal — you
-    /// already own it, so its hold/trim/exit discipline governs), then sort by urgency, ties by ticker.
+    /// already own it, so its hold/trim/exit discipline governs), then sort by urgency. Within the buy
+    /// group, ties break by conviction (highest first) so the strongest candidates surface top-left in
+    /// the grid; every other tie (and the buy-conviction tie itself) breaks by ticker for stability.
     static func merge(picks: [Recommendation], decisions: [ExitDecision]) -> [ActionRow] {
         let held = Set(decisions.map(\.ticker))
         let buys = picks.filter { !held.contains($0.ticker) }.map(ActionRow.buy)
         let verdicts = decisions.map(ActionRow.verdict)
-        return (buys + verdicts).sorted {
-            $0.priority != $1.priority ? $0.priority < $1.priority : $0.ticker < $1.ticker
+        return (buys + verdicts).sorted { a, b in
+            if a.priority != b.priority { return a.priority < b.priority }
+            if case let .buy(l) = a, case let .buy(r) = b, l.conviction != r.conviction {
+                return l.conviction > r.conviction
+            }
+            return a.ticker < b.ticker
         }
     }
 }
