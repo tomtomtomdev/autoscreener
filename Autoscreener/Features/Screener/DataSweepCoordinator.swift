@@ -310,33 +310,65 @@ final class DataSweepCoordinator {
     /// chart fan-out); USD/IDR is read from the currency quote priced this sweep. Only
     /// runs when the IDX session leg is included, so the read freezes after the close.
     private func sweepRegime() async {
+        print("[regime] ── sweep starting ──")
+
         // regime.json (the valuation/percentile leg) is public GitHub data off a
         // different host — fetched untimed, outside the Stockbit anti-burst throttle.
         let published = try? await snapshotProvider.snapshot()
+        if let p = published {
+            print("[regime] published snapshot: asOf=\(p.asOf) · biRate=\(p.biRate.map { "\($0.value)% \($0.direction)" } ?? "—") · macro=\(p.macro != nil ? "present" : "—") · indices=\(p.indices.count)")
+        } else {
+            print("[regime] published snapshot: unavailable — falling back to on-device + cached")
+        }
 
         // BI rate + FRED macro are now sourced on-device (bi.go.id / FRED, plain HTTPS off
         // their own hosts — also untimed), refreshed at most daily, then merged *over* the
         // published snapshot so the device value wins and the published one is a fallback.
         await refreshMacroIfStale()
         let snapshot = mergedSnapshot(published: published)
+        if let s = snapshot {
+            print("[regime] merged inputs: asOf=\(s.asOf) · biRate=\(s.biRate != nil) · macro=\(s.macro != nil) · indices=\(s.indices.count)")
+        } else {
+            print("[regime] merged inputs: none (no snapshot/biRate/macro) — read built from market legs only")
+        }
 
-        do { try await throttle() } catch { return }
+        do { try await throttle() } catch { print("[regime] cancelled before foreign-flow fetch"); return }
         let flow = try? await self.flow.marketFlow()
+        print("[regime] foreign flow: \(flow.map { "net \($0.netForeign.formatted)" } ?? "unavailable")")
 
-        do { try await throttle() } catch { return }
+        do { try await throttle() } catch { print("[regime] cancelled before IHSG fetch"); return }
         let ihsg = try? await chart.candles(symbol: Self.compositeSymbol, timeframe: .oneYear)
+        print("[regime] IHSG: \(Self.trendSummary(ihsg))")
 
-        do { try await throttle() } catch { return }
+        do { try await throttle() } catch { print("[regime] cancelled before SP500 fetch"); return }
         let sp500 = try? await chart.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
+        print("[regime] SP500: \(Self.trendSummary(sp500))")
 
         let usdIdr = marketStore.quotes[Self.rupiahSymbol]?.changePercent
         let above = store.snapshot(for: .above200MA)
+        let breadth = LQ45Breadth.reading(aboveSnapshot: above, constituents: constituents)
+        print("[regime] USD/IDR today=\(usdIdr.map { String(format: "%+.2f%%", $0) } ?? "—") · breadth=\(breadth.map { "\($0.above)/\($0.measured) above 200dma" } ?? "—")")
 
         if let read = RegimeComposer.compose(
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
             usdIdrChangePercent: usdIdr, aboveSnapshot: above, constituents: constituents) {
+            print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")")
+            for f in read.factors {
+                print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")
+            }
             marketStore.apply(regimeRead: read)
+        } else {
+            print("[regime] compose produced no read (no factors available) — keeping prior read")
         }
+    }
+
+    /// One-line trend summary of a price series for the regime log: candle count and the
+    /// latest close's distance from its 200-day average (the input the trend factor uses).
+    private static func trendSummary(_ series: PriceSeries?) -> String {
+        guard let series else { return "unavailable" }
+        let dist = MovingAverage.distanceFromSMA(series, period: 200)
+            .map { String(format: "%+.2f%% vs 200dma", $0 * 100) } ?? "200dma n/a"
+        return "\(series.candles.count) candles · \(dist)"
     }
 
     /// Refreshes the cached BI rate + FRED macro when the cache is older than `macroTTL`
