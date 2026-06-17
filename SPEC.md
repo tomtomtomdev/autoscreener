@@ -52,7 +52,7 @@ Autoscreener/
 │   └── AppDependencies.swift              // MainActor singleton: builds store/services/client + wires APIClient.setRefresher → LoginService.refresh
 ├── Core/
 │   ├── Networking/
-│   │   ├── APIClient.swift                // actor: pre-flight refresh (60s window) + 401 retry + concurrent-refresh collapse
+│   │   ├── APIClient.swift                // actor: pre-flight refresh (60s window) + 401 retry + concurrent-refresh collapse + bounded transient retry (503/429/transport, §3.5)
 │   │   ├── Endpoint.swift                 // URL, method, body, requiresAuth, header merge
 │   │   ├── NetworkLog.swift               // @Observable in-memory ring buffer + LoggingHTTPSession decorator with key-based redaction
 │   │   └── DTO/LoginDTO.swift             // LoginResponse decoder — trusted/new-device/flat envelopes, parses expired_at
@@ -153,6 +153,17 @@ This prevents the guaranteed 401 round-trip on stale tokens. A single in-flight 
 
 ### 3.4 401 backstop
 If a request still returns 401 (server invalidated a token early, clock skew, …) we run a single refresh + retry, then fail hard. If refresh itself errors → wipe tokens, throw `.unauthorized`.
+
+### 3.5 Transient-failure retry
+Separate from the auth retry, `APIClient.sendRaw` wraps `perform` in a bounded retry for *transient* failures — a server that didn't process the request, or a network blip. Stockbit's `screener/templates` endpoint occasionally returns **503** mid-sweep; without a retry that screener was skipped until the next full sweep (5–30 min of stale data, surfacing as e.g. `Frequency Spike FAILED: …http(status: 503…)`).
+
+- **Retryable:** HTTP `{408, 429, 502, 503, 504}` and a whitelist of transport `URLError`s (`.timedOut`, `.cannotConnectToHost`, `.cannotFindHost`, `.networkConnectionLost`, `.notConnectedToInternet`, `.dnsLookupFailed`, `.secureConnectionFailed`, `.resourceUnavailable`, `.badServerResponse`). `URLError.cancelled` is **excluded** so a deliberate mid-sweep cancellation propagates instead of retrying.
+- **Never retried:** all other 4xx — `404`, paywall `402`/`403`, and the `401` path (owned by §3.3/§3.4) — throw immediately, unchanged.
+- **Attempts:** up to **2 retries** (3 tries total), configurable via `init`.
+- **Delay:** honours a `Retry-After` response header when present, capped at **5 s** so a server can't stall a sweep; otherwise a jittered **0.4–0.8 s**. The sleeper is injectable (same seam as `RequestThrottle`) so tests run without real delay.
+- **Contract preserved:** on exhaustion a 503 is re-surfaced as `APIError.http(status: 503, …)`, so `ScreenerService`'s paywall/network mapping (§9) and the 401→refresh logic in `perform` are untouched. This is a *transport-layer* concern only — the BI-Rate fetch (§17) uses a plain `HTTPSession` (not `APIClient`) and falls back to FRED on its own, so a `bi.go.id` TLS failure is not retried here.
+
+This is distinct from the inter-request **throttle** (1–1.5 s between *different* requests, §15): the throttle spaces a healthy fan-out; the retry recovers a single failed request. There is intentionally **no sweep-wide circuit-breaker** — with the small bounded budget a total outage adds only ~24 s to a failing sweep, not worth a clock dependency in the auth actor.
 
 ---
 
@@ -385,6 +396,7 @@ Since every snapshot holds the screener's full result set (the sweep walks all p
 - `LoginServiceTests` — request body + headers, three response envelopes (trusted-device, new-device, flat), `expired_at` parsing, MFA outcome detection, 401 → `invalidCredentials`, refresh bearer attach
 - `DeviceVerificationServiceTests` — request shapes for all four MFA endpoints, channel/target parsing from `supporting_data.otp`, `next_challenge` detection, error mapping (invalid OTP, challenge expired)
 - `APIClientAuthInterceptorTests` — bearer attach, 401-then-refresh-then-retry, refresh-failure wipes tokens, **pre-flight refresh fires within the 60s window**, dead refresh wipes Keychain
+- `APIClientTransientRetryTests` (§3.5) — 503→retry→success, exhaust-after-2-retries→`http(503)`, 404 never retried, 429 retried, transport-error retried, `Retry-After` header honoured over computed jitter (recording sleeper asserts both the retry count and the delay)
 - `SettingsViewModelTests` — happy sign-in, invalid creds surface, sign-out toggle, **multi-step MFA flow chains email → phone → completes**, invalid OTP stays in verification phase, expired challenge bounces back
 - `ScreenerServiceWireFormatTests` — exact double-encoded `filters`/`universe` strings vs the captured fixture; pagination
 - `ScreenerServiceParseTests` — three response envelope shapes + values-array / id-keyed metric layouts + missing-values tolerance
