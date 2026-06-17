@@ -36,6 +36,14 @@ final class SecurityDataStore {
 
     func entry(for ticker: Ticker) -> Entry? { entries[ticker] }
 
+    /// The most recent moment the cache was warmed — the newest `fetchedAt` across the per-symbol
+    /// entries and the regime context, or nil when nothing has been cached. While the market is closed
+    /// the Recommendations screen labels its ranked picks "as of <this date> · market closed", since the
+    /// sweep captures the official close once and then no further sweep runs until the next session.
+    func lastWarmedAt() -> Date? {
+        [entries.values.map(\.fetchedAt).max(), context?.fetchedAt].compactMap { $0 }.max()
+    }
+
     /// True when `ticker` has an entry written no longer than `maxAge` before `now`.
     func isFresh(_ ticker: Ticker, asOf now: Date, within maxAge: TimeInterval = defaultMaxAge) -> Bool {
         guard let e = entries[ticker] else { return false }

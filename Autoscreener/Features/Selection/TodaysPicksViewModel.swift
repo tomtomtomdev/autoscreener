@@ -31,6 +31,11 @@ final class TodaysPicksViewModel {
     /// once the sweep fills the cache.
     private(set) var awaitingData = false
 
+    /// Non-nil only while the market is CLOSED — the cache's last-warmed time. The picks are ranked from
+    /// that last-known close, so the screen labels them "as of <date> · market closed" rather than
+    /// implying live figures. nil while open.
+    private(set) var asOf: Date?
+
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> SelectionOutcome
     /// Where the ranked picks are cached so the paper-trading flow can snapshot an `EntryThesis` cheaply
@@ -56,6 +61,7 @@ final class TodaysPicksViewModel {
             picks = outcome.recommendations
             skipped = outcome.skipped
             awaitingData = outcome.awaitingData
+            asOf = outcome.asOf
             recommendationsStore.update(picks)   // feed the Gate-5 entry-thesis cache (Phase 3)
             hasLoaded = !outcome.awaitingData     // cold cache isn't "loaded" — retry on next appearance
         } catch {

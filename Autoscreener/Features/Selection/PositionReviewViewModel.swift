@@ -28,6 +28,10 @@ final class PositionReviewViewModel {
     /// `TodaysPicksViewModel.awaitingData`; left un-`hasLoaded` so a re-appearance retries.
     private(set) var awaitingData = false
 
+    /// Non-nil only while the market is CLOSED — the cache's last-warmed time, so the screen labels the
+    /// verdicts "as of <date> · market closed". Mirrors `TodaysPicksViewModel.asOf`. nil while open.
+    private(set) var asOf: Date?
+
     let config: SelectionConfig
     private let source: (SelectionConfig) async throws -> ReviewOutcome
     /// Where the verdicts are cached so the paper-trading allocator can act on them without re-running
@@ -56,6 +60,7 @@ final class PositionReviewViewModel {
             decisions = outcome.decisions
             skipped = outcome.skipped
             awaitingData = outcome.awaitingData
+            asOf = outcome.asOf
             exitDecisionsStore.update(decisions)   // feed the allocator's Gate-5 cache
             hasLoaded = !outcome.awaitingData       // cold cache isn't "reviewed" — retry on next appearance
         } catch {

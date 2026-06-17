@@ -67,4 +67,34 @@ import Testing
         let next = clock.nextOpen(after: date(2026, 6, 11, 12, 30)) // Thu lunch
         #expect(next == date(2026, 6, 11, 13, 30))                  // → Thu 13:30
     }
+
+    // MARK: - Closing print (16:00) — the official close the sweep captures after the session.
+
+    @Test func closingPrintIsFourPM() {
+        #expect(MarketClock.closingPrintMinute == 16 * 60)          // 960, not the 15:50 session end
+    }
+
+    @Test func mostRecentCloseDuringASessionIsThePriorDayClose() {
+        // Thu 10:00 — today's 16:00 hasn't printed yet, so the latest close is Wed's.
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 11, 10, 0)) == date(2026, 6, 10, 16, 0))
+    }
+
+    @Test func mostRecentCloseBetweenSessionEndAndPrintIsStillThePriorDay() {
+        // 15:55 — the regular session ended at 15:50, but the close prints at 16:00, so it isn't
+        // "today's close" yet. This is the gap the in-hours sweep (≤15:49) never captures.
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 11, 15, 55)) == date(2026, 6, 10, 16, 0))
+    }
+
+    @Test func mostRecentCloseAtOrAfterFourPMIsTodaysClose() {
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 11, 16, 0)) == date(2026, 6, 11, 16, 0))  // 16:00 sharp
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 11, 16, 30)) == date(2026, 6, 11, 16, 0))
+    }
+
+    @Test func mostRecentCloseOnAWeekendIsFridayClose() {
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 13, 10, 0)) == date(2026, 6, 12, 16, 0))  // Sat → Fri 16:00
+    }
+
+    @Test func mostRecentCloseBeforeMondayOpenIsFridayClose() {
+        #expect(clock.mostRecentClose(asOf: date(2026, 6, 15, 8, 0)) == date(2026, 6, 12, 16, 0))   // Mon pre-open → Fri
+    }
 }

@@ -88,6 +88,11 @@ final class RecommendationsViewModel {
     /// "waiting for the data sweep" note rather than the initial spinner or a misleading empty state.
     var awaitingData: Bool { picks.awaitingData || positions.awaitingData }
 
+    /// Non-nil only while the market is CLOSED: the time the ranked figures were last warmed, so the
+    /// screen labels them "as of <date> · market closed". Both sides read the same sweep-warmed cache, so
+    /// either child's stamp serves. nil while open (live figures).
+    var asOf: Date? { picks.asOf ?? positions.asOf }
+
     /// Fan both loads out concurrently. Each child keeps its own cache / `force` semantics and its own
     /// store write, so the allocator's caches are fed exactly as they were by the two separate screens.
     func load(force: Bool = false) async {

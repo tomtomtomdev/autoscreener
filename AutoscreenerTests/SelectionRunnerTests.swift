@@ -76,3 +76,27 @@ private final class CallSpy {
         #expect(spy.madeEngine == false)            // no candidates → no market fetch, no engine
     }
 }
+
+// The pure read policy `todaysPicks` / `reviewPositions` apply over the sweep-warmed cache. It decides
+// the staleness window and the "as of" stamp from session state — the heart of the closed-market fix:
+// open ⇒ honour 36h (cold ⇒ "waiting"); closed ⇒ rank the last-warmed close, labelled.
+@Suite struct CacheReadPolicyTests {
+    private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+    @Test func openHonoursTheStalenessWindowAndStampsNoAsOf() {
+        let policy = CacheReadPolicy(isOpen: true)
+        #expect(policy.maxAge == SecurityDataStore.defaultMaxAge)   // 36h window: a cold cache ⇒ "waiting"
+        #expect(policy.asOf(lastWarmedAt: t0) == nil)               // figures are live → no "as of" label
+    }
+
+    @Test func closedReadsUnboundedAndStampsTheLastWarmedTime() {
+        let policy = CacheReadPolicy(isOpen: false)
+        #expect(policy.maxAge == .greatestFiniteMagnitude)          // rank the last-warmed close, any age
+        #expect(policy.asOf(lastWarmedAt: t0) == t0)                // labelled "as of <that time>"
+    }
+
+    @Test func closedWithANeverWarmedCacheHasNoAsOfSoTheScreenWaitsForTheCapture() {
+        let policy = CacheReadPolicy(isOpen: false)
+        #expect(policy.asOf(lastWarmedAt: nil) == nil)              // nothing warmed ⇒ wait for the closing sweep
+    }
+}

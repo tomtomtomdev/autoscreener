@@ -102,8 +102,11 @@ extension AppDependencies {
 
     /// A point-in-time read of the still-fresh cache (entries + regime context), taken once on the main
     /// actor so the `CachedDataProvider` it feeds stays a pure value the engine reads without actor hops.
-    private func cachedSnapshot() -> (data: [Ticker: SecurityData], context: MarketContext?) {
-        securityDataStore.freshSnapshot(asOf: marketClock.now())
+    /// `maxAge` is the `CacheReadPolicy` window: the 36h staleness window while the market is open, or
+    /// unbounded while it's closed (rank the last-warmed close, since no warming sweep is coming).
+    private func cachedSnapshot(within maxAge: TimeInterval)
+        -> (data: [Ticker: SecurityData], context: MarketContext?) {
+        securityDataStore.freshSnapshot(asOf: marketClock.now(), within: maxAge)
     }
 
     /// The buy engine over the cached snapshot — `CachedDataProvider` replaces the live fan-out.
@@ -126,11 +129,14 @@ extension AppDependencies {
         guard !held.isEmpty else {
             return ReviewOutcome(decisions: [], skipped: [])
         }
-        // Read from the sweep-filled cache, never fetch. A cold cache (no regime context / no fresh held
-        // name) ⇒ "waiting for the sweep" rather than re-valuing live on the screen.
-        let snapshot = cachedSnapshot()
+        // Read from the sweep-filled cache, never fetch. While OPEN, a cold cache (no regime context / no
+        // fresh held name) ⇒ "waiting for the sweep". While CLOSED, read the last-warmed close regardless
+        // of age and label it `asOf` — no warming sweep runs until the next session, so waiting is futile.
+        let policy = CacheReadPolicy(isOpen: marketClock.isOpen())
+        let asOf = policy.asOf(lastWarmedAt: securityDataStore.lastWarmedAt())
+        let snapshot = cachedSnapshot(within: policy.maxAge)
         guard snapshot.context != nil, held.contains(where: { snapshot.data[$0] != nil }) else {
-            return ReviewOutcome(decisions: [], skipped: [], awaitingData: true)
+            return ReviewOutcome(decisions: [], skipped: [], awaitingData: true, asOf: asOf)
         }
         let reviewer = PositionReviewer(
             holdings: paperTradingStore,
@@ -140,7 +146,7 @@ extension AppDependencies {
         let decisions = try await reviewer.review { collector.add($0) }
         let skipped = collector.all
         for s in skipped { selectionLog.notice("review skipped \(s.ticker, privacy: .public): \(s.reason, privacy: .public)") }
-        return ReviewOutcome(decisions: decisions, skipped: skipped)
+        return ReviewOutcome(decisions: decisions, skipped: skipped, asOf: asOf)
     }
 
     /// §10 universe: the composite Watchlist (the ranked union of the 20 screeners), read
@@ -164,14 +170,45 @@ extension AppDependencies {
         let universe = await watchlistUniverse()
         // An empty/blocked Watchlist is a genuine "no picks", not a cold cache — don't show "waiting".
         guard !universe.isEmpty else { return SelectionOutcome(recommendations: [], skipped: []) }
-        let snapshot = cachedSnapshot()
-        // Cold cache: no regime context, or not one candidate cached yet ⇒ wait for the sweep.
+        // Open ⇒ honour the 36h staleness window (a cold cache means a warm sweep is imminent → "waiting").
+        // Closed ⇒ read the last-warmed close regardless of age and stamp `asOf`, since the only sweep
+        // coming is the next session's; ranking the official close beats stranding the screen on "waiting".
+        let policy = CacheReadPolicy(isOpen: marketClock.isOpen())
+        let asOf = policy.asOf(lastWarmedAt: securityDataStore.lastWarmedAt())
+        let snapshot = cachedSnapshot(within: policy.maxAge)
+        // Cold cache: no regime context, or not one candidate cached yet ⇒ wait for the sweep (open: the
+        // in-progress one; closed: the closing-capture sweep that's about to warm it).
         guard snapshot.context != nil, universe.contains(where: { snapshot.data[$0] != nil }) else {
-            return SelectionOutcome(recommendations: [], skipped: [], awaitingData: true)
+            return SelectionOutcome(recommendations: [], skipped: [], awaitingData: true, asOf: asOf)
         }
         let runner = SelectionRunner(
             universeSource: { universe },
             makeEngine: { self.makeCachedSelectionEngine(universe: $0, snapshot: snapshot, config: $1) })
-        return try await runner.run(config: config)
+        var outcome = try await runner.run(config: config)
+        outcome.asOf = asOf
+        return outcome
     }
+}
+
+/// Pure cache-read policy for the two cache-backed screens (`todaysPicks` / `reviewPositions`).
+///
+/// The bug it fixes: while the market is CLOSED, no warming sweep runs until the next session, so
+/// honouring the 36h staleness window stranded the Recommendations screen on "waiting for the data
+/// sweep…" all weekend (and through holidays) even though a perfectly good last-close snapshot was
+/// cached. So the read window and the "as of" label both depend on session state:
+///   • **Open** — honour the 36h window. A genuinely cold cache ⇒ a warm sweep is imminent ⇒ "waiting".
+///   • **Closed** — read the last-warmed snapshot regardless of age and label it `asOf`. The sweep
+///     coordinator captures the official close shortly after 16:00, so this is the settled close; no
+///     further sweep is coming, so ranking it beats waiting. (A never-warmed cache still has nil
+///     `lastWarmedAt` ⇒ nil `asOf` ⇒ the screen waits for the closing-capture sweep to fill it.)
+nonisolated struct CacheReadPolicy {
+    let isOpen: Bool
+
+    /// Window passed to `SecurityDataStore.freshSnapshot(within:)`: the 36h staleness window while open,
+    /// unbounded while closed (so the last-warmed close ranks).
+    var maxAge: TimeInterval { isOpen ? SecurityDataStore.defaultMaxAge : .greatestFiniteMagnitude }
+
+    /// The "as of" stamp for the screen's label: nil while open (figures are live), the cache's
+    /// last-warmed time while closed (so the screen reads "as of <date> · market closed").
+    func asOf(lastWarmedAt: Date?) -> Date? { isOpen ? nil : lastWarmedAt }
 }

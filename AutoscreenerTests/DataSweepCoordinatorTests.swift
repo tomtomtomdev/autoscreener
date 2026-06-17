@@ -59,7 +59,8 @@ enum SweepTestKit {
                             macroTTL: TimeInterval = 12 * 60 * 60,
                             sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in },
                             postSweep: DataSweepCoordinator.PostSweep? = nil,
-                            securitySweep: DataSweepCoordinator.SecuritySweep? = nil) -> DataSweepCoordinator {
+                            securitySweep: DataSweepCoordinator.SecuritySweep? = nil,
+                            lastFullSweepAt: Date? = nil) -> DataSweepCoordinator {
         DataSweepCoordinator(
             store: store, marketStore: marketStore ?? MarketDataStore(fileURL: nil, loadFromDisk: false),
             clock: clock,
@@ -69,7 +70,7 @@ enum SweepTestKit {
             catalog: catalog, constituents: constituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
             openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
-            postSweep: postSweep, securitySweep: securitySweep)
+            postSweep: postSweep, securitySweep: securitySweep, lastFullSweepAt: lastFullSweepAt)
     }
 
     static let orderedTemplateIDs = [
@@ -353,14 +354,17 @@ enum SweepTestKit {
         #expect(store.lastSweepAt != nil)
     }
 
-    @Test func closedMarketDoesNotFetchScreeners() async {
+    @Test func closedMarketWithItsCloseAlreadyCapturedDoesNotFetchScreeners() async {
         let store = SweepTestKit.store()
         let templates = WatchlistFakeTemplates()
+        // `lastFullSweepAt` sits past Friday's 16:00 close, so the closing capture is already done and
+        // this is a steady-state closed tick — the IDX legs stay frozen.
         let coord = SweepTestKit.coordinator(
             store: store, templates: templates, clock: SweepTestKit.closedClock(),
-            runsContinuousLoop: true, sleeper: gapCancellingSleeper())
+            runsContinuousLoop: true, sleeper: gapCancellingSleeper(),
+            lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 12, 16, 30))
 
-        await coord.runLoop()  // closed → screeners skipped, then the slow gap sleep throws
+        await coord.runLoop()  // closed + captured → screeners skipped, then the slow gap sleep throws
 
         #expect(templates.loadCalls.isEmpty)
         #expect(store.lastSweepAt == nil)
@@ -372,12 +376,26 @@ enum SweepTestKit {
             store: SweepTestKit.store(), clock: SweepTestKit.closedClock(),
             runsContinuousLoop: true,
             closedGapRange: 1_234_000_000_000...1_234_000_000_000,
-            sleeper: { ns in await recorder.record(ns); if ns >= 100_000_000_000 { throw CancellationError() } })
+            sleeper: { ns in await recorder.record(ns); if ns >= 100_000_000_000 { throw CancellationError() } },
+            lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 12, 16, 30))  // already captured → no closing-capture sweep
 
         await coord.runLoop()
 
         let delays = await recorder.delays
         #expect(delays == [1_234_000_000_000])  // one closed-cadence gap, then the loop ends
+    }
+}
+
+/// A sleeper that throws on the `limit`-th long inter-sweep gap (≥100s), letting the short throttle
+/// sleeps through — so a driven `runLoop` runs exactly `limit` full iterations before terminating.
+private actor LoopGapGate {
+    private var gaps = 0
+    let limit: Int
+    init(limit: Int = 1) { self.limit = limit }
+    func tick(_ ns: UInt64) throws {
+        guard ns >= 100_000_000_000 else { return }
+        gaps += 1
+        if gaps >= limit { throw CancellationError() }
     }
 }
 
@@ -502,6 +520,56 @@ enum SweepTestKit {
         let delays = await recorder.delays
         #expect(delays.count == 2)  // 3 quotes → first free, 2 throttled
         #expect(delays.allSatisfy { (1_000_000_000...1_500_000_000).contains($0) })
+    }
+
+    // MARK: - Closing capture: one full sweep after the close to lock in the official figures.
+
+    @Test func closedLoopWithoutACaptureWarmsTheCloseButDoesNotRunTheAutopilot() async {
+        let warm = PostSweepCounter()
+        let auto = PostSweepCounter()
+        let gate = LoopGapGate()
+        // Sat 10:00, nothing captured yet → the first closed tick must grab Friday's close.
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            runsContinuousLoop: true, sleeper: { ns in try await gate.tick(ns) },
+            postSweep: { auto.bump() }, securitySweep: { warm.bump() })
+
+        await coord.runLoop()  // one closed tick: capture the close, then the gap sleep ends the loop
+
+        #expect(warm.calls == 1)               // selection cache warmed with the settled close
+        #expect(auto.calls == 0)               // but the autopilot did NOT trade on the forced sweep
+        #expect(coord.lastFullSweepAt != nil)  // capture recorded so it won't repeat
+    }
+
+    @Test func closedLoopWithTheCloseAlreadyCapturedSkipsTheFullSweep() async {
+        let warm = PostSweepCounter()
+        let templates = WatchlistFakeTemplates()
+        let gate = LoopGapGate()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), templates: templates, commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            runsContinuousLoop: true, sleeper: { ns in try await gate.tick(ns) },
+            securitySweep: { warm.bump() },
+            lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 12, 16, 30))  // Fri 16:30 > Fri 16:00 close
+
+        await coord.runLoop()
+
+        #expect(templates.loadCalls.isEmpty)   // no IDX/screener leg on a captured closed tick
+        #expect(warm.calls == 0)               // no cache warm either
+    }
+
+    @Test func closedLoopCapturesTheCloseOnlyOnce() async {
+        let templates = WatchlistFakeTemplates()
+        let gate = LoopGapGate(limit: 2)  // allow two closed ticks before cancelling
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), templates: templates, commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            runsContinuousLoop: true, sleeper: { ns in try await gate.tick(ns) })
+
+        await coord.runLoop()  // tick 1 captures; tick 2 must NOT re-capture
+
+        #expect(templates.loadCalls.count == 20)  // screeners fetched on the first tick only
     }
 }
 

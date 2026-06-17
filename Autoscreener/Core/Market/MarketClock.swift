@@ -18,6 +18,13 @@ nonisolated struct MarketClock: Sendable {
     /// (15:49 open, 15:51 closed).
     static let sessions: [(start: Int, end: Int)] = [(540, 720), (810, 950)]
 
+    /// Minute-of-day the official closing price settles (16:00 = 960). The regular session *ends*
+    /// at 15:50 (`sessions.last.end`), but the closing price prints in the 15:50–16:00 closing
+    /// auction — so "have we captured today's close yet?" keys off this later instant, not the
+    /// session end. The last in-hours sweep (≤ 15:49) holds pre-close figures; the sweep coordinator
+    /// fires one more full sweep after this minute to lock in the settled close.
+    static let closingPrintMinute = 960
+
     var timeZone: TimeZone
     /// Injectable wall clock so tests can pin an exact instant.
     var now: @Sendable () -> Date
@@ -66,6 +73,27 @@ nonisolated struct MarketClock: Sendable {
         // Unreachable in practice (a weekday always appears within 8 days), but
         // return a sane far-future fallback rather than trap.
         return date.addingTimeInterval(24 * 60 * 60)
+    }
+
+    /// The most recent instant the official close printed at or before `date`: the latest weekday
+    /// 16:00 (`closingPrintMinute`) that is `<= date`. During a session it returns the *previous*
+    /// session's close (today hasn't closed yet); just after 16:00 it returns today's; on a weekend
+    /// or before a weekday open it returns the prior weekday's. Scans back ~8 days (a weekday always
+    /// appears). The sweep loop compares its last full sweep against this to decide whether it still
+    /// needs to capture the latest close. Holidays aren't modelled (see the type doc); the worst case
+    /// is one wasted capture that re-reads the prior close.
+    func mostRecentClose(asOf date: Date) -> Date? {
+        let cal = calendar
+        let startOfReferenceDay = cal.startOfDay(for: date)
+        for dayOffset in 0...8 {
+            guard let day = cal.date(byAdding: .day, value: -dayOffset, to: startOfReferenceDay) else { continue }
+            let weekday = cal.component(.weekday, from: day)
+            guard isWeekday(weekday) else { continue }
+            guard let close = cal.date(byAdding: .minute, value: Self.closingPrintMinute, to: day) else { continue }
+            if close <= date { return close }
+        }
+        // Unreachable in practice (a weekday always appears within 8 days); nil rather than trap.
+        return nil
     }
 
     /// Gregorian weekday: 1 = Sunday … 7 = Saturday. Mon–Fri is 2…6.

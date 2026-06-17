@@ -27,6 +27,7 @@ import Testing
         var result: [Recommendation] = []
         var skipped: [SkippedName] = []
         var awaitingData = false
+        var asOf: Date?
         var error: Error?
         var loadingWhenCalled: Bool?
         weak var vm: TodaysPicksViewModel?
@@ -35,7 +36,8 @@ import Testing
             callCount += 1
             loadingWhenCalled = vm?.isLoading
             if let error { throw error }
-            return SelectionOutcome(recommendations: result, skipped: skipped, awaitingData: awaitingData)
+            return SelectionOutcome(recommendations: result, skipped: skipped,
+                                    awaitingData: awaitingData, asOf: asOf)
         }
     }
 
@@ -124,6 +126,23 @@ import Testing
 
         await vm.load()                  // retries without force (unlike a successful load)
         #expect(spy.callCount == 2)
+    }
+
+    // MARK: - Closed market: rank the last-warmed close, labelled "as of <date>"
+
+    @Test func aClosedMarketLoadSurfacesTheAsOfStampAndIsASuccessfulLoad() async {
+        let spy = SourceSpy()
+        let close = Date(timeIntervalSince1970: 1_700_000_000)
+        spy.result = [makeRecommendation("WIFI")]
+        spy.asOf = close                 // closed market → ranked from the last-warmed close
+        let vm = TodaysPicksViewModel(source: spy.source)
+
+        await vm.load()
+
+        #expect(vm.asOf == close)        // drives the "as of <date> · market closed" caption
+        #expect(vm.picks.map(\.ticker) == ["WIFI"])
+        #expect(vm.hasLoaded)            // closed-but-ranked is a successful load, not "awaiting"
+        #expect(vm.awaitingData == false)
     }
 
     // MARK: - Gate-5 Phase 3: feed the entry-thesis cache

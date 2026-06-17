@@ -92,6 +92,11 @@ final class DataSweepCoordinator {
     @ObservationIgnored private var didStart = false
     /// Reset at the top of every sweep — the first request pays no throttle gap.
     @ObservationIgnored private var hasIssuedFirstRequest = false
+    /// When the last full (IDX-inclusive) sweep ran — the sweep that refreshes the screeners, regime,
+    /// and the selection cache. The loop compares it against `clock.mostRecentClose` to capture each
+    /// session's official close exactly once after the market closes (see `runLoop`). nil until the
+    /// first full sweep; injectable so tests can stand the coordinator up as already-captured.
+    @ObservationIgnored private(set) var lastFullSweepAt: Date?
 
     /// BI rate + FRED macro change at most daily; refetching them every open sweep
     /// (5–10 min) would hammer bi.go.id/FRED for nothing. Cached in-memory across sweeps
@@ -143,7 +148,8 @@ final class DataSweepCoordinator {
          macroTTL: TimeInterval = 12 * 60 * 60,
          sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) },
          postSweep: PostSweep? = nil,
-         securitySweep: SecuritySweep? = nil) {
+         securitySweep: SecuritySweep? = nil,
+         lastFullSweepAt: Date? = nil) {
         self.store = store
         self.marketStore = marketStore
         self.clock = clock
@@ -167,6 +173,7 @@ final class DataSweepCoordinator {
         self.sleeper = sleeper
         self.postSweep = postSweep
         self.securitySweep = securitySweep
+        self.lastFullSweepAt = lastFullSweepAt
     }
 
     /// Idempotent. In production launches the continuous market-hours loop; under
@@ -187,13 +194,31 @@ final class DataSweepCoordinator {
     /// while open (full refresh), 20–30 min while closed (around-the-clock legs only).
     /// A thrown sleeper (cancellation) ends the loop. `internal` so tests can drive it
     /// directly with a fake clock + cancelling sleeper.
+    ///
+    /// **Closing capture.** While closed, if the last full sweep predates the most recent 16:00 close
+    /// (`needsClosingCapture`), the loop forces one full sweep to lock in the official closing figures —
+    /// the regular session ends at 15:50, so the in-hours sweeps never saw the closing-auction print, and
+    /// without this the selection cache would either hold pre-close numbers or age out entirely over a
+    /// weekend/holiday (stranding the Recommendations screen). The forced sweep warms data only
+    /// (`runAutopilot: false`); the once-a-day autopilot stays tied to live sessions. It's one-shot:
+    /// `lastFullSweepAt` then sits past the close, so later closed ticks fall through to around-the-clock.
     func runLoop() async {
         while !Task.isCancelled {
             let open = clock.isOpen()
-            await runSweep(includeIDX: open)
+            let capturingClose = !open && needsClosingCapture()
+            await runSweep(includeIDX: open || capturingClose, runAutopilot: open)
             let gap = open ? UInt64.random(in: openGapRange) : UInt64.random(in: closedGapRange)
             do { try await sleeper(gap) } catch { return }
         }
+    }
+
+    /// True when the market is between sessions and we haven't yet captured the most recent session's
+    /// official close: no full sweep has run (`lastFullSweepAt == nil`), or the last one predates that
+    /// close. False once captured, so the loop forces the closing sweep exactly once per session.
+    private func needsClosingCapture() -> Bool {
+        guard let close = clock.mostRecentClose(asOf: clock.now()) else { return false }
+        guard let last = lastFullSweepAt else { return true }
+        return last < close
     }
 
     /// Manual one-off sweep — wired to every Refresh button. Forces a full refresh
@@ -205,7 +230,9 @@ final class DataSweepCoordinator {
     /// (screeners, composite/index/sector quotes, regime read) run or are left frozen;
     /// the around-the-clock legs (global/commodity/FX quotes) always run. Re-entrancy
     /// guarded so a manual refresh can't overlap a loop sweep.
-    func runSweep(includeIDX: Bool? = nil) async {
+    /// `runAutopilot` lets the closing-capture sweep warm data WITHOUT triggering the once-a-day
+    /// autopilot rebalance (the loop passes `false` for it; every other caller keeps the default).
+    func runSweep(includeIDX: Bool? = nil, runAutopilot: Bool = true) async {
         guard !isSweeping else { return }
         isSweeping = true
         loadedScreenerCount = 0
@@ -216,7 +243,12 @@ final class DataSweepCoordinator {
 
         let idx = includeIDX ?? clock.isOpen()
 
-        if idx { await sweepScreeners() }
+        if idx {
+            await sweepScreeners()
+            // Stamp the full-sweep time so the loop's closing capture is one-shot. Set here (not after
+            // the catalog guard) so it also covers the screener-only path the unit tests exercise.
+            lastFullSweepAt = clock.now()
+        }
 
         // No market catalog → screener-only path (the screener unit tests).
         guard !catalog.isEmpty else { return }
@@ -233,8 +265,9 @@ final class DataSweepCoordinator {
 
         // After a full IDX sweep (fresh prices + regime), run the optional post-sweep step — the
         // paper-trading autopilot's once-per-day auto-rebalance. Skipped on closed-only sweeps so it
-        // never trades on stale data, and on the screener-only path (returns above) where there's no regime.
-        if idx, let postSweep { await postSweep() }
+        // never trades on stale data, on the screener-only path (returns above), and on the loop's
+        // closing-capture sweep (`runAutopilot == false`) — that warms the close without trading.
+        if idx, runAutopilot, let postSweep { await postSweep() }
     }
 
     // MARK: - Screeners

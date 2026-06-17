@@ -20,6 +20,7 @@ import Testing
         private(set) var callCount = 0
         var result: [ExitDecision] = []
         var skipped: [SkippedName] = []
+        var asOf: Date?
         var error: Error?
         var loadingWhenCalled: Bool?
         weak var vm: PositionReviewViewModel?
@@ -28,7 +29,7 @@ import Testing
             callCount += 1
             loadingWhenCalled = vm?.isLoading
             if let error { throw error }
-            return ReviewOutcome(decisions: result, skipped: skipped)
+            return ReviewOutcome(decisions: result, skipped: skipped, asOf: asOf)
         }
     }
 
@@ -111,6 +112,19 @@ import Testing
         await vm.load()
         await vm.load()
         #expect(spy.callCount == 2)
+    }
+
+    @Test func aClosedMarketLoadSurfacesTheAsOfStamp() async {
+        let spy = SourceSpy()
+        let close = Date(timeIntervalSince1970: 1_700_000_000)
+        spy.result = [decision("WIFI", .hold)]
+        spy.asOf = close                 // closed market → reviewed against the last-warmed close
+        let vm = PositionReviewViewModel(source: spy.source)
+
+        await vm.load()
+
+        #expect(vm.asOf == close)        // feeds the screen's "as of <date> · market closed" caption
+        #expect(vm.hasLoaded)
     }
 
     @Test func loadFeedsTheExitDecisionsStoreForTheAllocator() async {

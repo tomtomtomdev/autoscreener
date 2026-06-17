@@ -72,4 +72,36 @@ import Testing
         #expect(snap.context != nil)
         #expect(snap.data["WIFI"] != nil)
     }
+
+    // MARK: - Closed-market read: rank the last-warmed close (Fix A)
+
+    @Test func lastWarmedAtIsTheNewestFetchedTimeAcrossEntriesAndContext() {
+        let store = SecurityDataStore()
+        #expect(store.lastWarmedAt() == nil)                       // nothing cached yet
+        store.update(security("WIFI"), at: t0)
+        store.update(security("BBCA"), at: t0.addingTimeInterval(120))   // newest entry
+        store.updateContext(context(), at: t0.addingTimeInterval(60))
+        #expect(store.lastWarmedAt() == t0.addingTimeInterval(120))
+    }
+
+    @Test func lastWarmedAtCanBeTheContextWhenItIsNewest() {
+        let store = SecurityDataStore()
+        store.update(security("WIFI"), at: t0)
+        store.updateContext(context(), at: t0.addingTimeInterval(300))   // context warmed last
+        #expect(store.lastWarmedAt() == t0.addingTimeInterval(300))
+    }
+
+    @Test func anUnboundedWindowRanksEvenLongStaleEntries() {
+        // The closed-market read path uses an effectively-unbounded window so the last-warmed close
+        // ranks no matter how long the market's been shut (a weekend / holiday past the 36h window).
+        let store = SecurityDataStore()
+        store.update(security("WIFI"), at: t0)
+        store.updateContext(context(), at: t0)
+        let weekLater = t0.addingTimeInterval(7 * 24 * 3600)       // a week after it was warmed
+
+        #expect(store.freshSnapshot(asOf: weekLater, within: SecurityDataStore.defaultMaxAge).data.isEmpty)  // 36h: dropped
+        let snap = store.freshSnapshot(asOf: weekLater, within: .greatestFiniteMagnitude)
+        #expect(snap.data["WIFI"] != nil)                          // unbounded: still ranked
+        #expect(snap.context != nil)
+    }
 }

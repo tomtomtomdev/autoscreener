@@ -60,18 +60,24 @@ nonisolated final class SkipCollector: @unchecked Sendable {
 /// Buy-side run result: the ranked recommendations plus the names skipped while assembling them.
 /// `awaitingData` is set when the sweep-filled cache is still cold (no regime context / no fresh
 /// entries), so the screen shows a "waiting for the sweep" state instead of a misleading "no picks".
+/// `asOf` is non-nil only while the market is CLOSED — it's the cache's last-warmed time, so the screen
+/// can rank the last-known close and label it "as of <date> · market closed" rather than waiting on a
+/// sweep that won't run until the next session. nil while open (figures are live).
 nonisolated struct SelectionOutcome: Sendable {
     let recommendations: [Recommendation]
     let skipped: [SkippedName]
     var awaitingData: Bool = false
+    var asOf: Date? = nil
 }
 
 /// Sell-side review result: the hold/trim/exit verdicts plus the held names skipped while re-valuing.
-/// `awaitingData` mirrors `SelectionOutcome` — a cold selection cache means "wait", not "nothing to do".
+/// `awaitingData` / `asOf` mirror `SelectionOutcome` — a cold cache means "wait", and a closed market
+/// ranks the last-warmed close labelled "as of <date>".
 nonisolated struct ReviewOutcome: Sendable {
     let decisions: [ExitDecision]
     let skipped: [SkippedName]
     var awaitingData: Bool = false
+    var asOf: Date? = nil
 }
 
 enum SelectionFundamentals {

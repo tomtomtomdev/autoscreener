@@ -148,10 +148,29 @@ struct RecommendationsView: View {
                      count: twoUp ? 2 : 1)
     }
 
-    /// The action inbox at the top of the screen. Renders compactly in its non-list states (loading /
-    /// error / nothing-to-do) so the watchlist section below always stays in view.
-    @ViewBuilder
+    /// The action inbox at the top of the screen. While the market is closed it ranks the last-warmed
+    /// close, so a caption above the inbox stamps it "as of <date> · market closed" (nil/absent while open).
     private var recommendationsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let asOf = vm.asOf { asOfCaption(asOf) }
+            recommendationsBody
+        }
+    }
+
+    /// "Figures as of <date> · market closed" — shown only when the inbox is ranking the last-warmed
+    /// close (i.e. the market is closed and the cache has been warmed at least once).
+    private func asOfCaption(_ date: Date) -> some View {
+        Label("Figures as of \(date.formatted(date: .abbreviated, time: .omitted)) · market closed",
+              systemImage: "moon.zzz")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("recommendations.asOfClose")
+    }
+
+    /// Renders compactly in its non-list states (loading / error / nothing-to-do) so the watchlist
+    /// section below always stays in view.
+    @ViewBuilder
+    private var recommendationsBody: some View {
         if !vm.rows.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 summary
