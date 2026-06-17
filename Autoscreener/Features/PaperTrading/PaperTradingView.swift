@@ -31,7 +31,7 @@ struct PaperTradingView: View {
         .accessibilityIdentifier("PaperTradingView")
         .toolbar {
             ToolbarItemGroup {
-                Button("Generate plan") { vm.generatePlan() }
+                Button("Generate plan") { Task { await vm.generatePlan() } }
                     .disabled(!vm.canPlan)
                     .accessibilityIdentifier("PaperTradingGenerateButton")
                 Button(role: .destructive) { vm.reset() } label: { Text("Reset") }
@@ -61,7 +61,23 @@ struct PaperTradingView: View {
                 stat("Realized P&L", Self.signedIdr(vm.realizedPnL),
                      sub: nil, tint: tint(vm.realizedPnL))
             }
+            autoRebalanceStatus
         }
+    }
+
+    /// Surfaces the hands-free autopilot so the autonomous trading is visible. The autopilot
+    /// auto-rebalances off the recommendations once per trading day; the trade log is the audit trail.
+    private var autoRebalanceStatus: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+            if let at = vm.lastAutoRebalanceAt {
+                Text("Auto-rebalance on · last \(at.formatted(date: .abbreviated, time: .shortened))")
+            } else {
+                Text("Auto-rebalance on · runs once per trading day")
+            }
+        }
+        .font(.caption).foregroundStyle(.secondary)
+        .accessibilityIdentifier("PaperTradingAutoRebalanceStatus")
     }
 
     private var returnBadge: some View {
@@ -126,7 +142,7 @@ struct PaperTradingView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No proposed plan").font(.title3.weight(.semibold))
                 Text(vm.canPlan
-                     ? "Generate a regime-weighted allocation from your watchlist."
+                     ? "Generate a regime-weighted allocation from your buy/sell recommendations."
                      : "Waiting for the watchlist and prices to load…")
                     .font(.callout).foregroundStyle(.secondary)
             }

@@ -61,6 +61,14 @@ final class PaperTradingStore {
         persist()
     }
 
+    /// Stamps when the autopilot last auto-rebalanced — the once-per-trading-day guard reads this.
+    /// Recorded even when the rebalance booked no trades, so a "nothing to do" day still counts as done.
+    func recordAutoRebalance(at date: Date) {
+        state.lastAutoRebalanceAt = date
+        version &+= 1
+        persist()
+    }
+
     // MARK: - Persistence
 
     private struct DiskModel: Codable { var state: PaperPortfolioState }

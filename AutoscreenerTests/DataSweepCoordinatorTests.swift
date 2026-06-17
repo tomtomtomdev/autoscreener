@@ -57,7 +57,8 @@ enum SweepTestKit {
                             openGapRange: ClosedRange<UInt64> = 300_000_000_000...600_000_000_000,
                             closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
                             macroTTL: TimeInterval = 12 * 60 * 60,
-                            sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in }) -> DataSweepCoordinator {
+                            sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in },
+                            postSweep: DataSweepCoordinator.PostSweep? = nil) -> DataSweepCoordinator {
         DataSweepCoordinator(
             store: store, marketStore: marketStore ?? MarketDataStore(fileURL: nil, loadFromDisk: false),
             clock: clock,
@@ -66,7 +67,8 @@ enum SweepTestKit {
             biRateProvider: biRateProvider, macroProvider: macroProvider,
             catalog: catalog, constituents: constituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
-            openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper)
+            openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
+            postSweep: postSweep)
     }
 
     static let orderedTemplateIDs = [
@@ -424,6 +426,36 @@ enum SweepTestKit {
 
         #expect(marketStore.quotes["XAU"] != nil)           // prior value retained
         #expect(marketStore.quotes.count == 5)
+    }
+
+    /// Counts post-sweep callbacks, so the hook tests can assert it fired (or didn't).
+    @MainActor final class PostSweepCounter {
+        private(set) var calls = 0
+        func bump() { calls += 1 }
+    }
+
+    @Test func postSweepFiresAfterAFullIDXSweep() async {
+        let counter = PostSweepCounter()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog,
+            postSweep: { counter.bump() })
+
+        await coord.runSweep(includeIDX: true)
+
+        #expect(counter.calls == 1)   // ran once, after prices + regime landed
+    }
+
+    @Test func postSweepDoesNotFireOnAClosedOnlySweep() async {
+        let counter = PostSweepCounter()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            postSweep: { counter.bump() })
+
+        await coord.runSweep(includeIDX: false)   // around-the-clock legs only, regime frozen
+
+        #expect(counter.calls == 0)   // never auto-rebalance on stale (closed-session) data
     }
 
     @Test func marketQuotesAreThrottledSeriallyAfterTheFirst() async {

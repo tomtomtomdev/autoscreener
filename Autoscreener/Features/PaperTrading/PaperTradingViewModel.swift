@@ -20,6 +20,14 @@ final class PaperTradingViewModel {
     private let recommendationsStore: RecommendationsStore
     private let exitDecisionsStore: ExitDecisionsStore
     private let config: AllocationConfig
+    /// The Tier-A config the warming load runs under (mirrors `TodaysPicksViewModel.config`).
+    private let selectionConfig: SelectionConfig
+    /// The buy-picks source the manual plan warms from when the recommendation cache is cold — the same
+    /// headless engine the Recommendations screen uses. Injected so the screen's wiring is unit-testable
+    /// offline (the default hits the shared engine; tests pass a fake).
+    private let picksSource: (SelectionConfig) async throws -> SelectionOutcome
+    /// The sell-verdict source, paired with `picksSource` and warmed together.
+    private let reviewSource: (SelectionConfig) async throws -> ReviewOutcome
 
     init(store: PaperTradingStore,
          screenerStore: ScreenerStore,
@@ -27,7 +35,12 @@ final class PaperTradingViewModel {
          coordinator: DataSweepCoordinator,
          recommendationsStore: RecommendationsStore = AppDependencies.shared.recommendationsStore,
          exitDecisionsStore: ExitDecisionsStore = AppDependencies.shared.exitDecisionsStore,
-         config: AllocationConfig = .standard) {
+         config: AllocationConfig = .standard,
+         selectionConfig: SelectionConfig = .balanced,
+         picksSource: @escaping (SelectionConfig) async throws -> SelectionOutcome
+            = { try await AppDependencies.shared.todaysPicks(config: $0) },
+         reviewSource: @escaping (SelectionConfig) async throws -> ReviewOutcome
+            = { try await AppDependencies.shared.reviewPositions(config: $0) }) {
         self.store = store
         self.screenerStore = screenerStore
         self.marketStore = marketStore
@@ -35,6 +48,9 @@ final class PaperTradingViewModel {
         self.recommendationsStore = recommendationsStore
         self.exitDecisionsStore = exitDecisionsStore
         self.config = config
+        self.selectionConfig = selectionConfig
+        self.picksSource = picksSource
+        self.reviewSource = reviewSource
     }
 
     // MARK: - Inputs
@@ -42,8 +58,18 @@ final class PaperTradingViewModel {
     /// Live regime read (the Layer-1 signal). Reading it is observation-tracked.
     var regime: RegimeRead? { marketStore.regimeRead }
 
-    /// Ranked, veto-filtered watchlist composed from the cached screener snapshots.
+    /// Ranked, veto-filtered watchlist composed from the cached screener snapshots. Still the source of
+    /// display names + prices for the plan, but no longer the buy universe (that's the recommendations).
     var watchlist: [WatchlistRow] { WatchlistComposer.compose(screenerStore.snapshots).rows }
+
+    /// Symbol → display name, from the composite watchlist, used to label the recommendation candidates.
+    private var nameMap: [String: String] {
+        Dictionary(watchlist.map { ($0.symbol, $0.name) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The latest ranked recommendations (the buy universe), newest cache wins. Empty until a load —
+    /// `generatePlan()` warms it on demand.
+    var rankedRecommendations: [Recommendation] { Array(recommendationsStore.byTicker.values) }
 
     /// Symbol → last price, gathered from every screener snapshot's rows (first
     /// non-nil positive wins). The only price source the screen has.
@@ -90,6 +116,10 @@ final class PaperTradingViewModel {
 
     var hasPositions: Bool { !store.state.positions.isEmpty }
 
+    /// When the autopilot last auto-rebalanced this book (once per trading day). `nil` until the first
+    /// auto-run — surfaced so the autonomous trading is visible; the trade log is the full audit trail.
+    var lastAutoRebalanceAt: Date? { store.state.lastAutoRebalanceAt }
+
     // MARK: - Status passthrough (the screen shows the same sweep state as Markets)
 
     var isLoading: Bool { coordinator.isSweeping }
@@ -101,13 +131,32 @@ final class PaperTradingViewModel {
     /// Idempotently ensures the shared sweep is running so regime + watchlist fill in.
     func autoRunIfNeeded() async { coordinator.start() }
 
-    /// Recompute the proposed rebalance from the current portfolio, regime and prices. Gate-5 exit
-    /// verdicts (cached by the Positions to Review screen) are overlaid so a flagged name is forced out /
-    /// barred from re-entry; an empty cache leaves the plan regime-only.
-    func generatePlan() {
-        pendingPlan = AllocationEngine.plan(state: store.state, watchlist: watchlist,
-                                            regime: regime, prices: prices,
-                                            exitDecisions: exitDecisionsStore.byTicker, config: config)
+    /// Recompute the proposed rebalance from the current portfolio, regime, prices and the buy/sell
+    /// recommendations. The buy universe is the ranked Tier-A picks (`recommendationsStore`), sized by
+    /// each name's `suggestedWeight`; the Gate-5 exit verdicts (`exitDecisionsStore`) are overlaid so a
+    /// flagged name is forced out / barred from re-entry. If the recommendation cache is cold (the user
+    /// hasn't opened the Recommendations screen and the autopilot hasn't run), it's warmed once from the
+    /// same headless engine before planning — a warm cache plans without any fetch.
+    func generatePlan() async {
+        await refreshRecommendationsIfNeeded()
+        pendingPlan = AllocationEngine.plan(
+            state: store.state,
+            candidates: PaperTradingPlanner.candidates(from: rankedRecommendations, names: nameMap),
+            regime: regime, prices: prices,
+            exitDecisions: exitDecisionsStore.byTicker, config: config)
+    }
+
+    /// Warms the buy/sell recommendation caches once when both are cold, reusing the same sources the
+    /// Recommendations screen uses (and the autopilot). A failed load leaves the caches empty so the
+    /// next attempt retries — never blocks the plan (a cold cache just yields an empty buy universe).
+    private func refreshRecommendationsIfNeeded() async {
+        guard recommendationsStore.byTicker.isEmpty else { return }
+        if let outcome = try? await picksSource(selectionConfig) {
+            recommendationsStore.update(outcome.recommendations)
+        }
+        if let review = try? await reviewSource(selectionConfig) {
+            exitDecisionsStore.update(review.decisions)
+        }
     }
 
     /// Book the pending plan into the portfolio, then clear it. Each buy that OPENS a position is
@@ -117,14 +166,8 @@ final class PaperTradingViewModel {
     func execute() {
         guard let plan = pendingPlan else { return }
         let now = Date()
-        let theses = Dictionary(
-            plan.lines.lazy
-                .filter { $0.side == .buy }
-                .compactMap { line -> (String, EntryThesis)? in
-                    guard let rec = self.recommendationsStore.byTicker[line.symbol] else { return nil }
-                    return (line.symbol, EntryThesis(recommendation: rec, entryDate: now))
-                },
-            uniquingKeysWith: { first, _ in first })
+        let theses = PaperTradingPlanner.theses(
+            for: plan, recommendations: recommendationsStore.byTicker, at: now)
         store.apply(plan: plan, theses: theses, config: config, at: now)
         pendingPlan = nil
     }

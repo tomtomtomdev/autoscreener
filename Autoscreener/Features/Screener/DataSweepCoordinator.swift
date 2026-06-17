@@ -74,6 +74,12 @@ final class DataSweepCoordinator {
     /// the app doesn't fetch on a timer during a test.
     private let runsContinuousLoop: Bool
     private let sleeper: Sleeper
+    /// Optional post-sweep step, run on the main actor after a full IDX-inclusive sweep completes (so
+    /// prices + regime are fresh). The app wires this to the paper-trading autopilot's once-per-day
+    /// auto-rebalance; defaulted `nil` so every existing caller and test is byte-for-byte unchanged.
+    private let postSweep: PostSweep?
+
+    typealias PostSweep = @MainActor () async -> Void
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var didStart = false
@@ -128,7 +134,8 @@ final class DataSweepCoordinator {
          openGapRange: ClosedRange<UInt64> = 300_000_000_000...600_000_000_000,
          closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
          macroTTL: TimeInterval = 12 * 60 * 60,
-         sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) }) {
+         sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) },
+         postSweep: PostSweep? = nil) {
         self.store = store
         self.marketStore = marketStore
         self.clock = clock
@@ -150,6 +157,7 @@ final class DataSweepCoordinator {
         self.openGapRange = openGapRange
         self.closedGapRange = closedGapRange
         self.sleeper = sleeper
+        self.postSweep = postSweep
     }
 
     /// Idempotent. In production launches the continuous market-hours loop; under
@@ -207,6 +215,11 @@ final class DataSweepCoordinator {
         await sweepMarketQuotes(includeIDX: idx)
         if idx { await sweepRegime() }
         marketStore.markSweepComplete(at: clock.now())
+
+        // After a full IDX sweep (fresh prices + regime), run the optional post-sweep step — the
+        // paper-trading autopilot's once-per-day auto-rebalance. Skipped on closed-only sweeps so it
+        // never trades on stale data, and on the screener-only path (returns above) where there's no regime.
+        if idx, let postSweep { await postSweep() }
     }
 
     // MARK: - Screeners

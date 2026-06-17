@@ -44,6 +44,10 @@ nonisolated struct PaperPortfolioState: Codable, Sendable {
     var cash: Double
     var positions: [String: PaperPosition]
     var trades: [PaperTrade]
+    /// When the autopilot last auto-rebalanced this book. Drives the once-per-trading-day guard so a
+    /// 5–10 min sweep cadence can't over-trade. `Optional` so old cache files decode (missing ⇒ nil ⇒
+    /// "never run", and the next sweep is due). Audit-only besides the guard; the trade log is the record.
+    var lastAutoRebalanceAt: Date? = nil
 
     static var seed: PaperPortfolioState {
         PaperPortfolioState(initialCapital: seedCapital, cash: seedCapital, positions: [:], trades: [])
@@ -111,6 +115,25 @@ nonisolated struct PaperPortfolioState: Codable, Sendable {
     }
 }
 
+// MARK: - Allocation candidate (the buy universe)
+
+/// One ranked buy candidate the allocator sizes — a flattened view of a Tier-A `Recommendation`
+/// (gate-filtered pick) carrying just what Layer 3 needs: the engine's `suggestedWeight` (the primary
+/// sizing signal) and `conviction` (the ranking key and the sizing fallback). The allocator depends on
+/// this DTO, not on `Recommendation` or `WatchlistRow`, so it stays a pure, layer-free value type.
+nonisolated struct AllocationCandidate: Sendable, Hashable {
+    let symbol: String
+    let name: String
+    let conviction: Double
+    let suggestedWeight: Double
+}
+
+/// Which per-name signal the allocator sizes by (Layer 3). See `AllocationConfig.sizingBasis`.
+nonisolated enum SizingBasis: String, Codable, Sendable {
+    case suggestedWeight
+    case conviction
+}
+
 // MARK: - Allocation config
 
 /// The knobs of the regime-gated, conviction-weighted, risk-capped allocator. The
@@ -132,6 +155,11 @@ nonisolated struct AllocationConfig: Codable, Sendable {
     var minPositions: Int = 6           // diversification target when fully deployed
     var kellyFraction: Double = 0.5     // damp conviction: weightᵏ, k < 1 (√ by default)
     var rebalanceBandPct: Double = 0.02 // skip a delta smaller than this × equity (anti-churn)
+    /// Which signal each candidate is sized by (Layer 3). `.suggestedWeight` honours the selection
+    /// engine's own per-name target weight verbatim (the engine already did the sizing); `.conviction`
+    /// uses the fractional-Kelly damp of raw conviction. A candidate missing the chosen signal falls
+    /// back to conviction-Kelly, and an all-zero signal vector degrades to an even split.
+    var sizingBasis: SizingBasis = .suggestedWeight
     var execution: ExecutionModel = .standardIDX
 
     static let standard = AllocationConfig()

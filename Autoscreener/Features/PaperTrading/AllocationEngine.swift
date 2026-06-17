@@ -1,33 +1,37 @@
 import Foundation
 
 /// The pure allocator behind paper trading — no I/O, no observation, fully unit-testable
-/// (the same shape as `RegimeSynthesizer`). It turns *(portfolio, watchlist, regime,
+/// (the same shape as `RegimeSynthesizer`). It turns *(portfolio, candidates, regime,
 /// prices)* into a proposed `AllocationPlan` via three layers:
 ///
 ///   1. **How much to deploy** — map `RegimeRead.score` to a target equity exposure
 ///      (Zweig: don't fight the Fed/tape). The rest stays in cash.
-///   2. **What to hold** — rank veto-clean, priced watchlist names by conviction
-///      (`WatchlistRow.score`), take the top-N.
-///   3. **How much of each** — conviction weights, fractional-Kelly damped, then
-///      water-filled under a per-name cap (which also enforces a position-count floor),
-///      lot-rounded, with sub-band deltas suppressed to curb churn (Against the Gods:
-///      size for survival, diversify, don't chase the extreme).
+///   2. **What to hold** — rank veto-clean, priced buy candidates (the gate-filtered
+///      Tier-A `Recommendation`s) by conviction, take the top-N.
+///   3. **How much of each** — size by the engine's own `suggestedWeight` (or, per
+///      `config.sizingBasis`, fractional-Kelly-damped conviction), then water-fill under
+///      a per-name cap (which also enforces a position-count floor), lot-round, and
+///      suppress sub-band deltas to curb churn (Against the Gods: size for survival,
+///      diversify, don't chase the extreme).
 nonisolated enum AllocationEngine {
 
-    /// Builds the proposed rebalance. `prices` is keyed by symbol; a watchlist name
-    /// with no positive price is skipped (we never fill at a stale cost basis). A `nil`
-    /// regime degrades to the neutral band, matching the rest of the app.
+    /// Builds the proposed rebalance. `prices` is keyed by symbol; a candidate with no positive price
+    /// is skipped (we never fill at a stale cost basis). A `nil` regime degrades to the neutral band,
+    /// matching the rest of the app.
+    ///
+    /// `candidates` is the buy universe — the ranked, gate-filtered Tier-A recommendations (flattened to
+    /// `AllocationCandidate`). A name that isn't a candidate is never bought; a held name that has
+    /// dropped out of the set resolves to a full sale below.
     ///
     /// `exitDecisions` (Gate-5) overlays the sell-side discipline onto the regime-weighted target,
-    /// keyed by symbol (defaulted empty ⇒ byte-for-byte the regime-only behaviour, so every existing
-    /// caller and the harness are unchanged):
+    /// keyed by symbol (defaulted empty ⇒ regime-only behaviour):
     ///   • `.exit` — the name is barred from the buy candidates (no re-entry) and any held position is
     ///     forced to a full sale, overriding the anti-churn band (a broken thesis isn't churn).
     ///   • `.trim` — the name's target is capped at its current size (never add); the natural downward
     ///     rebalance still applies, so the position can still shrink toward its regime target.
-    ///   • `.hold` / absent — no constraint; the name sizes purely on conviction + regime.
+    ///   • `.hold` / absent — no constraint; the name sizes purely on its signal + regime.
     static func plan(state: PaperPortfolioState,
-                     watchlist: [WatchlistRow],
+                     candidates universe: [AllocationCandidate],
                      regime: RegimeRead?,
                      prices: [String: Double],
                      exitDecisions: [String: ExitAction] = [:],
@@ -41,13 +45,13 @@ nonisolated enum AllocationEngine {
 
         // Layer 2 — rank priced candidates by conviction, take top-N. A Gate-5 `.exit` name is never a
         // candidate, so it can't consume a slot or be re-bought (the held side is forced out below).
-        let priced: [WatchlistRow] = watchlist.filter {
+        let priced: [AllocationCandidate] = universe.filter {
             (prices[$0.symbol] ?? 0) > 0 && exitDecisions[$0.symbol] != .exit
         }
-        let ranked: [WatchlistRow] = priced.sorted { lhs, rhs in
-            lhs.score != rhs.score ? lhs.score > rhs.score : lhs.symbol < rhs.symbol
+        let ranked: [AllocationCandidate] = priced.sorted { lhs, rhs in
+            lhs.conviction != rhs.conviction ? lhs.conviction > rhs.conviction : lhs.symbol < rhs.symbol
         }
-        let candidates: [WatchlistRow] = Array(ranked.prefix(config.topN))
+        let candidates: [AllocationCandidate] = Array(ranked.prefix(config.topN))
 
         // Layer 3 — weights as a fraction of *total equity*, summing to `exposure`.
         let weights = targetWeights(candidates: candidates, exposure: exposure, config: config)
@@ -119,19 +123,21 @@ nonisolated enum AllocationEngine {
 
     // MARK: - Layer 3 weighting
 
-    /// Conviction weights as a fraction of total equity, summing to `exposure`:
-    /// damp each score by `weightᵏ` (k = kellyFraction), normalise to `exposure`, then
-    /// water-fill under `effectivePerNameCap` so no name dominates and at least
-    /// `minPositions` names share the book once exposure is high enough.
-    private static func targetWeights(candidates: [WatchlistRow], exposure: Double,
+    /// Per-name weights as a fraction of total equity, summing to `exposure`: take each candidate's raw
+    /// sizing signal (`config.sizingBasis`), normalise to `exposure`, then water-fill under
+    /// `effectivePerNameCap` so no name dominates and at least `minPositions` names share the book once
+    /// exposure is high enough.
+    private static func targetWeights(candidates: [AllocationCandidate], exposure: Double,
                                       config: AllocationConfig) -> [Double] {
         guard !candidates.isEmpty, exposure > 0 else {
             return Array(repeating: 0, count: candidates.count)
         }
         let cap = config.effectivePerNameCap
 
-        // Damped raw conviction (guard against non-positive scores).
-        let raw = candidates.map { pow(max($0.score, 0.0001), config.kellyFraction) }
+        // Raw sizing signal per name. `.suggestedWeight` honours the engine's own target verbatim; a
+        // name missing it (≤ 0) falls back to conviction-Kelly so it's never silently dropped. The
+        // proportion is what matters — the vector is renormalised to `exposure` below.
+        let raw = candidates.map { rawSignal(for: $0, config: config) }
         let rawSum = raw.reduce(0, +)
         guard rawSum > 0 else {
             // No conviction signal — spread the exposure evenly (still cap-bounded).
@@ -156,6 +162,14 @@ nonisolated enum AllocationEngine {
             }
         }
         return weights
+    }
+
+    /// The raw (pre-normalisation) sizing signal for one candidate under `config.sizingBasis`.
+    /// `.suggestedWeight` honours the engine's own per-name weight; when that's ≤ 0 (or the basis is
+    /// `.conviction`) it falls back to the fractional-Kelly damp of conviction, `convictionᵏ`, k < 1.
+    private static func rawSignal(for c: AllocationCandidate, config: AllocationConfig) -> Double {
+        if config.sizingBasis == .suggestedWeight, c.suggestedWeight > 0 { return c.suggestedWeight }
+        return pow(max(c.conviction, 0.0001), config.kellyFraction)
     }
 
     private static func rationale(side: TradeSide, symbol: String, weight: Double, stance: RegimeStance,

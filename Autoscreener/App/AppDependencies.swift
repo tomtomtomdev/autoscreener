@@ -68,6 +68,10 @@ final class AppDependencies {
     // allocator reads it when building a plan so a flagged name is forced out / not re-bought — without
     // re-running the expensive holdings review on every rebalance.
     let exitDecisionsStore = ExitDecisionsStore()
+    // Hands-free paper trading: after each full sweep the coordinator calls this autopilot, which
+    // auto-rebalances the book off the recommendations once per trading day. The manual screen drives it
+    // too. Its engine sources default to the `shared` closures (resolved lazily, post-init).
+    let paperTradingAutopilot: PaperTradingAutopilot
 
     static let shared = AppDependencies()
 
@@ -138,6 +142,21 @@ final class AppDependencies {
         // fresh 100M seed rather than reading a real user's portfolio file.
         self.paperTradingStore = PaperTradingStore(loadFromDisk: !headless)
         self.marketClock = clock
+
+        // Build the autopilot from locals (no `self` capture during init) so it can be handed to the
+        // coordinator's post-sweep hook below. Its picks/review sources default to the `shared` engine
+        // closures, evaluated lazily when a sweep actually fires.
+        let autopilot = PaperTradingAutopilot(
+            store: self.paperTradingStore, screenerStore: cacheStore, marketStore: marketStore,
+            recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.exitDecisionsStore)
+        self.paperTradingAutopilot = autopilot
+        // Live only: after each full IDX sweep, run the once-per-day auto-rebalance. Disabled under
+        // fixtures/tests so the seed sweep leaves the paper book deterministic (UI tests drive manually).
+        var postSweep: DataSweepCoordinator.PostSweep? = nil
+        if !headless {
+            postSweep = { [autopilot, clock] in await autopilot.runIfDue(now: clock.now()) }
+        }
+
         self.dataSweepCoordinator = DataSweepCoordinator(
             store: cacheStore, marketStore: marketStore, clock: clock,
             paywall: self.paywallService,
@@ -152,7 +171,8 @@ final class AppDependencies {
             runsContinuousLoop: !headless,
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).
-            sleeper: headless ? { _ in } : { try await Task.sleep(nanoseconds: $0) })
+            sleeper: headless ? { _ in } : { try await Task.sleep(nanoseconds: $0) },
+            postSweep: postSweep)
 
         // Render the signed-in UI immediately under UI-test fixtures — bypass the
         // Keychain probe in ContentView (which only runs while phase == .unknown).
