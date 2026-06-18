@@ -80,6 +80,10 @@ final class AppDependencies {
     // engine ranks from cache instead of fetching per ticker on tab open. Not persisted; refilled each
     // full IDX sweep. Read via `CachedDataProvider` in `todaysPicks` / `reviewPositions`.
     let securityDataStore = SecurityDataStore()
+    // SLOW-leg cache (per-symbol `FundamentalSlice`) the sweep also fills, so an intraday-only pass can
+    // recompose a name from a fresh fast leg + these cached fundamentals instead of a full re-fetch.
+    // Persisted to disk in Phase 3; read by the Phase-4 scheduling branch.
+    let fundamentalStore = FundamentalStore()
     // Hands-free paper trading: after each full sweep the coordinator calls this autopilot, which
     // auto-rebalances the book off the recommendations once per trading day. The manual screen drives it
     // too. Its engine sources default to the `shared` closures (resolved lazily, post-init).

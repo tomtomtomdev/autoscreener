@@ -396,7 +396,7 @@ extension SelectionConfig {
 
 // MARK: - 2. Input data (unchanged)
 
-struct SecurityData: Sendable {
+struct SecurityData: Sendable, Equatable {
     let ticker: Ticker
     let sector: String
     let price: Rupiah
@@ -424,13 +424,13 @@ struct SecurityData: Sendable {
     var governance: GovernanceAssessment? = nil
 }
 
-struct AnnualFinancials: Sendable {
+struct AnnualFinancials: Sendable, Equatable, Codable {
     let year: Int
     let revenue, netIncome, operatingCashFlow, totalAssets, totalLiabilities: Rupiah
     let currentAssets, currentLiabilities, shareholderEquity, receivables: Rupiah
     let sharesOutstanding: Decimal
 }
-struct TTMFinancials: Sendable {
+struct TTMFinancials: Sendable, Equatable, Codable {
     let eps, bookValuePerShare: Decimal
     let netIncome, operatingCashFlow, totalAssets: Rupiah
     let epsGrowthPct, currentRatio, debtToEquity, returnOnEquity: Double
@@ -439,7 +439,7 @@ struct TTMFinancials: Sendable {
     var payoutRatio: Double = 0
     var returnOnAssets: Double = 0
 }
-struct OHLCV: Sendable {
+struct OHLCV: Sendable, Equatable {
     let date: Date
     let open, high, low, close, volume: Decimal
     let value: Rupiah

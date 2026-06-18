@@ -380,6 +380,26 @@ private func makeProvider(
         #expect(s.brokerDistribution?.buyConcentration() == 1.0)   // one buyer ⇒ 100% concentrated
     }
 
+    /// The spine of the fetch-split refactor: fetching the SLOW + FAST legs separately and composing
+    /// them must reproduce, byte-for-byte, what the single `data(for:)` fan-out builds. This is what
+    /// lets a later phase source the two legs from different caches and still assemble a correct name.
+    @Test func splitLegsComposeToTheSameSecurityDataAsDataFor() async throws {
+        let provider = makeProvider()
+        let fundamentals = try await provider.fundamentals(for: "WIFI")
+        let live = try await provider.liveSignals(for: "WIFI", sectorIndexSymbol: fundamentals.sectorIndexSymbol)
+        let composed = StockbitDataProvider.compose("WIFI", fundamentals: fundamentals, live: live)
+
+        let direct = try await provider.data(for: "WIFI")
+        #expect(composed == direct)
+    }
+
+    /// The slow leg resolves the sector-index symbol from `/emitten/info` so the fast leg can fetch
+    /// sector bars on an intraday-only pass without re-reading info.
+    @Test func slowLegCarriesTheResolvedSectorIndexSymbol() async throws {
+        let fundamentals = try await makeProvider().fundamentals(for: "WIFI")
+        #expect(fundamentals.sectorIndexSymbol == "IDXTECHNO")   // happyInfo indexes → IDXTECHNO
+    }
+
     @Test func cachesSecurityDataPerSymbol() async throws {
         let keystats = StubKeystats(happyFields)
         let provider = makeProvider(keystats: keystats)

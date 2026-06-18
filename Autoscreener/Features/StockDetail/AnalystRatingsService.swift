@@ -9,7 +9,7 @@ import Foundation
 /// Shape verified against a covered large-cap re-capture (BBCA, 2026-06-12 — see
 /// CAPTURED-ENDPOINTS-SPEC.md §6). An uncovered name replies `data: null`, which the service degrades
 /// to `nil` ("no coverage"), so a `AnalystCoverage` value is always fully populated.
-nonisolated struct AnalystCoverage: Sendable, Equatable {
+nonisolated struct AnalystCoverage: Sendable, Equatable, Codable {
     let priceTarget: AnalystPriceTarget
     let recommendation: String          // "Buy" / "Hold" / "Sell" / "Strong Buy" … (verbatim)
     let totalBuy: Int
@@ -27,7 +27,7 @@ nonisolated struct AnalystCoverage: Sendable, Equatable {
 }
 
 /// The consensus price-target band and the price it is measured against (rupiah).
-nonisolated struct AnalystPriceTarget: Sendable, Equatable {
+nonisolated struct AnalystPriceTarget: Sendable, Equatable, Codable {
     let best: Double                    // best_target — consensus / mean target
     let low: Double                     // best_low_target
     let high: Double                    // best_high_target

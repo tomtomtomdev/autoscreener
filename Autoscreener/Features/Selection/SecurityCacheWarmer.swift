@@ -23,7 +23,7 @@ import Foundation
 /// still populates the cache) and reports `onProgress` so the title bar can show real warming
 /// progress instead of a frozen screener count.
 struct SecurityCacheWarmer {
-    let provider: DataProvider
+    let provider: LegProvider
     /// Consecutive transport failures that mean "the feed is down → stop". Default 3 — high enough
     /// not to trip on a brief blip mid-warm, low enough to bail an outage in a few requests.
     var maxConsecutiveTransportFailures: Int = 3
@@ -40,7 +40,9 @@ struct SecurityCacheWarmer {
     @MainActor
     func warm(universe: [Ticker],
               onContext: (MarketContext) -> Void,
+              onFundamentals: (Ticker, FundamentalSlice) -> Void = { _, _ in },
               onData: (Ticker, SecurityData) -> Void,
+              cachedFundamentals: (Ticker) -> FundamentalSlice? = { _ in nil },
               onProgress: (_ done: Int, _ total: Int) -> Void = { _, _ in }) async -> Outcome {
         let total = universe.count
         guard total > 0 else { return Outcome(warmed: 0, total: 0, abortedOffline: false) }
@@ -64,8 +66,23 @@ struct SecurityCacheWarmer {
                 return Outcome(warmed: warmed, total: total, abortedOffline: true)
             }
             do {
-                let data = try await provider.data(for: t)
-                onData(t, data)
+                if let cached = cachedFundamentals(t) {
+                    // INTRADAY reuse: the slow leg is still fresh in cache → fetch ONLY the fast leg
+                    // (~4 requests) and recompose against the cached fundamentals. No fundamentals
+                    // re-fetch, and no re-store (its age stays meaningful so the close-capture sweep
+                    // still knows when to refresh it).
+                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: cached.sectorIndexSymbol)
+                    onData(t, StockbitDataProvider.compose(t, fundamentals: cached, live: live))
+                } else {
+                    // FULL warm: a cold/stale name, or a close-capture refresh. Fetch both cadence legs
+                    // (same total request count as the old single `data(for:)`), cache the slow slice for
+                    // later intraday reuse, and compose. All-or-nothing per name: a throw in either leg
+                    // writes neither store, exactly as the old single-fetch did.
+                    let fundamentals = try await provider.fundamentals(for: t)
+                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: fundamentals.sectorIndexSymbol)
+                    onFundamentals(t, fundamentals)
+                    onData(t, StockbitDataProvider.compose(t, fundamentals: fundamentals, live: live))
+                }
                 warmed += 1
                 consecutiveFailures = 0                            // a success proves the feed is alive
             } catch {

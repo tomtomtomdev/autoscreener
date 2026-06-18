@@ -10,7 +10,7 @@ import Foundation
 /// This is a **thin, survivorship-prone timing signal**: useful as a soft tilt (the current
 /// calendar month's `probabilityUpPct` / `avgReturnPct`) and as a StockDetail UI table, but never a
 /// hard gate. The per-year `price_change` grid and the UI-only hex `color`s are intentionally dropped.
-nonisolated struct Seasonality: Sendable, Equatable {
+nonisolated struct Seasonality: Sendable, Equatable, Codable {
     let symbol: String
     /// Jan … Dec in calendar order, followed by the `"Year"` aggregate.
     let months: [SeasonalMonth]
@@ -22,7 +22,7 @@ nonisolated struct Seasonality: Sendable, Equatable {
 }
 
 /// One column of the seasonality table — a calendar month, or the `"Year"` aggregate.
-nonisolated struct SeasonalMonth: Sendable, Equatable {
+nonisolated struct SeasonalMonth: Sendable, Equatable, Codable {
     let name: String                  // "Jan" … "Dec", or "Year"
     let upCount: Int                  // years this month closed up
     let downCount: Int                // years this month closed down

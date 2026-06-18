@@ -106,7 +106,7 @@ nonisolated struct GovernanceData: Sendable, Equatable {
 // MARK: - Governance read (output of GovernanceRules)
 
 /// Severity of a single governance flag. Ordered: a `.concern` outranks a `.watch`.
-nonisolated enum GovernanceSeverity: Int, Sendable, Comparable {
+nonisolated enum GovernanceSeverity: Int, Sendable, Codable, Comparable {
     case info = 0, watch = 1, concern = 2
     static func < (lhs: Self, rhs: Self) -> Bool { lhs.rawValue < rhs.rawValue }
 }
@@ -114,7 +114,7 @@ nonisolated enum GovernanceSeverity: Int, Sendable, Comparable {
 /// One governance red flag. Carries the evidence and — per the `financial-shenanigans`
 /// presentation discipline — *why it matters* and *what to check next*, framed as a question
 /// to investigate, never an accusation.
-nonisolated struct GovernanceFlag: Sendable, Equatable, Identifiable {
+nonisolated struct GovernanceFlag: Sendable, Equatable, Codable, Identifiable {
     let kind: Kind
     let severity: GovernanceSeverity
     let evidence: String
@@ -122,7 +122,7 @@ nonisolated struct GovernanceFlag: Sendable, Equatable, Identifiable {
     let whatToCheckNext: String
     var id: String { kind.rawValue }
 
-    nonisolated enum Kind: String, Sendable, CaseIterable {
+    nonisolated enum Kind: String, Sendable, Codable, CaseIterable {
         case thinFloat = "Thin free float"
         case ownershipConcentration = "Ownership concentration"
         case insiderSelling = "Insider / major-holder selling"
@@ -134,13 +134,13 @@ nonisolated struct GovernanceFlag: Sendable, Equatable, Identifiable {
 
 /// Overall governance posture — the count-and-severity synthesis of the flags. A posture,
 /// not a verdict: "one flag is a question, a pattern is a thesis."
-nonisolated enum GovernanceLevel: String, Sendable {
+nonisolated enum GovernanceLevel: String, Sendable, Codable {
     case clean = "Clean"
     case watch = "Watch"
     case significant = "Significant concerns"
 }
 
-nonisolated struct GovernanceAssessment: Sendable, Equatable {
+nonisolated struct GovernanceAssessment: Sendable, Equatable, Codable {
     let level: GovernanceLevel
     let flags: [GovernanceFlag]
     /// Sections that returned no data (paywall / 404 / empty) — caveats the read.

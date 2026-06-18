@@ -48,7 +48,45 @@ nonisolated enum SelectionProviderError: Error, Equatable, LocalizedError {
     }
 }
 
-actor StockbitDataProvider: DataProvider {
+/// The SLOW half of a `SecurityData` — fundamentals that change at most quarterly. Cached/persisted
+/// across the trading day and refreshed once per close-capture sweep. `sectorIndexSymbol` is resolved
+/// from `/emitten/info` here so the FAST leg can fetch sector bars without re-reading info on an
+/// intraday-only pass.
+struct FundamentalSlice: Sendable, Codable {
+    let sector: String
+    let sharesOutstanding: Decimal
+    let freeFloatPct: Ratio
+    let financials: [AnnualFinancials]
+    let ttm: TTMFinancials
+    let sectorIndexSymbol: String?
+    let peerComparison: PeerComparison?
+    let seasonality: Seasonality?
+    let analystCoverage: AnalystCoverage?
+    let governance: GovernanceAssessment?
+}
+
+/// The FAST half — price/flow signals that move intraday (re-fetched every sweep).
+struct LiveSlice: Sendable {
+    let price: Rupiah
+    let dailyBars: [OHLCV]
+    let foreignNetFlow: [Rupiah]
+    let brokerAccumulationSignal: Double
+    let sectorIndexBars: [OHLCV]
+    let marketIndexBars: [OHLCV]
+    let brokerDistribution: BrokerDistribution?
+}
+
+/// Narrow seam the cache warmer fetches through: the two cadence legs plus the regime context.
+/// `StockbitDataProvider` is the only production conformer; the warmer holds this (not the full
+/// `DataProvider`) so splitting the per-symbol fetch by cadence never touches the engine's read-side
+/// conformers (`CachedDataProvider`, the test stubs).
+protocol LegProvider: Sendable {
+    func fundamentals(for t: Ticker) async throws -> FundamentalSlice
+    func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice
+    func marketContext() async throws -> MarketContext
+}
+
+actor StockbitDataProvider: DataProvider, LegProvider {
 
     // Per-ticker fundamentals, price/flow and company metadata.
     private let keystats: any KeystatsRatioServicing
@@ -171,15 +209,23 @@ actor StockbitDataProvider: DataProvider {
     // MARK: - Per-ticker assembly
 
     private func fetchSecurity(_ t: Ticker) async throws -> SecurityData {
-        let from = now().addingTimeInterval(-history)
-        let to = now()
+        // Split by cadence: SLOW fundamentals (≈quarterly) then FAST live signals (intraday).
+        // `data(for:)` still composes both, so the assembled `SecurityData` is byte-for-byte the same
+        // as the old single fan-out (pinned by the compose-equivalence test). The split is what lets
+        // an intraday sweep refresh only the fast leg against a cached/persisted slow leg.
+        let fundamentals = try await self.fundamentals(for: t)
+        let live = try await self.liveSignals(for: t, sectorIndexSymbol: fundamentals.sectorIndexSymbol)
+        return Self.compose(t, fundamentals: fundamentals, live: live)
+    }
 
-        // --- Essential legs: a failure here means the name can't be valued (propagates). ---
-
+    /// SLOW leg — fundamentals that change at most quarterly. Essential legs (sector from
+    /// `/emitten/info`, keystats→TTM, fundachart annuals) propagate; best-effort overlays degrade to
+    /// nil. Resolves `sectorIndexSymbol` from info so the fast leg can run alone on an intraday pass.
+    func fundamentals(for t: Ticker) async throws -> FundamentalSlice {
         // Classify by sector FIRST. A bank's keystats omits current ratio / D-E ("-"), so the TTM
         // adapter must know the archetype to relax the right required fields (§14 / Phase 3.6):
         // otherwise it throws `missingField` and the name never reaches the engine to be routed to
-        // the financial profile. `/emitten/info` was always fetched essential — only its order moves.
+        // the financial profile. `/emitten/info` is fetched essential.
         let info = try await paced { try await self.emitten.info(symbol: t) }
         let archetype = CompanyArchetype.classify(sector: info.sector)
 
@@ -196,12 +242,6 @@ actor StockbitDataProvider: DataProvider {
             try await self.fundachart.financials(symbol: t, dataset: .cashFlow, report: .annual)
         }
         var annuals = SelectionFundamentals.annualFinancials(income: income, balance: balance, cashFlow: cashFlow)
-
-        let stockBars = try await paced { try await self.priceFeed.dailyBars(symbol: t, from: from, to: to) }
-        let dailyBars = stockBars.ohlcvSeries
-        guard let price = dailyBars.last?.close else { throw SelectionProviderError.noPriceData(t) }
-
-        // --- Best-effort legs: degrade to a no-evidence value rather than abort the run. ---
 
         // Balance-sheet overlay (the 3 tree-only items). Absent ⇒ keep the fundachart annuals as-is.
         if let balanceSheet = try? await paced({
@@ -221,24 +261,15 @@ actor StockbitDataProvider: DataProvider {
         let profile = try? await paced { try await self.emitten.profile(symbol: t) }
         let freeFloat = profile.flatMap(SelectionFundamentals.freeFloat(fromProfile:)) ?? 0
 
-        // Sector-index bars (shared/cached). Absent ⇒ empty; the timing modifier guards on count.
-        var sectorIndexBars: [OHLCV] = []
-        if let sectorSymbol = SelectionFundamentals.sectorIndexSymbol(for: info) {
-            sectorIndexBars = (try? await indexBars(sectorSymbol, from: from, to: to)) ?? []
-        }
-        let marketIndexBars = (try? await indexBars(Self.marketIndexSymbol, from: from, to: to)) ?? []
-
-        // Broker accumulation signal → 0 on failure / no activity (no information → no tilt).
-        let brokerRecords = (try? await paced { try await self.broker.dailyActivity(symbol: t) }) ?? []
-        let brokerSignal = SelectionFundamentals.brokerAccumulationSignal(
-            from: brokerRecords, window: config.flow.foreignWindow)
+        // Resolve the sector-index symbol here (it comes from `/emitten/info`) so the FAST leg can
+        // fetch the sector bars without re-fetching info on an intraday-only pass.
+        let sectorIndexSymbol = SelectionFundamentals.sectorIndexSymbol(for: info)
 
         // Captured-endpoint overlays (Slice 4) — carried context only, each best-effort: a paywall /
         // no-coverage / failure degrades the leg to nil rather than aborting the name's valuation.
         let peers = try? await paced { try await self.comparisonService.comparison(symbol: t) }
         let year = Calendar(identifier: .gregorian).component(.year, from: now())
         let seasonality = try? await paced { try await self.seasonalityService.seasonality(symbol: t, year: year) }
-        let distribution = try? await paced { try await self.orderFlowService.distribution(symbol: t) }
         // Gate-3 consensus: sell-side coverage. `coverage` already yields nil for an uncovered name,
         // so the double-optional from `try?` is flattened to a single "no coverage / no fetch" nil.
         let coverage: AnalystCoverage? = (try? await paced { try await self.analyst.coverage(symbol: t) }) ?? nil
@@ -247,24 +278,74 @@ actor StockbitDataProvider: DataProvider {
         let govReport = try? await paced { try await self.governance.report(symbol: t, period: config.governance.period) }
         let governanceAssessment = govReport.map { GovernanceRules.assess($0, now: now()) }
 
-        return SecurityData(
-            ticker: t,
+        return FundamentalSlice(
             sector: info.sector,
-            price: price,
             sharesOutstanding: shares ?? 0,
             freeFloatPct: freeFloat,
             financials: annuals,
             ttm: ttm,
+            sectorIndexSymbol: sectorIndexSymbol,
+            peerComparison: peers,
+            seasonality: seasonality,
+            analystCoverage: coverage,
+            governance: governanceAssessment)
+    }
+
+    /// FAST leg — price/flow signals that move intraday. `sectorIndexSymbol` comes from the slow leg
+    /// so this can run alone on an intraday-only sweep. A missing price is an essential failure.
+    func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice {
+        let from = now().addingTimeInterval(-history)
+        let to = now()
+
+        let stockBars = try await paced { try await self.priceFeed.dailyBars(symbol: t, from: from, to: to) }
+        let dailyBars = stockBars.ohlcvSeries
+        guard let price = dailyBars.last?.close else { throw SelectionProviderError.noPriceData(t) }
+
+        // Sector-index bars (shared/cached). Absent ⇒ empty; the timing modifier guards on count.
+        var sectorIndexBars: [OHLCV] = []
+        if let sectorIndexSymbol {
+            sectorIndexBars = (try? await indexBars(sectorIndexSymbol, from: from, to: to)) ?? []
+        }
+        let marketIndexBars = (try? await indexBars(Self.marketIndexSymbol, from: from, to: to)) ?? []
+
+        // Broker accumulation signal → 0 on failure / no activity (no information → no tilt).
+        let brokerRecords = (try? await paced { try await self.broker.dailyActivity(symbol: t) }) ?? []
+        let brokerSignal = SelectionFundamentals.brokerAccumulationSignal(
+            from: brokerRecords, window: config.flow.foreignWindow)
+
+        let distribution = try? await paced { try await self.orderFlowService.distribution(symbol: t) }
+
+        return LiveSlice(
+            price: price,
             dailyBars: dailyBars,
             foreignNetFlow: stockBars.foreignNetFlowSeries,
             brokerAccumulationSignal: brokerSignal,
             sectorIndexBars: sectorIndexBars,
             marketIndexBars: marketIndexBars,
-            peerComparison: peers,
-            seasonality: seasonality,
-            brokerDistribution: distribution,
-            analystCoverage: coverage,
-            governance: governanceAssessment)
+            brokerDistribution: distribution)
+    }
+
+    /// Reassemble a `SecurityData` from the two cadence legs. Pure (no actor state) so it composes a
+    /// freshly-fetched leg or a cached/persisted one identically — the read-side merge in later phases.
+    static func compose(_ t: Ticker, fundamentals f: FundamentalSlice, live l: LiveSlice) -> SecurityData {
+        SecurityData(
+            ticker: t,
+            sector: f.sector,
+            price: l.price,
+            sharesOutstanding: f.sharesOutstanding,
+            freeFloatPct: f.freeFloatPct,
+            financials: f.financials,
+            ttm: f.ttm,
+            dailyBars: l.dailyBars,
+            foreignNetFlow: l.foreignNetFlow,
+            brokerAccumulationSignal: l.brokerAccumulationSignal,
+            sectorIndexBars: l.sectorIndexBars,
+            marketIndexBars: l.marketIndexBars,
+            peerComparison: f.peerComparison,
+            seasonality: f.seasonality,
+            brokerDistribution: l.brokerDistribution,
+            analystCoverage: f.analystCoverage,
+            governance: f.governance)
     }
 
     /// Daily bars for a market/sector index, fetched once per run and cached by symbol.

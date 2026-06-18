@@ -9,7 +9,7 @@ import Foundation
 /// "the stock vs. its industry / sector averages", which is exactly the comparison set a
 /// relative-cheapness read wants. Metrics are grouped (Valuation / Per Share / Solvency / …),
 /// and every cell value arrives as a Stockbit display string (`"154,423 B"`, `"15.67"`, `"-"`).
-nonisolated struct PeerComparison: Sendable, Equatable {
+nonisolated struct PeerComparison: Sendable, Equatable, Codable {
     /// Compared columns, subject first then the benchmark aggregates.
     let symbols: [String]
     let groups: [PeerMetricGroup]
@@ -30,12 +30,12 @@ nonisolated struct PeerComparison: Sendable, Equatable {
     }
 }
 
-nonisolated struct PeerMetricGroup: Sendable, Equatable {
+nonisolated struct PeerMetricGroup: Sendable, Equatable, Codable {
     let name: String                 // "Valuation", "Per Share", …
     let metrics: [PeerMetric]
 }
 
-nonisolated struct PeerMetric: Sendable, Equatable {
+nonisolated struct PeerMetric: Sendable, Equatable, Codable {
     let id: Int                      // fitem_id — stable & language-independent
     let name: String                 // fitem_name, e.g. "Market Cap"
     let raw: [String: String]        // column symbol → verbatim display value

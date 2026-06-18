@@ -98,10 +98,20 @@ extension AppDependencies {
         // can't leave the sweep awaiting it forever — the bug that froze the title bar on
         // "Fetching 20/20" and stranded Recommendations on "waiting for the data sweep".
         let warmer = SecurityCacheWarmer(provider: provider)
+        // Cadence policy: while the market is OPEN this is an intraday sweep — reuse each name's still-
+        // fresh cached slow leg and fetch only the cheap fast leg. While CLOSED it's the close-capture
+        // (or a manual-after-close) sweep — `fullWarm` forces a fundamentals refresh. Either way a name
+        // with no fresh cached slice (cold launch / stale) full-warms via the per-name `nil` below, so
+        // a fresh install still fetches fundamentals on its first pass.
+        let fullWarm = !marketClock.isOpen()
         let outcome = await warmer.warm(
             universe: universe,
             onContext: { self.securityDataStore.updateContext($0, at: now) },
+            // Cache the slow slice so an intraday pass can recompose this name from a fresh fast leg
+            // without re-fetching its ~10 fundamentals requests.
+            onFundamentals: { t, slice in self.fundamentalStore.update(slice, for: t, at: now) },
             onData: { _, data in self.securityDataStore.update(data, at: now) },
+            cachedFundamentals: { t in fullWarm ? nil : self.fundamentalStore.freshSlice(for: t, asOf: now) },
             onProgress: progress)
         // A pass that ran to completion (didn't bail offline) is the signal the cache-read policy needs to
         // start ranking a partial cache — without it, the first open-market read mid-warm strands every
