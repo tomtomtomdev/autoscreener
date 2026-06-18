@@ -59,6 +59,9 @@ final class AppDependencies {
     // reads regime + watchlist from the two stores above, never fetches itself.
     let paperTradingStore: PaperTradingStore
     let marketClock: MarketClock
+    // User control over open-hours sweep cadence (continuous vs boundary-only). Read live by the
+    // coordinator's loop and bound to the toggle in the ⌘, Settings "Data" section.
+    let sweepSettings: SweepSettings
     let dataSweepCoordinator: DataSweepCoordinator
     let authState = AuthState()
     // Latest ranked recommendations, cached by `TodaysPicksViewModel` on load. The paper-trading flow
@@ -139,7 +142,12 @@ final class AppDependencies {
         let headless = useFixtures || ProcessInfo.processInfo.isRunningTests
         let cacheStore = ScreenerStore(loadFromDisk: !headless)
         let marketStore = MarketDataStore(loadFromDisk: !headless)
-        let clock = MarketClock()
+        let clock = Self.clockForLaunch()
+        // Open-hours cadence setting, read live by the coordinator loop and bound to the
+        // ⌘, Settings toggle. Captured as a local so the loop's accessor closure can read it
+        // without a `self` capture during init.
+        let sweepSettings = SweepSettings()
+        self.sweepSettings = sweepSettings
         self.screenerStore = cacheStore
         self.marketDataStore = marketStore
         // Same headless rule as the other stores: under fixtures/tests start from a
@@ -185,6 +193,7 @@ final class AppDependencies {
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).
             sleeper: headless ? { _ in } : { try await Task.sleep(nanoseconds: $0) },
+            continuousAutoFetch: { sweepSettings.continuousAutoFetch },
             postSweep: postSweep,
             securitySweep: securitySweep)
 
@@ -197,5 +206,21 @@ final class AppDependencies {
                 try await login.refresh(refreshToken: refreshToken)
             }
         }
+    }
+
+    /// The launch clock. Under UI fixtures, `-UITestMarketOpen` / `-UITestMarketClosed` pin it to a
+    /// fixed open (weekday session) or closed (weekend) instant so market-state chrome — the manual
+    /// Refresh button, the "auto-fetch off" status — renders deterministically regardless of when the
+    /// suite runs. Otherwise the real wall clock.
+    private static func clockForLaunch() -> MarketClock {
+        func jakarta(_ y: Int, _ mo: Int, _ d: Int, _ h: Int, _ mi: Int) -> Date {
+            var cal = Calendar(identifier: .gregorian)
+            cal.timeZone = TimeZone(identifier: "Asia/Jakarta") ?? .current
+            return cal.date(from: DateComponents(year: y, month: mo, day: d, hour: h, minute: mi)) ?? Date()
+        }
+        let info = ProcessInfo.processInfo
+        if info.isUITestMarketOpen {   let t = jakarta(2026, 6, 11, 10, 0); return MarketClock(now: { t }) }  // Thu, session 1
+        if info.isUITestMarketClosed { let t = jakarta(2026, 6, 13, 10, 0); return MarketClock(now: { t }) }  // Saturday
+        return MarketClock()
     }
 }

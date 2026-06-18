@@ -10,16 +10,26 @@ import SwiftUI
 struct GlobalFetchStatusView: View {
     private let coordinator: DataSweepCoordinator
     private let marketStore: MarketDataStore
+    private let settings: SweepSettings
+    private let clock: MarketClock
 
     @MainActor
     init(coordinator: DataSweepCoordinator = AppDependencies.shared.dataSweepCoordinator,
-         marketStore: MarketDataStore = AppDependencies.shared.marketDataStore) {
+         marketStore: MarketDataStore = AppDependencies.shared.marketDataStore,
+         settings: SweepSettings = AppDependencies.shared.sweepSettings,
+         clock: MarketClock = AppDependencies.shared.marketClock) {
         self.coordinator = coordinator
         self.marketStore = marketStore
+        self.settings = settings
+        self.clock = clock
     }
 
     private var status: FetchStatus {
-        FetchStatus.resolve(
+        let now = clock.now()
+        // Paused = the user turned continuous off and we're inside the trading day, so the loop is
+        // idling between boundaries. Reading `continuousAutoFetch` here makes the bar re-render on toggle.
+        let paused = !settings.continuousAutoFetch && clock.isWithinTradingDay(at: now)
+        return FetchStatus.resolve(
             isSweeping: coordinator.isSweeping,
             isThrottling: coordinator.isThrottling,
             loaded: coordinator.loadedScreenerCount,
@@ -27,7 +37,9 @@ struct GlobalFetchStatusView: View {
             page: coordinator.currentPage >= 2 ? coordinator.currentPage : nil,
             lastError: coordinator.lastError,
             paywall: coordinator.paywallMessage,
-            lastSweepAt: marketStore.lastSweepAt)
+            lastSweepAt: marketStore.lastSweepAt,
+            autoFetchPaused: paused,
+            nextBoundary: paused ? clock.nextBoundary(after: now) : nil)
     }
 
     var body: some View {

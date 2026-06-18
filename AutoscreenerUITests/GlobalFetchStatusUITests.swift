@@ -13,7 +13,10 @@ final class GlobalFetchStatusUITests: XCTestCase {
 
     private func launchWithFixtures() -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments += ["-UITestFixtures"]
+        // Force the market OPEN so the global manual-Refresh button (shown only when nothing
+        // auto-fetches) stays hidden — this suite asserts the *per-screen* Refresh control is gone,
+        // and pinning the clock keeps that deterministic regardless of when CI runs.
+        app.launchArguments += ["-UITestFixtures", "-UITestMarketOpen"]
         app.launch()
         return app
     }

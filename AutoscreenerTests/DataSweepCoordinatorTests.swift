@@ -19,6 +19,12 @@ final class RecordingCommodityService: CommodityPriceServicing, @unchecked Senda
     }
 }
 
+/// Counts post-sweep callbacks, so the hook tests can assert it fired (or didn't).
+@MainActor final class PostSweepCounter {
+    private(set) var calls = 0
+    func bump() { calls += 1 }
+}
+
 /// Shared makers for the sweep/store tests. Reuses the lock-protected fan-out fakes
 /// (`WatchlistFakePaywall`/`Templates`/`Screener`) and `WatchlistTestHelpers` defined
 /// in `WatchlistTests.swift`. Market + regime legs default to off (`catalog: []`) so
@@ -58,6 +64,7 @@ enum SweepTestKit {
                             closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
                             macroTTL: TimeInterval = 12 * 60 * 60,
                             sleeper: @escaping DataSweepCoordinator.Sleeper = { _ in },
+                            continuousAutoFetch: @escaping @MainActor () -> Bool = { true },
                             postSweep: DataSweepCoordinator.PostSweep? = nil,
                             securitySweep: DataSweepCoordinator.SecuritySweep? = nil,
                             lastFullSweepAt: Date? = nil) -> DataSweepCoordinator {
@@ -70,6 +77,7 @@ enum SweepTestKit {
             catalog: catalog, constituents: constituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
             openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
+            continuousAutoFetch: continuousAutoFetch,
             postSweep: postSweep, securitySweep: securitySweep, lastFullSweepAt: lastFullSweepAt)
     }
 
@@ -384,6 +392,81 @@ enum SweepTestKit {
         let delays = await recorder.delays
         #expect(delays == [1_234_000_000_000])  // one closed-cadence gap, then the loop ends
     }
+
+    // MARK: - Boundary-only mode (continuous auto-fetch OFF during open hours)
+
+    @Test func offModeFiresAFullSweepWhenABoundaryIsOwed() async {
+        let store = SweepTestKit.store()
+        let templates = WatchlistFakeTemplates()
+        // Thu 10:00, inside the trading day; no prior full sweep → the 09:00 open boundary is owed.
+        let coord = SweepTestKit.coordinator(
+            store: store, templates: templates, clock: SweepTestKit.openClock(),
+            runsContinuousLoop: true, sleeper: gapCancellingSleeper(),
+            continuousAutoFetch: { false })
+
+        await coord.runLoop()
+
+        #expect(templates.loadCalls.count == 20)   // a boundary capture is one full sweep
+        #expect(store.lastSweepAt != nil)
+    }
+
+    @Test func offModePausesEverythingBetweenBoundariesAndSleepsUntilTheNextEdge() async {
+        let store = SweepTestKit.store()
+        let templates = WatchlistFakeTemplates()
+        let commodity = RecordingCommodityService()
+        let recorder = SleepRecorder()
+        // Thu 10:00; the 09:00 boundary was already captured at 09:30 → nothing owed until 12:00.
+        let coord = SweepTestKit.coordinator(
+            store: store, templates: templates, commodity: commodity,
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.openClock(),
+            runsContinuousLoop: true,
+            sleeper: { ns in await recorder.record(ns); if ns >= 100_000_000_000 { throw CancellationError() } },
+            continuousAutoFetch: { false },
+            lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 11, 9, 30))
+
+        await coord.runLoop()
+
+        #expect(templates.loadCalls.isEmpty)        // screeners paused
+        #expect(commodity.calls.isEmpty)            // around-the-clock legs paused too ("pause everything")
+        #expect(store.lastSweepAt == nil)
+        let delays = await recorder.delays
+        #expect(delays == [7_200_000_000_000])      // slept exactly until the 12:00 boundary (2h)
+    }
+
+    @Test func offModeDoesNotChangeClosedMarketBehaviour() async {
+        let store = SweepTestKit.store()
+        let templates = WatchlistFakeTemplates()
+        let commodity = RecordingCommodityService()
+        // Weekend (Sat 10:00), close already captured: OFF is an open-hours setting, so the closed
+        // path is unchanged — around-the-clock legs still refresh while the IDX legs stay frozen.
+        let coord = SweepTestKit.coordinator(
+            store: store, templates: templates, commodity: commodity,
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
+            runsContinuousLoop: true, sleeper: gapCancellingSleeper(),
+            continuousAutoFetch: { false },
+            lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 12, 16, 30))
+
+        await coord.runLoop()
+
+        #expect(templates.loadCalls.isEmpty)                          // IDX legs frozen
+        #expect(Set(commodity.calls) == ["SP500", "XAU", "USDIDR"])   // around-the-clock legs still run
+    }
+
+    @Test func offModeBoundaryCaptureRunsTheAutopilotWhenOpen() async {
+        let counter = PostSweepCounter()
+        // Thu 10:00 (open), boundary owed → the capture is a full IDX sweep, so the once-a-day
+        // autopilot still fires (its own guard dedupes across the day's later boundaries).
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.openClock(),
+            runsContinuousLoop: true, sleeper: gapCancellingSleeper(),
+            continuousAutoFetch: { false },
+            postSweep: { counter.bump() })
+
+        await coord.runLoop()
+
+        #expect(counter.calls == 1)
+    }
 }
 
 /// A sleeper that throws on the `limit`-th long inter-sweep gap (≥100s), letting the short throttle
@@ -445,12 +528,6 @@ private actor LoopGapGate {
 
         #expect(marketStore.quotes["XAU"] != nil)           // prior value retained
         #expect(marketStore.quotes.count == 5)
-    }
-
-    /// Counts post-sweep callbacks, so the hook tests can assert it fired (or didn't).
-    @MainActor final class PostSweepCounter {
-        private(set) var calls = 0
-        func bump() { calls += 1 }
     }
 
     @Test func postSweepFiresAfterAFullIDXSweep() async {

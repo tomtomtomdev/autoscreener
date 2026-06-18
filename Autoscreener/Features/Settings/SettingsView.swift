@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @State private var vm: SettingsViewModel
     @State private var log = NetworkLog.shared
+    private let sweepSettings = AppDependencies.shared.sweepSettings
 
     init() {
         let deps = AppDependencies.shared
@@ -16,6 +17,7 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        @Bindable var sweepSettings = sweepSettings
         VStack(alignment: .leading, spacing: 0) {
             Form {
                 Section("Stockbit Account") {
@@ -25,6 +27,15 @@ struct SettingsView: View {
                     case .verifying(let state):
                         verificationRows(state)
                     }
+                }
+
+                Section("Data") {
+                    Toggle("Continuous auto-fetch", isOn: $sweepSettings.continuousAutoFetch)
+                        .accessibilityIdentifier("settings.continuousAutoFetch")
+                    Text("On: refresh every 5–10 min while the market is open. Off: refresh only at "
+                         + "open, break, and close — use Refresh in the toolbar to pull fresh data on demand.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .formStyle(.grouped)

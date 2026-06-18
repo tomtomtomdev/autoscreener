@@ -74,6 +74,11 @@ final class DataSweepCoordinator {
     /// the app doesn't fetch on a timer during a test.
     private let runsContinuousLoop: Bool
     private let sleeper: Sleeper
+    /// Reads the live "continuous auto-fetch" setting each loop tick (`SweepSettings`). When it
+    /// returns false and the IDX is open, the loop fires a full sweep only at session boundaries
+    /// instead of every 5–10 min (see `runLoop`). Defaulted to always-on so existing callers and
+    /// tests are byte-for-byte unchanged.
+    private let continuousAutoFetch: @MainActor () -> Bool
     /// Optional post-sweep step, run on the main actor after a full IDX-inclusive sweep completes (so
     /// prices + regime are fresh). The app wires this to the paper-trading autopilot's once-per-day
     /// auto-rebalance; defaulted `nil` so every existing caller and test is byte-for-byte unchanged.
@@ -147,6 +152,7 @@ final class DataSweepCoordinator {
          closedGapRange: ClosedRange<UInt64> = 1_200_000_000_000...1_800_000_000_000,
          macroTTL: TimeInterval = 12 * 60 * 60,
          sleeper: @escaping Sleeper = { try await Task.sleep(nanoseconds: $0) },
+         continuousAutoFetch: @escaping @MainActor () -> Bool = { true },
          postSweep: PostSweep? = nil,
          securitySweep: SecuritySweep? = nil,
          lastFullSweepAt: Date? = nil) {
@@ -171,6 +177,7 @@ final class DataSweepCoordinator {
         self.openGapRange = openGapRange
         self.closedGapRange = closedGapRange
         self.sleeper = sleeper
+        self.continuousAutoFetch = continuousAutoFetch
         self.postSweep = postSweep
         self.securitySweep = securitySweep
         self.lastFullSweepAt = lastFullSweepAt
@@ -204,12 +211,40 @@ final class DataSweepCoordinator {
     /// `lastFullSweepAt` then sits past the close, so later closed ticks fall through to around-the-clock.
     func runLoop() async {
         while !Task.isCancelled {
+            // Boundary-only mode: the user turned continuous auto-fetch off and we're inside the
+            // trading day (09:00–16:00, lunch break included). Fire a full sweep only when a session
+            // boundary (open / break / resume) has been crossed since the last one; otherwise fetch
+            // nothing at all and sleep until the next edge. The 16:00 close is handled by the
+            // closed-market path below, once `now` leaves the window.
+            if clock.isWithinTradingDay(at: clock.now()) && !continuousAutoFetch() {
+                if needsBoundaryCapture() {
+                    await runSweep(includeIDX: true, runAutopilot: clock.isOpen())
+                }
+                do { try await sleeper(boundaryGap(from: clock.now())) } catch { return }
+                continue
+            }
+
             let open = clock.isOpen()
             let capturingClose = !open && needsClosingCapture()
             await runSweep(includeIDX: open || capturingClose, runAutopilot: open)
             let gap = open ? UInt64.random(in: openGapRange) : UInt64.random(in: closedGapRange)
             do { try await sleeper(gap) } catch { return }
         }
+    }
+
+    /// True when a session boundary has been crossed since the last full sweep, so a boundary
+    /// capture is owed. Mirrors `needsClosingCapture`: a nil last-sweep means owed (cold start).
+    private func needsBoundaryCapture() -> Bool {
+        guard let boundary = clock.mostRecentBoundary(asOf: clock.now()) else { return false }
+        guard let last = lastFullSweepAt else { return true }
+        return last < boundary
+    }
+
+    /// Nanoseconds until the next session boundary, floored at 1s so we never busy-spin if we wake
+    /// a hair early. Lets boundary-only mode sleep precisely until the next edge instead of polling.
+    private func boundaryGap(from now: Date) -> UInt64 {
+        let seconds = max(clock.nextBoundary(after: now).timeIntervalSince(now), 1)
+        return UInt64(seconds * 1_000_000_000)
     }
 
     /// True when the market is between sessions and we haven't yet captured the most recent session's

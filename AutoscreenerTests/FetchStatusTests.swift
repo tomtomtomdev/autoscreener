@@ -77,6 +77,53 @@ import Testing
         #expect(status == .idle)
     }
 
+    // MARK: - Auto-fetch off (boundary-only mode)
+
+    @Test func autoFetchOffShownWhenPausedAndIdle() {
+        // Continuous off + inside the trading day → the bar advertises the paused mode and the
+        // next boundary, outranking a stale "updated" sweep.
+        let next = Date(timeIntervalSince1970: 1_700_001_000)
+        let status = FetchStatus.resolve(
+            isSweeping: false, loaded: 0, total: 20,
+            lastError: nil, paywall: nil, lastSweepAt: sweepAt,
+            autoFetchPaused: true, nextBoundary: next)
+        #expect(status == .autoFetchOff(next: next))
+    }
+
+    @Test func liveSweepStillWinsOverAutoFetchOff() {
+        let status = FetchStatus.resolve(
+            isSweeping: true, loaded: 3, total: 20,
+            lastError: nil, paywall: nil, lastSweepAt: nil,
+            autoFetchPaused: true, nextBoundary: nil)
+        #expect(status == .fetching(loaded: 3, total: 20))
+    }
+
+    @Test func errorStillWinsOverAutoFetchOff() {
+        let status = FetchStatus.resolve(
+            isSweeping: false, loaded: 0, total: 20,
+            lastError: "boom", paywall: nil, lastSweepAt: nil,
+            autoFetchPaused: true, nextBoundary: nil)
+        #expect(status == .error("boom"))
+    }
+
+    @Test func autoFetchOffLabelShowsModeAndOptionalNextEdge() {
+        #expect(FetchStatus.autoFetchOff(next: nil).displayLabel == "Auto-fetch off")
+        #expect(FetchStatus.autoFetchOff(next: sweepAt).displayLabel.hasPrefix("Auto-fetch off · next "))
+    }
+
+    @Test func autoFetchOffTintIsNormal() {
+        #expect(FetchStatus.autoFetchOff(next: nil).tint == .normal)
+    }
+
+    // MARK: - Manual refresh visibility (closed, or open with auto-fetch off)
+
+    @Test func refreshButtonHiddenOnlyWhileOpenAndContinuous() {
+        #expect(GlobalRefreshButton.isVisible(marketOpen: true, continuousAutoFetch: true) == false)
+        #expect(GlobalRefreshButton.isVisible(marketOpen: true, continuousAutoFetch: false) == true)
+        #expect(GlobalRefreshButton.isVisible(marketOpen: false, continuousAutoFetch: true) == true)
+        #expect(GlobalRefreshButton.isVisible(marketOpen: false, continuousAutoFetch: false) == true)
+    }
+
     // MARK: - displayLabel
 
     @Test func fetchingLabelShowsProgress() {

@@ -238,6 +238,11 @@ struct MainSidebarView: View {
                                 GlobalFetchStatusView()
                             }
                         }
+                        // Manual Refresh — only when nothing is auto-refreshing (market closed, or
+                        // open with continuous auto-fetch off). Hidden during normal open-hours sweep.
+                        ToolbarItem(placement: .primaryAction) {
+                            GlobalRefreshButton()
+                        }
                     }
             }
         }

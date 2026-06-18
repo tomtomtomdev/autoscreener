@@ -96,6 +96,65 @@ nonisolated struct MarketClock: Sendable {
         return nil
     }
 
+    // MARK: - Sweep boundaries (OFF-mode captures)
+
+    /// Minutes-of-day the boundary-only sweep wakes to capture fresh data: session-1 open (09:00),
+    /// the lunch break / session-1 close (12:00), session-2 resume (13:30), and the official close
+    /// (16:00). Deliberately NOT session-2's 15:50 end — the 16:00 closing print supersedes it, so
+    /// capturing 15:50 too would just double-fetch near the close.
+    static let sweepBoundaryMinutes: [Int] = [
+        sessions[0].start, sessions[0].end, sessions[1].start, closingPrintMinute,
+    ]
+
+    /// True on a weekday between the first session's open (09:00) and the official close (16:00),
+    /// **including** the 12:00–13:30 lunch break — i.e. the whole trading day as one window.
+    /// The boundary-only loop keys off this (not `isOpen`) so it stays active across the break;
+    /// `[09:00, 16:00)` is half-open so 16:00 hands back to the closed-market path.
+    func isWithinTradingDay(at date: Date) -> Bool {
+        let comps = calendar.dateComponents([.weekday, .hour, .minute], from: date)
+        guard let weekday = comps.weekday, isWeekday(weekday),
+              let hour = comps.hour, let minute = comps.minute else { return false }
+        let minuteOfDay = hour * 60 + minute
+        return minuteOfDay >= Self.sessions[0].start && minuteOfDay < Self.closingPrintMinute
+    }
+
+    /// The most recent session boundary (`sweepBoundaryMinutes`) at or before `date`, on a weekday.
+    /// During the trading day this is the last edge crossed (09:00 / 12:00 / 13:30 / 16:00); before
+    /// the open or on a weekend it falls back to the prior weekday's 16:00 close. The loop compares
+    /// its last full sweep against this to decide whether a boundary capture is still owed. Scans
+    /// back ~8 days (a weekday always appears); holidays aren't modelled (see the type doc).
+    func mostRecentBoundary(asOf date: Date) -> Date? {
+        let cal = calendar
+        let startOfReferenceDay = cal.startOfDay(for: date)
+        for dayOffset in 0...8 {
+            guard let day = cal.date(byAdding: .day, value: -dayOffset, to: startOfReferenceDay) else { continue }
+            guard isWeekday(cal.component(.weekday, from: day)) else { continue }
+            for minute in Self.sweepBoundaryMinutes.reversed() {
+                guard let edge = cal.date(byAdding: .minute, value: minute, to: day) else { continue }
+                if edge <= date { return edge }
+            }
+        }
+        return nil
+    }
+
+    /// The next session boundary strictly after `date`, on a weekday. Used by the boundary-only loop
+    /// to sleep precisely until the next edge (so the capture fires on time, not up to a poll late).
+    /// After the day's 16:00 it returns the next weekday's 09:00; on a weekend, the following Monday's.
+    func nextBoundary(after date: Date) -> Date {
+        let cal = calendar
+        let startOfReferenceDay = cal.startOfDay(for: date)
+        for dayOffset in 0...8 {
+            guard let day = cal.date(byAdding: .day, value: dayOffset, to: startOfReferenceDay) else { continue }
+            guard isWeekday(cal.component(.weekday, from: day)) else { continue }
+            for minute in Self.sweepBoundaryMinutes {
+                guard let edge = cal.date(byAdding: .minute, value: minute, to: day) else { continue }
+                if edge > date { return edge }
+            }
+        }
+        // Unreachable in practice (a weekday always appears within 8 days); sane far-future fallback.
+        return date.addingTimeInterval(24 * 60 * 60)
+    }
+
     /// Gregorian weekday: 1 = Sunday … 7 = Saturday. Mon–Fri is 2…6.
     private func isWeekday(_ weekday: Int) -> Bool { (2...6).contains(weekday) }
 }

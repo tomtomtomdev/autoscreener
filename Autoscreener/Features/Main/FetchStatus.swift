@@ -23,6 +23,10 @@ nonisolated enum FetchStatus: Equatable {
     case paywall(String)
     /// Idle, with a successful sweep landed at this instant.
     case updated(Date)
+    /// Idle, with continuous auto-fetch turned off during the trading day — the loop is paused
+    /// between session boundaries. Carries the next boundary instant (when known) so the bar can
+    /// say when the next fetch lands.
+    case autoFetchOff(next: Date?)
     /// Nothing has happened yet (no sweep, no error).
     case idle
 
@@ -41,7 +45,9 @@ nonisolated enum FetchStatus: Equatable {
                         page: Int? = nil,
                         lastError: String?,
                         paywall: String?,
-                        lastSweepAt: Date?) -> FetchStatus {
+                        lastSweepAt: Date?,
+                        autoFetchPaused: Bool = false,
+                        nextBoundary: Date? = nil) -> FetchStatus {
         if isSweeping {
             return isThrottling
                 ? .throttling(loaded: loaded, total: total, page: page)
@@ -49,6 +55,8 @@ nonisolated enum FetchStatus: Equatable {
         }
         if let lastError { return .error(lastError) }
         if let paywall { return .paywall(paywall) }
+        // The paused mode is more useful to surface than a stale "updated" time, so it outranks it.
+        if autoFetchPaused { return .autoFetchOff(next: nextBoundary) }
         if let lastSweepAt { return .updated(lastSweepAt) }
         return .idle
     }
@@ -61,6 +69,9 @@ nonisolated enum FetchStatus: Equatable {
         case let .error(message):                  return message
         case let .paywall(message):                return message
         case let .updated(date):                   return "Updated \(Self.timeFormatter.string(from: date))"
+        case let .autoFetchOff(next):
+            guard let next else { return "Auto-fetch off" }
+            return "Auto-fetch off · next \(Self.timeFormatter.string(from: next))"
         case .idle:                                return "—"
         }
     }

@@ -11,6 +11,15 @@ extension ProcessInfo {
     /// screen's non-blocking "N skipped" note can be asserted by an XCUITest. Off by default so the
     /// other fixture-backed screens never see the note.
     var isUITestSkippedFixture: Bool { arguments.contains("-UITestSkippedFixture") }
+
+    /// Pin the fixtures clock to a known-OPEN IDX instant so market-state-dependent chrome (the manual
+    /// Refresh button, the "auto-fetch off" status) renders deterministically regardless of when the
+    /// UI suite runs. Off by default → the real clock.
+    var isUITestMarketOpen: Bool { arguments.contains("-UITestMarketOpen") }
+
+    /// Pin the fixtures clock to a known-CLOSED instant (weekend) — the counterpart of
+    /// `isUITestMarketOpen`, used to assert the manual Refresh button appears when nothing auto-fetches.
+    var isUITestMarketClosed: Bool { arguments.contains("-UITestMarketClosed") }
 }
 
 // MARK: - Canned services used only under -UITestFixtures
