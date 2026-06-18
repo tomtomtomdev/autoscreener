@@ -80,6 +80,40 @@ final class TimeBox: @unchecked Sendable {
         #expect(policy?.detail.contains("hike") == true)
     }
 
+    /// Regression: when the bi.go.id scrape fails the device value comes from the lagging
+    /// fallback (FRED `IRSTCB01IDM156N`), which returned a *stale* 6.00%/hold while the
+    /// published monthly snapshot already carried the fresher, correct 5.50%/hike. The merge
+    /// must not let an older-dated device value clobber a fresher published one — the freshest
+    /// dated rate wins, not "device always wins".
+    @Test func staleNativeBIRateDoesNotOverrideFresherPublished() async {
+        let marketStore = SweepTestKit.marketStore()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), marketStore: marketStore,
+            // Published snapshot is the fresher, correct reading.
+            snapshotProvider: FixedSnapshotService(snap: Self.snapshot(
+                biRate: .init(value: 5.50, direction: .hike, asOf: "2026-06-09"))),
+            // Device value is the stale FRED fallback (older asOf) — must NOT win.
+            biRateProvider: FakeBIRateProvider(.init(value: 6.00, direction: .hold, asOf: "2026-01-01")),
+            macroProvider: FakeMacroProvider(nil),
+            catalog: SweepTestKit.mixedCatalog)
+
+        await coord.runSweep(includeIDX: true)
+
+        let policy = policyFactor(marketStore)
+        #expect(policy?.detail.contains("5.50%") == true)    // fresher published wins
+        #expect(policy?.detail.contains("hike") == true)
+        #expect(policy?.detail.contains("6.00%") == false)   // stale fallback rejected
+    }
+
+    /// The freshest-rate pick is a pure decision worth pinning directly: an equal `asOf` is a
+    /// tie, and the device (live, authoritative) reading wins it — so a same-dated fallback
+    /// never displaces the device value, and only a *strictly* fresher published one does.
+    @Test func freshestBIRatePrefersDeviceOnEqualAsOf() {
+        let device = RegimeSnapshot.BIRate(value: 5.50, direction: .hike, asOf: "2026-06-09")
+        let published = RegimeSnapshot.BIRate(value: 6.00, direction: .hold, asOf: "2026-06-09")
+        #expect(DataSweepCoordinator.freshestBIRate(device: device, published: published) == device)
+    }
+
     @Test func fallsBackToPublishedBIRateWhenNativeUnavailable() async {
         let marketStore = SweepTestKit.marketStore()
         let coord = SweepTestKit.coordinator(

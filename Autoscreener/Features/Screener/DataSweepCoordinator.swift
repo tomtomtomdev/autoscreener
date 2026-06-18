@@ -486,8 +486,13 @@ final class DataSweepCoordinator {
     /// published is the fallback), keeping the server-only valuation `indices`. Returns
     /// `nil` when there's nothing to compose from at all, so the caller keeps any prior
     /// read — the same graceful-degradation contract a missing snapshot had before.
+    ///
+    /// The BI rate is picked by *freshness*, not unconditionally device-first: the device
+    /// path is usually freshest (bi.go.id moves mid-month), but when its scrape fails it
+    /// degrades to the lagging FRED fallback — and a stale fallback must not clobber a fresher
+    /// published snapshot. Whichever reading carries the later `asOf` wins; device wins ties.
     private func mergedSnapshot(published: RegimeSnapshot?) -> RegimeSnapshot? {
-        let biRate = cachedBIRate ?? published?.biRate
+        let biRate = Self.freshestBIRate(device: cachedBIRate, published: published?.biRate)
         let macro = cachedMacro ?? published?.macro
         let indices = published?.indices ?? [:]
         guard biRate != nil || macro != nil || !indices.isEmpty else { return nil }
@@ -510,6 +515,19 @@ final class DataSweepCoordinator {
                 [macro.usFedFunds?.asOf, macro.us10y?.asOf, macro.broadDollar?.asOf].compactMap { $0 })
         }
         return candidates.max() ?? MacroParsing.isoString(clock.now())
+    }
+
+    /// Picks the freshest BI rate between the on-device reading and the published snapshot's,
+    /// by ISO `asOf` (which sorts chronologically). The device value wins ties, preserving the
+    /// "device is authoritative when at least as fresh" intent — while ensuring a lagging
+    /// fallback (e.g. the FRED monthly series) can never override a more recent published one.
+    static func freshestBIRate(device: RegimeSnapshot.BIRate?,
+                               published: RegimeSnapshot.BIRate?) -> RegimeSnapshot.BIRate? {
+        switch (device, published) {
+        case let (device?, published?): return published.asOf > device.asOf ? published : device
+        case let (device?, nil):        return device
+        case let (nil, published):      return published
+        }
     }
 
     // MARK: - Throttle + failure surfacing
