@@ -48,10 +48,11 @@ final class OHLCVChartViewModel {
     }
 }
 
-/// OHLCV candlestick + volume chart for one symbol. Shared by the Markets menu
-/// and the Stock Detail "Chart" tab. Candlesticks via Swift Charts: a thin wick
-/// (`RuleMark` low→high) plus a body (`RectangleMark` open→close), green when the
-/// bar closed up, red when down; a dashed line marks the previous close.
+/// Price + volume chart for one symbol. Shared by the Markets menu and the Stock Detail
+/// "Chart" tab. The price chart is a close-price **line with a gradient area fill** via
+/// Swift Charts (`LineMark` + `AreaMark`), coloured green when the window closed up over its
+/// reference and red when down (`PriceSeries.isUp`); a dashed line marks the previous close.
+/// The volume bars below keep their per-bar up/down colour.
 struct OHLCVChartView: View {
     @Bindable var vm: OHLCVChartViewModel
 
@@ -112,23 +113,26 @@ struct OHLCVChartView: View {
     }
 
     private func priceChart(_ series: PriceSeries) -> some View {
-        Chart {
+        let trend: Color = series.isUp ? .green : .red
+        return Chart {
             ForEach(series.candles, id: \.date) { c in
-                RuleMark(
+                // Gradient fill under the close line — declared first so it sits beneath the line.
+                AreaMark(
                     x: .value("Date", c.date),
-                    yStart: .value("Low", c.low),
-                    yEnd: .value("High", c.high)
+                    y: .value("Close", c.close)
                 )
-                .lineStyle(StrokeStyle(lineWidth: 1))
-                .foregroundStyle(color(for: c))
+                .foregroundStyle(LinearGradient(
+                    colors: [trend.opacity(0.28), trend.opacity(0.0)],
+                    startPoint: .top, endPoint: .bottom))
+                .interpolationMethod(.linear)
 
-                RectangleMark(
+                LineMark(
                     x: .value("Date", c.date),
-                    yStart: .value("Open", c.open),
-                    yEnd: .value("Close", c.close),
-                    width: .fixed(bodyWidth(series.candles.count))
+                    y: .value("Close", c.close)
                 )
-                .foregroundStyle(color(for: c))
+                .foregroundStyle(trend)
+                .lineStyle(StrokeStyle(lineWidth: 2))
+                .interpolationMethod(.linear)
             }
             if let prev = series.previousClose {
                 RuleMark(y: .value("Prev Close", prev))
@@ -154,17 +158,9 @@ struct OHLCVChartView: View {
         .accessibilityIdentifier("OHLCVVolumeChart")
     }
 
+    /// Per-bar up/down colour — still used by the volume bars.
     private func color(for candle: PriceCandle) -> Color {
         candle.close >= candle.open ? .green : .red
-    }
-
-    /// Candle body thickness scaled to how many bars are on screen.
-    private func bodyWidth(_ count: Int) -> CGFloat {
-        switch count {
-        case ..<40: return 8
-        case ..<120: return 4
-        default: return 2
-        }
     }
 }
 

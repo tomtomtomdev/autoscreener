@@ -22,6 +22,15 @@ nonisolated struct PriceSeries: Sendable, Equatable {
     /// Reference close the API anchors the series to (prior session / prior window). `nil` if absent.
     let previousClose: Double?
     let candles: [PriceCandle]
+
+    /// Whole-window direction for the line/area-fill color: up (green) when the latest close is at or
+    /// above the reference — the `previousClose` the API anchors to, falling back to the first bar's
+    /// close. Defaults to `true` for an empty series (nothing is drawn, so the colour is moot).
+    var isUp: Bool {
+        guard let last = candles.last?.close else { return true }
+        let baseline = previousClose ?? candles.first?.close ?? last
+        return last >= baseline
+    }
 }
 
 // MARK: - Request parameters
