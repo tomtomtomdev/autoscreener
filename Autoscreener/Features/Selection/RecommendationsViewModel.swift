@@ -65,24 +65,54 @@ final class RecommendationsViewModel {
     let picks: TodaysPicksViewModel
     let positions: PositionReviewViewModel
 
+    /// Persisted display cache of the last successful inbox. Read once on init to seed the cold-start
+    /// fallback below, and written after each fully successful load. This VM is its only reader/writer.
+    private let snapshotStore: RecommendationsSnapshotStore
+    /// The last displayed inbox, restored from `snapshotStore` at construction. Shown verbatim until the
+    /// first live data arrives, so a cold launch renders the last-known list instead of a spinner.
+    private let cachedRows: [ActionRow]
+    private let cachedSkipped: [SkippedName]
+    private let cachedAsOf: Date?
+
     // Defaults are nil and resolved in the body: the children's `@MainActor` initializers can't be
     // called from a default-argument expression (which Swift evaluates in a nonisolated context), but
     // they can be from this `@MainActor` init. Mirrors `RecommendationsView.init`'s `vm ?? …` pattern.
     init(picks: TodaysPicksViewModel? = nil,
-         positions: PositionReviewViewModel? = nil) {
+         positions: PositionReviewViewModel? = nil,
+         snapshotStore: RecommendationsSnapshotStore? = nil) {
         self.picks = picks ?? TodaysPicksViewModel()
         self.positions = positions ?? PositionReviewViewModel()
+        let store = snapshotStore ?? AppDependencies.shared.recommendationsSnapshotStore
+        self.snapshotStore = store
+        let snap = store.snapshot
+        self.cachedRows = Self.merge(picks: snap.recommendations, decisions: snap.decisions)
+        self.cachedSkipped = snap.skipped
+        self.cachedAsOf = snap.asOf
     }
 
-    /// The merged, ranked inbox. Computed so Observation tracks the two children's published outputs.
-    var rows: [ActionRow] { Self.merge(picks: picks.picks, decisions: positions.decisions) }
+    /// The live merged, ranked inbox from the two children's current outputs. Computed so Observation
+    /// tracks both children whenever either reloads.
+    private var liveRows: [ActionRow] { Self.merge(picks: picks.picks, decisions: positions.decisions) }
+
+    /// The inbox the screen renders. Live data wins as soon as there is any; before the first real load
+    /// completes (cold start, an awaiting-data pass, or a failed refresh) it falls back to the restored
+    /// snapshot, so the screen shows the last-known list instead of a spinner. Once a load has genuinely
+    /// completed, an empty result is honoured as "nothing to act on today" — never a stale cache.
+    var rows: [ActionRow] {
+        if !liveRows.isEmpty { return liveRows }
+        return hasLoaded ? [] : cachedRows
+    }
+
+    /// True while the screen is showing the restored snapshot rather than live data — nothing has loaded
+    /// for real yet and there is nothing live to show. Keeps `asOf` / `skipped` consistent with `rows`.
+    private var isShowingCache: Bool { !hasLoaded && liveRows.isEmpty }
 
     /// How many rows ask for an action (exit, trim, or buy) — drives the "N to act on" summary.
     var actionableCount: Int { rows.filter(\.isActionable).count }
 
     /// Names skipped (un-valuable: missing fundamentals / no price) across BOTH sides this load —
     /// the non-blocking "N skipped" note. Computed so Observation tracks both children's outputs.
-    var skipped: [SkippedName] { picks.skipped + positions.skipped }
+    var skipped: [SkippedName] { isShowingCache ? cachedSkipped : picks.skipped + positions.skipped }
 
     /// Loading while either child is loading; the first child error surfaces; loaded once both have.
     var isLoading: Bool { picks.isLoading || positions.isLoading }
@@ -96,7 +126,7 @@ final class RecommendationsViewModel {
     /// Non-nil only while the market is CLOSED: the time the ranked figures were last warmed, so the
     /// screen labels them "as of <date> · market closed". Both sides read the same sweep-warmed cache, so
     /// either child's stamp serves. nil while open (live figures).
-    var asOf: Date? { picks.asOf ?? positions.asOf }
+    var asOf: Date? { isShowingCache ? cachedAsOf : (picks.asOf ?? positions.asOf) }
 
     /// Fan both loads out concurrently. Each child keeps its own cache / `force` semantics and its own
     /// store write, so the allocator's caches are fed exactly as they were by the two separate screens.
@@ -104,6 +134,15 @@ final class RecommendationsViewModel {
         async let buys: Void = picks.load(force: force)
         async let sells: Void = positions.load(force: force)
         _ = await (buys, sells)
+        // Persist only a fully successful load (both children loaded for real — not a cold-cache
+        // "awaiting" pass and not an error), so the next cold launch restores this exact inbox. A genuine
+        // empty result persists an empty snapshot, correctly clearing any previously stale list.
+        if hasLoaded {
+            snapshotStore.save(.init(recommendations: picks.picks,
+                                     decisions: positions.decisions,
+                                     skipped: picks.skipped + positions.skipped,
+                                     asOf: picks.asOf ?? positions.asOf))
+        }
     }
 
     /// Pure merge: dedupe by ticker (a held name's verdict WINS over a fresh buy signal — you already

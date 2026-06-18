@@ -42,7 +42,7 @@ extension Sequence where Element == HistoricalSummaryBar {
 // `reason` is the offending error's `localizedDescription`; the view aggregates these into a small
 // non-blocking "N skipped" note. The outcome wrappers carry the survivors alongside the skips.
 
-nonisolated struct SkippedName: Equatable, Sendable {
+nonisolated struct SkippedName: Equatable, Sendable, Codable {
     let ticker: Ticker
     let reason: String
 }

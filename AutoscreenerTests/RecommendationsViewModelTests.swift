@@ -29,6 +29,8 @@ import Testing
         var decisionsResult: [ExitDecision] = []
         var picksSkipped: [SkippedName] = []
         var decisionsSkipped: [SkippedName] = []
+        var picksAwaiting = false
+        var decisionsAwaiting = false
         var picksError: Error?
         var decisionsError: Error?
         private(set) var picksCalls = 0
@@ -37,21 +39,32 @@ import Testing
         func picksSource(_ c: SelectionConfig) async throws -> SelectionOutcome {
             picksCalls += 1
             if let picksError { throw picksError }
-            return SelectionOutcome(recommendations: picksResult, skipped: picksSkipped)
+            return SelectionOutcome(recommendations: picksResult, skipped: picksSkipped, awaitingData: picksAwaiting)
         }
         func decisionsSource(_ c: SelectionConfig) async throws -> ReviewOutcome {
             decisionsCalls += 1
             if let decisionsError { throw decisionsError }
-            return ReviewOutcome(decisions: decisionsResult, skipped: decisionsSkipped)
+            return ReviewOutcome(decisions: decisionsResult, skipped: decisionsSkipped, awaitingData: decisionsAwaiting)
         }
     }
 
     /// Build a unified VM whose two children are wired to the spy and to throwaway stores (so the
-    /// shared singleton stores the allocator reads are never touched by a test run).
-    private func makeVM(_ spies: Spies) -> RecommendationsViewModel {
+    /// shared singleton stores the allocator reads are never touched by a test run). `snapshot` defaults
+    /// to a fresh, persistence-off snapshot cache so the cold-start fallback is empty unless seeded.
+    private func makeVM(_ spies: Spies,
+                        snapshot: RecommendationsSnapshotStore? = nil) -> RecommendationsViewModel {
         RecommendationsViewModel(
             picks: TodaysPicksViewModel(source: spies.picksSource, recommendationsStore: RecommendationsStore()),
-            positions: PositionReviewViewModel(source: spies.decisionsSource, exitDecisionsStore: ExitDecisionsStore()))
+            positions: PositionReviewViewModel(source: spies.decisionsSource, exitDecisionsStore: ExitDecisionsStore()),
+            snapshotStore: snapshot ?? RecommendationsSnapshotStore(fileURL: nil, loadFromDisk: false))
+    }
+
+    /// A snapshot cache pre-seeded with a previously-displayed inbox, to drive the cold-start fallback.
+    private func seededSnapshot(_ recs: [Recommendation], _ decs: [ExitDecision],
+                                skipped: [SkippedName] = [], asOf: Date? = nil) -> RecommendationsSnapshotStore {
+        let store = RecommendationsSnapshotStore(fileURL: nil, loadFromDisk: false)
+        store.save(.init(recommendations: recs, decisions: decs, skipped: skipped, asOf: asOf))
+        return store
     }
 
     // MARK: - Pure merge
@@ -172,5 +185,95 @@ import Testing
 
         #expect(vm.error == nil)                                       // skips aren't failures
         #expect(Set(vm.skipped.map(\.ticker)) == ["BAD1", "BAD2"])     // buy- + sell-side merged
+    }
+
+    // MARK: - Cold-start cache (stale-while-revalidate)
+    //
+    // On a cold launch (or the first visit before the sweep warms the cache) the screen should render
+    // the LAST persisted inbox instead of a spinner, then swap to live data once the fresh load lands —
+    // and never show a stale list once a genuine load has completed.
+
+    @Test func beforeAnyLoadTheRestoredInboxIsShownInsteadOfNothing() {
+        let vm = makeVM(Spies(),   // sources never called — we don't load
+                        snapshot: seededSnapshot([rec("BBCA")], [dec("WIFI", .exit)]))
+
+        #expect(vm.hasLoaded == false)
+        #expect(vm.rows.map(\.ticker) == ["BBCA", "WIFI"])   // buy leads the exit — the restored cache
+    }
+
+    @Test func aColdCacheRefreshKeepsTheRestoredInboxRatherThanBlankingToWaiting() async {
+        let spies = Spies()
+        spies.picksAwaiting = true          // the sweep is still cold on both sides
+        spies.decisionsAwaiting = true
+        let vm = makeVM(spies, snapshot: seededSnapshot([rec("BBCA")], [dec("WIFI", .exit)]))
+
+        await vm.load()
+
+        #expect(vm.awaitingData)            // the refresh did come back "awaiting"…
+        #expect(vm.hasLoaded == false)
+        #expect(vm.rows.map(\.ticker) == ["BBCA", "WIFI"])   // …but the cache stays on screen
+    }
+
+    @Test func aFailedRefreshKeepsTheRestoredInbox() async {
+        let spies = Spies()
+        spies.picksError = Boom()
+        spies.decisionsError = Boom()
+        let vm = makeVM(spies, snapshot: seededSnapshot([rec("BBCA")], []))
+
+        await vm.load()
+
+        #expect(vm.error != nil)
+        #expect(vm.hasLoaded == false)
+        #expect(vm.rows.map(\.ticker) == ["BBCA"])   // still the cache, not the error state
+    }
+
+    @Test func aGenuineEmptyLoadClearsTheCacheAndShowsNothingToDo() async {
+        let spies = Spies()                 // both children succeed with empty results
+        let vm = makeVM(spies, snapshot: seededSnapshot([rec("BBCA")], [dec("WIFI", .hold)]))
+
+        await vm.load()
+
+        #expect(vm.hasLoaded)
+        #expect(vm.rows.isEmpty)            // a real "nothing to act on today" — never the stale cache
+    }
+
+    @Test func liveDataReplacesTheCacheOnceItArrives() async {
+        let spies = Spies()
+        spies.picksResult = [rec("AAAA")]   // the fresh ranking differs from the cached one
+        let vm = makeVM(spies, snapshot: seededSnapshot([rec("BBCA")], [dec("WIFI", .exit)]))
+
+        await vm.load()
+
+        #expect(vm.hasLoaded)
+        #expect(vm.rows.map(\.ticker) == ["AAAA"])   // live wins; the cache is gone
+    }
+
+    @Test func aSuccessfulLoadPersistsTheInboxForTheNextColdStart() async {
+        let snapshot = RecommendationsSnapshotStore(fileURL: nil, loadFromDisk: false)
+        let spies = Spies()
+        spies.picksResult = [rec("BBCA")]
+        spies.decisionsResult = [dec("WIFI", .exit)]
+        let vm = makeVM(spies, snapshot: snapshot)
+
+        await vm.load()
+
+        #expect(vm.rows.map(\.ticker) == ["BBCA", "WIFI"])
+        // The store now holds exactly what was shown, ready to restore on the next launch.
+        #expect(snapshot.snapshot.recommendations.map(\.ticker) == ["BBCA"])
+        #expect(snapshot.snapshot.decisions.map(\.ticker) == ["WIFI"])
+    }
+
+    @Test func aColdCacheRefreshDoesNotPersistOverTheGoodCache() async {
+        // An "awaiting" refresh must NOT overwrite a good persisted inbox with an empty one — otherwise
+        // the next launch would lose the cache it was meant to restore.
+        let snapshot = seededSnapshot([rec("BBCA")], [dec("WIFI", .exit)])
+        let spies = Spies()
+        spies.picksAwaiting = true
+        spies.decisionsAwaiting = true
+        let vm = makeVM(spies, snapshot: snapshot)
+
+        await vm.load()
+
+        #expect(snapshot.snapshot.recommendations.map(\.ticker) == ["BBCA"])   // untouched on disk
     }
 }

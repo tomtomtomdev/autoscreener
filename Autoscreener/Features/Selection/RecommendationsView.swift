@@ -174,6 +174,7 @@ struct RecommendationsView: View {
         if !vm.rows.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 summary
+                updatingNote
                 // Cards are always laid out two-up. Summary / skipped / footnote stay full-width above
                 // and below the grid.
                 LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 16) {
@@ -232,6 +233,20 @@ struct RecommendationsView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .help(vm.skipped.map { "\($0.ticker): \($0.reason)" }.joined(separator: "\n"))
                 .accessibilityIdentifier("recommendations.skipped")
+        }
+    }
+
+    /// A small, non-blocking "Updating…" hint shown only when a background refresh is in flight over an
+    /// already-visible list (e.g. the restored cache on a cold launch, or a sweep-triggered reload). The
+    /// main area keeps the list — never the blocking spinner — so a stale list refreshing stays honest.
+    @ViewBuilder
+    private var updatingNote: some View {
+        if vm.isLoading {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.mini)
+                Text("Updating…").font(.caption).foregroundStyle(.secondary)
+            }
+            .accessibilityIdentifier("recommendations.updating")
         }
     }
 

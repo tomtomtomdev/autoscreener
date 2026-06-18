@@ -71,6 +71,11 @@ final class AppDependencies {
     // allocator reads it when building a plan so a flagged name is forced out / not re-bought — without
     // re-running the expensive holdings review on every rebalance.
     let exitDecisionsStore = ExitDecisionsStore()
+    // Disk-backed cache of the LAST displayed Recommendations inbox (ranked picks + Gate-5 verdicts).
+    // On a cold launch the screen renders this last-known list instead of a spinner while the fresh load
+    // runs (stale-while-revalidate). Display-only — the two allocator-facing stores above stay in-memory,
+    // so paper-trading behaviour and the golden master are untouched. Assigned in init (needs `headless`).
+    let recommendationsSnapshotStore: RecommendationsSnapshotStore
     // Per-symbol `SecurityData` cache the sweep fills (`warmSecurityCache`) so the Recommendations
     // engine ranks from cache instead of fetching per ticker on tab open. Not persisted; refilled each
     // full IDX sweep. Read via `CachedDataProvider` in `todaysPicks` / `reviewPositions`.
@@ -153,6 +158,9 @@ final class AppDependencies {
         // Same headless rule as the other stores: under fixtures/tests start from a
         // fresh 100M seed rather than reading a real user's portfolio file.
         self.paperTradingStore = PaperTradingStore(loadFromDisk: !headless)
+        // Display-only inbox cache: persist live so a cold launch shows the last list; empty under
+        // fixtures/tests (same headless rule) so screens render from canned data deterministically.
+        self.recommendationsSnapshotStore = RecommendationsSnapshotStore(loadFromDisk: !headless)
         self.marketClock = clock
 
         // Build the autopilot from locals (no `self` capture during init) so it can be handed to the

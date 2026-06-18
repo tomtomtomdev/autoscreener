@@ -99,7 +99,7 @@ extension EntryThesis {
 }
 
 /// What Gate-5 decides for one held name.
-enum ExitAction: String, Sendable {
+enum ExitAction: String, Sendable, Codable {
     case hold      // thesis intact — keep the full position
     case trim      // de-risk the size (regime), but the name still belongs in the book
     case exit      // sell in full — thesis broken / business deteriorated / price past IV
@@ -107,7 +107,7 @@ enum ExitAction: String, Sendable {
 
 /// The exit decision for one held name, carrying the same present-only audit trail style as
 /// `Recommendation.audit` so the reasoning is transparent and re-traceable.
-struct ExitDecision: Sendable {
+struct ExitDecision: Sendable, Codable {
     let ticker: Ticker
     let action: ExitAction
     let reason: String        // one-line headline, e.g. "Forensic: CFO persistently << NI"

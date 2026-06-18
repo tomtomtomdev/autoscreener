@@ -957,7 +957,7 @@ extension SelectionProfile {
 
 // MARK: - 9. Output
 
-struct Recommendation: Sendable {
+struct Recommendation: Sendable, Codable {
     let ticker: Ticker
     let compositeScore: Double
     let intrinsicValue: Double
