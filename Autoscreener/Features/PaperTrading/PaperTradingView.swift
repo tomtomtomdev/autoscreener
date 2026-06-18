@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The paper-trading screen: a 100M IDR simulated portfolio that allocates across the
-/// watchlist, sized by the market regime. The user *generates* a proposed rebalance
-/// (regime → exposure, conviction → weights, capped), reviews the per-line rationale,
-/// then *executes* it. Holdings + P&L track over time. Nothing here is a real order.
+/// The paper-trading screen: a 100M IDR simulated portfolio that allocates across the watchlist, sized
+/// by the market regime. It's hands-free — the autopilot books the regime-weighted rebalance off the
+/// buy/sell recommendations once per trading day. The screen shows a READ-ONLY preview of that plan
+/// (regime → exposure, conviction → weights, capped) plus holdings, P&L, and the trade log; there are
+/// no manual Generate/Execute controls. Nothing here is a real order.
 struct PaperTradingView: View {
     @State var vm: PaperTradingViewModel
     let title: String
@@ -31,14 +32,20 @@ struct PaperTradingView: View {
         .accessibilityIdentifier("PaperTradingView")
         .toolbar {
             ToolbarItemGroup {
-                Button("Generate plan") { Task { await vm.generatePlan() } }
-                    .disabled(!vm.canPlan)
-                    .accessibilityIdentifier("PaperTradingGenerateButton")
                 Button(role: .destructive) { vm.reset() } label: { Text("Reset") }
                     .accessibilityIdentifier("PaperTradingResetButton")
             }
         }
-        .task { await vm.autoRunIfNeeded() }
+        // Hands-free: the autopilot books the once-per-trading-day rebalance itself. The screen only
+        // auto-refreshes a READ-ONLY preview of that plan (no manual Generate/Execute) so you can see
+        // what it will do — on first appear and whenever a fresh sweep lands new prices/recommendations.
+        .task {
+            await vm.autoRunIfNeeded()
+            if vm.canPlan { await vm.generatePlan() }
+        }
+        .onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _, _ in
+            Task { if vm.canPlan { await vm.generatePlan() } }
+        }
     }
 
     // MARK: - Header
@@ -118,16 +125,9 @@ struct PaperTradingView: View {
     @ViewBuilder private var planSection: some View {
         if let plan = vm.pendingPlan {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Proposed rebalance").font(.title3.weight(.semibold))
-                    Spacer()
-                    Button("Execute") { vm.execute() }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!plan.hasTrades)
-                        .accessibilityIdentifier("PaperTradingExecuteButton")
-                }
+                Text("Autopilot — next rebalance").font(.title3.weight(.semibold))
                 Text("\(plan.stance.rawValue) · deploy \(Self.pct(plan.targetExposure)) of equity · "
-                     + "\(plan.lines.count) order\(plan.lines.count == 1 ? "" : "s")")
+                     + "\(plan.lines.count) order\(plan.lines.count == 1 ? "" : "s") · books automatically once per trading day")
                     .font(.subheadline).foregroundStyle(.secondary)
 
                 if plan.lines.isEmpty {
@@ -140,10 +140,10 @@ struct PaperTradingView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Text("No proposed plan").font(.title3.weight(.semibold))
+                Text("Autopilot — next rebalance").font(.title3.weight(.semibold))
                 Text(vm.canPlan
-                     ? "Generate a regime-weighted allocation from your buy/sell recommendations."
-                     : "Waiting for the watchlist and prices to load…")
+                     ? "Computing the regime-weighted allocation from your buy/sell recommendations…"
+                     : "Waiting for the data sweep to gather prices…")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .accessibilityIdentifier("PaperTradingNoPlan")

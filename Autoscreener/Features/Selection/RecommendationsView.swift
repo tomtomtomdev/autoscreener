@@ -122,6 +122,13 @@ struct RecommendationsView: View {
         .onChange(of: AppDependencies.shared.marketDataStore.lastSweepAt) { _, _ in
             Task { await vm.load(force: true) }
         }
+        // `lastSweepAt` above is stamped after the regime leg but BEFORE the per-symbol cache-warming
+        // phase, so on a cold cache that reload sees nothing and shows "waiting". Reload again the
+        // instant warming FINISHES (isWarming true→false) — the cache is warm now, so the screen flips
+        // from "waiting" to the ranked picks without needing a tab switch.
+        .onChange(of: AppDependencies.shared.dataSweepCoordinator.isWarming) { _, warming in
+            if !warming { Task { await vm.load(force: true) } }
+        }
         .navigationDestination(item: $selectedTicker) { ticker in
             StockDetailView(ticker: ticker)
         }

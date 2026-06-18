@@ -560,7 +560,7 @@ private actor LoopGapGate {
             store: SweepTestKit.store(), commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog,
             postSweep: { await order.record("post") },
-            securitySweep: { await order.record("warm") })
+            securitySweep: { _ in await order.record("warm"); return false })
 
         await coord.runSweep(includeIDX: true)
 
@@ -572,11 +572,41 @@ private actor LoopGapGate {
         let coord = SweepTestKit.coordinator(
             store: SweepTestKit.store(), commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
-            securitySweep: { counter.bump() })
+            securitySweep: { _ in counter.bump(); return false })
 
         await coord.runSweep(includeIDX: false)   // IDX legs frozen, so no per-symbol warm either
 
         #expect(counter.calls == 0)
+    }
+
+    @Test func warmingProgressFlowsToTheCoordinatorAndOfflineSurfacesAnError() async {
+        // The warmer reports (done, total) and aborts offline; the coordinator must mirror the
+        // progress onto its observable counters (so the title bar shows "Warming x/y") and surface
+        // the offline error so the bar stops claiming a clean "Fetching 20/20" / "Updated".
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog,
+            securitySweep: { progress in progress(3, 10); return true })   // 3/10 warmed, then offline
+
+        await coord.runSweep(includeIDX: true)
+
+        #expect(coord.warmedSecurityCount == 3)
+        #expect(coord.securityUniverseCount == 10)
+        #expect(coord.isWarming == false)   // cleared once the phase ends
+        #expect(coord.lastError == "Couldn’t reach the data feed — will retry.")
+    }
+
+    @Test func successfulWarmLeavesNoOfflineError() async {
+        // A warm that completes (returns false) must not stamp the offline error.
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), commodity: RecordingCommodityService(),
+            catalog: SweepTestKit.mixedCatalog,
+            securitySweep: { progress in progress(10, 10); return false })
+
+        await coord.runSweep(includeIDX: true)
+
+        #expect(coord.warmedSecurityCount == 10)
+        #expect(coord.lastError == nil)
     }
 
     @MainActor final class SweepOrderLog {
@@ -601,7 +631,7 @@ private actor LoopGapGate {
 
     // MARK: - Closing capture: one full sweep after the close to lock in the official figures.
 
-    @Test func closedLoopWithoutACaptureWarmsTheCloseButDoesNotRunTheAutopilot() async {
+    @Test func closedLoopClosingCaptureWarmsAndRunsTheAutopilot() async {
         let warm = PostSweepCounter()
         let auto = PostSweepCounter()
         let gate = LoopGapGate()
@@ -610,12 +640,12 @@ private actor LoopGapGate {
             store: SweepTestKit.store(), commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
             runsContinuousLoop: true, sleeper: { ns in try await gate.tick(ns) },
-            postSweep: { auto.bump() }, securitySweep: { warm.bump() })
+            postSweep: { auto.bump() }, securitySweep: { _ in warm.bump(); return false })
 
         await coord.runLoop()  // one closed tick: capture the close, then the gap sleep ends the loop
 
         #expect(warm.calls == 1)               // selection cache warmed with the settled close
-        #expect(auto.calls == 0)               // but the autopilot did NOT trade on the forced sweep
+        #expect(auto.calls == 1)               // and the autopilot rebalances off the fresh official close
         #expect(coord.lastFullSweepAt != nil)  // capture recorded so it won't repeat
     }
 
@@ -627,7 +657,7 @@ private actor LoopGapGate {
             store: SweepTestKit.store(), templates: templates, commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog, clock: SweepTestKit.closedClock(),
             runsContinuousLoop: true, sleeper: { ns in try await gate.tick(ns) },
-            securitySweep: { warm.bump() },
+            securitySweep: { _ in warm.bump(); return false },
             lastFullSweepAt: SweepTestKit.jakarta(2026, 6, 12, 16, 30))  // Fri 16:30 > Fri 16:00 close
 
         await coord.runLoop()

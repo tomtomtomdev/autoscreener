@@ -17,6 +17,10 @@ nonisolated enum FetchStatus: Equatable {
     /// fields as `.fetching` for `resolve`/`Equatable`, but `displayLabel` renders a bare
     /// "Throttling…" (no counts/page) so the brief pause reads as waiting, not progress.
     case throttling(loaded: Int, total: Int, page: Int? = nil)
+    /// A sweep is in flight and past the screeners — warming the per-symbol selection cache
+    /// (`SecurityCacheWarmer`): `loaded` of `total` names so far. Surfaced as its own "Warming x/y"
+    /// label so the bar reflects the real phase instead of freezing on the completed screener count.
+    case warming(loaded: Int, total: Int)
     /// The last sweep surfaced a fetch error.
     case error(String)
     /// The plan paywall limited the last sweep.
@@ -43,12 +47,20 @@ nonisolated enum FetchStatus: Equatable {
                         loaded: Int,
                         total: Int,
                         page: Int? = nil,
+                        isWarming: Bool = false,
+                        warmedCount: Int = 0,
+                        warmingTotal: Int = 0,
                         lastError: String?,
                         paywall: String?,
                         lastSweepAt: Date?,
                         autoFetchPaused: Bool = false,
                         nextBoundary: Date? = nil) -> FetchStatus {
         if isSweeping {
+            // The cache-warming phase (post-screener per-symbol fan-out) gets its own label so the bar
+            // doesn't sit on a frozen "Fetching 20/20" while it churns. Only once a universe is known.
+            if isWarming && warmingTotal > 0 {
+                return .warming(loaded: warmedCount, total: warmingTotal)
+            }
             return isThrottling
                 ? .throttling(loaded: loaded, total: total, page: page)
                 : .fetching(loaded: loaded, total: total, page: page)
@@ -66,6 +78,7 @@ nonisolated enum FetchStatus: Equatable {
         switch self {
         case let .fetching(loaded, total, page):   return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
         case .throttling:                          return "Throttling…"
+        case let .warming(loaded, total):          return "Warming \(loaded)/\(total)…"
         case let .error(message):                  return message
         case let .paywall(message):                return message
         case let .updated(date):                   return "Updated \(Self.timeFormatter.string(from: date))"

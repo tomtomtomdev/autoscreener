@@ -137,6 +137,9 @@ final class PaperTradingViewModel {
     /// flagged name is forced out / barred from re-entry. If the recommendation cache is cold (the user
     /// hasn't opened the Recommendations screen and the autopilot hasn't run), it's warmed once from the
     /// same headless engine before planning — a warm cache plans without any fetch.
+    ///
+    /// Drives the screen's READ-ONLY preview now (the view auto-calls it on appear + each sweep); the
+    /// autopilot does the actual once-per-day booking. The mirror of the autopilot's own plan build.
     func generatePlan() async {
         await refreshRecommendationsIfNeeded()
         pendingPlan = AllocationEngine.plan(
@@ -163,6 +166,9 @@ final class PaperTradingViewModel {
     /// stamped with an `EntryThesis` (Gate-5 Phase 3) reusing the IV/MoS the selection engine already
     /// computed for that name — read cheaply from `recommendationsStore` (no engine re-run). A name
     /// absent from the latest ranked set simply gets no thesis, so it later reviews on current data alone.
+    ///
+    /// No longer surfaced in the (hands-free) UI — the autopilot books via the same `store.apply` path.
+    /// Retained as the manual booking primitive that the allocation/Gate-5 tests drive directly.
     func execute() {
         guard let plan = pendingPlan else { return }
         let now = Date()

@@ -175,7 +175,7 @@ final class AppDependencies {
         // `self` capture during init; under fixtures/tests the screen uses canned data, so nil.
         var securitySweep: DataSweepCoordinator.SecuritySweep? = nil
         if !headless {
-            securitySweep = { await AppDependencies.shared.warmSecurityCache() }
+            securitySweep = { progress in await AppDependencies.shared.warmSecurityCache(progress: progress) }
         }
 
         self.dataSweepCoordinator = DataSweepCoordinator(

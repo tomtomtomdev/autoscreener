@@ -82,22 +82,28 @@ extension AppDependencies {
     /// This is the single place the per-symbol fan-out runs — moved off the Recommendations tab and
     /// onto the background sweep, so the screen ranks from cache. A name that can't be valued
     /// (`AdapterError` / no price) is simply not cached; `CachedDataProvider` reports it as a skip.
-    func warmSecurityCache(config: SelectionConfig = .balanced) async {
+    /// Returns `true` if warming aborted early because the feed looked unreachable. `progress`
+    /// reports `(done, total)` so the sweep coordinator can surface real warming progress.
+    @discardableResult
+    func warmSecurityCache(config: SelectionConfig = .balanced,
+                           progress: @escaping @MainActor (_ done: Int, _ total: Int) -> Void = { _, _ in }) async -> Bool {
         let watchlist = await watchlistUniverse()
         let held = Array(paperTradingStore.state.positions.keys)
         let universe = Array(Set(watchlist + held)).sorted()
-        guard !universe.isEmpty else { return }
+        guard !universe.isEmpty else { return false }
 
         let provider = makeProvider(universe: universe, config: config)
         let now = marketClock.now()
-        if let context = try? await provider.marketContext() {
-            securityDataStore.updateContext(context, at: now)
-        }
-        for t in universe {
-            if let data = try? await provider.data(for: t) {
-                securityDataStore.update(data, at: now)
-            }
-        }
+        // `SecurityCacheWarmer` bounds this fan-out (offline circuit breaker) so a dropped connection
+        // can't leave the sweep awaiting it forever — the bug that froze the title bar on
+        // "Fetching 20/20" and stranded Recommendations on "waiting for the data sweep".
+        let warmer = SecurityCacheWarmer(provider: provider)
+        let outcome = await warmer.warm(
+            universe: universe,
+            onContext: { self.securityDataStore.updateContext($0, at: now) },
+            onData: { _, data in self.securityDataStore.update(data, at: now) },
+            onProgress: progress)
+        return outcome.abortedOffline
     }
 
     /// A point-in-time read of the still-fresh cache (entries + regime context), taken once on the main

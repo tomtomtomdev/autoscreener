@@ -29,6 +29,14 @@ final class DataSweepCoordinator {
     /// instead of looking stalled. Always false outside a sweep.
     private(set) var isThrottling: Bool = false
     private(set) var loadedScreenerCount: Int = 0
+    /// True while the post-screener per-symbol cache-warming phase runs, so the title-bar status
+    /// flips from the (completed) screener count to a "Warming x/y" label instead of looking stuck.
+    /// Always false outside a sweep.
+    private(set) var isWarming: Bool = false
+    /// Per-symbol names warmed so far this sweep, and the size of the warming universe — the
+    /// progress the title bar shows during `isWarming`. Both reset at the start of each warm.
+    private(set) var warmedSecurityCount: Int = 0
+    private(set) var securityUniverseCount: Int = 0
     /// Page currently being pulled within a multi-page screener fetch. 1 on the first page
     /// (and 0 between screeners / on the non-paginated market+regime legs); ≥2 once a screener
     /// runs deep, which the title-bar status surfaces as a "page x" suffix.
@@ -91,7 +99,10 @@ final class DataSweepCoordinator {
     private let securitySweep: SecuritySweep?
 
     typealias PostSweep = @MainActor () async -> Void
-    typealias SecuritySweep = @MainActor () async -> Void
+    /// Warms the per-symbol selection cache. Reports incremental `(done, total)` progress so the
+    /// title bar can show real warming progress, and returns `true` if it aborted early because the
+    /// feed looked unreachable (so the bar can surface an offline error rather than a silent stall).
+    typealias SecuritySweep = @MainActor (_ progress: @escaping @MainActor (_ done: Int, _ total: Int) -> Void) async -> Bool
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var didStart = false
@@ -206,9 +217,12 @@ final class DataSweepCoordinator {
     /// (`needsClosingCapture`), the loop forces one full sweep to lock in the official closing figures —
     /// the regular session ends at 15:50, so the in-hours sweeps never saw the closing-auction print, and
     /// without this the selection cache would either hold pre-close numbers or age out entirely over a
-    /// weekend/holiday (stranding the Recommendations screen). The forced sweep warms data only
-    /// (`runAutopilot: false`); the once-a-day autopilot stays tied to live sessions. It's one-shot:
-    /// `lastFullSweepAt` then sits past the close, so later closed ticks fall through to around-the-clock.
+    /// weekend/holiday (stranding the Recommendations screen). The forced sweep ALSO runs the autopilot
+    /// (`runAutopilot: open || capturingClose`): the closing capture carries the fresh official close, so
+    /// the once-per-trading-day rebalance books off it for a hands-free book even when the user only opens
+    /// the app after the bell (the autopilot's own `isDue` guard keeps it to one rebalance per day). It's
+    /// one-shot: `lastFullSweepAt` then sits past the close, so later closed ticks fall through to
+    /// around-the-clock legs (which still never trade — `runSweep(includeIDX: false)`).
     func runLoop() async {
         while !Task.isCancelled {
             // Boundary-only mode: the user turned continuous auto-fetch off and we're inside the
@@ -226,7 +240,7 @@ final class DataSweepCoordinator {
 
             let open = clock.isOpen()
             let capturingClose = !open && needsClosingCapture()
-            await runSweep(includeIDX: open || capturingClose, runAutopilot: open)
+            await runSweep(includeIDX: open || capturingClose, runAutopilot: open || capturingClose)
             let gap = open ? UInt64.random(in: openGapRange) : UInt64.random(in: closedGapRange)
             do { try await sleeper(gap) } catch { return }
         }
@@ -265,8 +279,10 @@ final class DataSweepCoordinator {
     /// (screeners, composite/index/sector quotes, regime read) run or are left frozen;
     /// the around-the-clock legs (global/commodity/FX quotes) always run. Re-entrancy
     /// guarded so a manual refresh can't overlap a loop sweep.
-    /// `runAutopilot` lets the closing-capture sweep warm data WITHOUT triggering the once-a-day
-    /// autopilot rebalance (the loop passes `false` for it; every other caller keeps the default).
+    /// `runAutopilot` gates the once-a-day autopilot rebalance. The loop passes `open || capturingClose`,
+    /// so it runs during live sessions AND on the post-close closing-capture sweep (fresh official close);
+    /// it's `false` only on around-the-clock closed ticks (`includeIDX: false`). Every other caller keeps
+    /// the default `true` so a manual refresh always offers the autopilot a (still `isDue`-guarded) run.
     func runSweep(includeIDX: Bool? = nil, runAutopilot: Bool = true) async {
         guard !isSweeping else { return }
         isSweeping = true
@@ -274,7 +290,7 @@ final class DataSweepCoordinator {
         currentPage = 0
         hasIssuedFirstRequest = false
         lastError = nil
-        defer { isSweeping = false }
+        defer { isSweeping = false; isWarming = false }
 
         let idx = includeIDX ?? clock.isOpen()
 
@@ -296,7 +312,19 @@ final class DataSweepCoordinator {
         // Recommendations engine ranks from `SecurityDataStore` instead of fetching live on tab open.
         // Runs before `postSweep` so the autopilot rebalances off the freshly-warmed cache. Frozen on
         // closed-only sweeps (like the IDX legs above); a manual `refreshNow()` forces it after close.
-        if idx, let securitySweep { await securitySweep() }
+        if idx, let securitySweep {
+            isWarming = true
+            warmedSecurityCount = 0
+            securityUniverseCount = 0
+            let abortedOffline = await securitySweep { [weak self] done, total in
+                self?.warmedSecurityCount = done
+                self?.securityUniverseCount = total
+            }
+            isWarming = false
+            // The warmer bailed because the feed was unreachable — say so (and let the next loop tick
+            // retry) instead of landing a misleading "Updated" with a half-warmed cache.
+            if abortedOffline { lastError = "Couldn’t reach the data feed — will retry." }
+        }
 
         // After a full IDX sweep (fresh prices + regime), run the optional post-sweep step — the
         // paper-trading autopilot's once-per-day auto-rebalance. Skipped on closed-only sweeps so it

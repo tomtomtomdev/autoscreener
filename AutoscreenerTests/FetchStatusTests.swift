@@ -49,6 +49,35 @@ import Testing
         #expect(status == .updated(sweepAt))
     }
 
+    @Test func warmingShownWhenSweepingPastTheScreeners() {
+        // Once the sweep enters the per-symbol cache-warming phase, the bar shows that phase's own
+        // progress — not a frozen "Fetching 20/20" left over from the completed screener leg.
+        let status = FetchStatus.resolve(
+            isSweeping: true, loaded: 20, total: 20,
+            isWarming: true, warmedCount: 37, warmingTotal: 142,
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(status == .warming(loaded: 37, total: 142))
+    }
+
+    @Test func warmingFallsBackToFetchingUntilTheUniverseIsKnown() {
+        // isWarming flips true a beat before the warmer reports the universe size; until then
+        // (warmingTotal == 0) the bar keeps the screener fetching label rather than "Warming 0/0".
+        let status = FetchStatus.resolve(
+            isSweeping: true, loaded: 20, total: 20,
+            isWarming: true, warmedCount: 0, warmingTotal: 0,
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(status == .fetching(loaded: 20, total: 20))
+    }
+
+    @Test func warmingFlagIgnoredWhenNotSweeping() {
+        // Like the throttle flag, warming is meaningless outside a sweep — a landed sweep still wins.
+        let status = FetchStatus.resolve(
+            isSweeping: false, loaded: 0, total: 20,
+            isWarming: true, warmedCount: 5, warmingTotal: 10,
+            lastError: nil, paywall: nil, lastSweepAt: sweepAt)
+        #expect(status == .updated(sweepAt))
+    }
+
     @Test func errorWinsOverPaywallAndUpdatedWhenNotSweeping() {
         let status = FetchStatus.resolve(
             isSweeping: false, loaded: 0, total: 20,
@@ -130,6 +159,10 @@ import Testing
         #expect(FetchStatus.fetching(loaded: 7, total: 20).displayLabel == "Fetching 7/20…")
     }
 
+    @Test func warmingLabelShowsProgress() {
+        #expect(FetchStatus.warming(loaded: 37, total: 142).displayLabel == "Warming 37/142…")
+    }
+
     @Test func throttlingLabelIsBareRegardlessOfProgress() {
         // The throttle gap is a brief pause between requests; it shows just "Throttling…"
         // without counts or page, so the bar reads as "waiting" rather than progressing.
@@ -170,6 +203,7 @@ import Testing
         #expect(FetchStatus.paywall("x").tint == .warning)
         #expect(FetchStatus.fetching(loaded: 1, total: 20).tint == .normal)
         #expect(FetchStatus.throttling(loaded: 1, total: 20).tint == .normal)
+        #expect(FetchStatus.warming(loaded: 1, total: 20).tint == .normal)
         #expect(FetchStatus.updated(sweepAt).tint == .normal)
         #expect(FetchStatus.idle.tint == .normal)
     }
