@@ -77,6 +77,24 @@ import Testing
         #expect(read?.factors.contains { $0.kind == .breadth } == true)
     }
 
+    @Test func threadsForeignParticipationShareFromTheFlowValueBreakdown() {
+        // The foreign/domestic split is already fetched every sweep, but compose only
+        // read `netForeign`. At the IHSG aggregate netDomestic ≡ −netForeign (every
+        // foreign buy is a domestic sell), so the *non-redundant* datum to surface is
+        // the foreign share of turnover — how much of the tape foreigners are driving.
+        // The fixture's value breakdown is 50.99% foreign → "51% of turnover".
+        let read = RegimeComposer.compose(
+            snapshot: nil,
+            flow: UITestFixtures.foreignFlow(symbol: "IHSG"),
+            ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil,
+            aboveSnapshot: nil,
+            constituents: constituents)
+
+        let detail = read?.factors.first { $0.kind == .foreignFlow }?.detail
+        #expect(detail?.contains("foreigners 51% of turnover") == true)
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,

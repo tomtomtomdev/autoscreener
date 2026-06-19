@@ -10,6 +10,7 @@ nonisolated enum RegimeFactorBuilder {
         snapshot: RegimeSnapshot?,
         netForeignRaw: Double?,
         netForeignText: String?,
+        foreignParticipationPercent: Double? = nil,
         ihsgDistanceFrom200dma: Double?,
         sp500DistanceFrom200dma: Double? = nil,
         usdIdrChangePercent: Double?,
@@ -70,7 +71,7 @@ nonisolated enum RegimeFactorBuilder {
             let magnitude = (netForeignText.map(stripLeadingMinus)) ?? "—"
             factors.append(RegimeFactor(
                 kind: .foreignFlow, signal: signal,
-                detail: "Net foreign \(side) \(magnitude)"))
+                detail: "Net foreign \(side) \(magnitude)\(participationContext(foreignParticipationPercent))"))
         }
 
         // IHSG trend vs. its 200-day average.
@@ -102,6 +103,17 @@ nonisolated enum RegimeFactorBuilder {
     }
 
     // MARK: - Formatting
+
+    /// Foreign share of turnover appended to the flow detail, e.g. " — foreigners 51%
+    /// of turnover". At the IHSG aggregate net domestic is the exact mirror of net
+    /// foreign (every foreign buy is a domestic sell), so the *share* — not the
+    /// redundant domestic net — is the second-level context: how much of the tape
+    /// foreigners are actually driving, hence how much weight the net read deserves.
+    /// `percent` is already a percentage (0…100). Empty when the breakdown is absent.
+    private static func participationContext(_ percent: Double?) -> String {
+        guard let percent else { return "" }
+        return " — foreigners \(String(format: "%.0f%%", percent)) of turnover"
+    }
 
     private static func pct0(_ fraction: Double) -> String { String(format: "%.0f%%", fraction * 100) }
     private static func pct1(_ fraction: Double) -> String { String(format: "%.1f%%", fraction * 100) }

@@ -23,6 +23,7 @@ nonisolated enum RegimeComposer {
             snapshot: snapshot,
             netForeignRaw: flow?.netForeign.raw,
             netForeignText: flow?.netForeign.formatted,
+            foreignParticipationPercent: flow?.value.foreignPercentage,
             ihsgDistanceFrom200dma: ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) },
             sp500DistanceFrom200dma: sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) },
             usdIdrChangePercent: usdIdrChangePercent,

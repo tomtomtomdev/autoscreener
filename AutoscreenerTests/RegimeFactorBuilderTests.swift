@@ -131,6 +131,19 @@ import Testing
         #expect(detail == "Net foreign sell 360.70 B")
     }
 
+    @Test func foreignFlowDetailReportsForeignParticipationShareWhenAvailable() {
+        // The non-redundant datum from the already-fetched value breakdown: the foreign
+        // share of turnover. Vote is unchanged (still the net-foreign sign); the share
+        // is context for how much the tape is foreign-driven. 50.99% → "51% of turnover".
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: -360_000_000_000, netForeignText: "-360.70 B",
+            foreignParticipationPercent: 50.99,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil)
+        #expect(factors.first { $0.kind == .foreignFlow }?.detail
+                == "Net foreign sell 360.70 B — foreigners 51% of turnover")
+        #expect(signal(factors, .foreignFlow) == .riskOff)   // vote unchanged by participation
+    }
+
     @Test func detailsCarryTheDrivingFigures() {
         let factors = RegimeFactorBuilder.factors(
             snapshot: Self.snapshot, netForeignRaw: nil, netForeignText: nil,
