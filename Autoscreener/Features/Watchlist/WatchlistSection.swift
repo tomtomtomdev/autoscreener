@@ -115,8 +115,8 @@ private struct WatchlistColumnHeader: View {
             Text("No").frame(width: WatchlistRowMetrics.rank, alignment: .trailing)
             Text("Symbol").frame(width: WatchlistRowMetrics.symbol, alignment: .leading)
             Text("Name").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Score").frame(width: WatchlistRowMetrics.score, alignment: .trailing)
             Text("Screeners").frame(width: WatchlistRowMetrics.screeners, alignment: .leading)
+            Text("Score").frame(width: WatchlistRowMetrics.score, alignment: .trailing)
         }
         .font(.caption).foregroundStyle(.secondary)
         .padding(.vertical, 4)
@@ -151,13 +151,13 @@ struct WatchlistRowView: View {
                 .lineLimit(1).truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(formatScore(row.score))
-                .monospacedDigit()
-                .frame(width: WatchlistRowMetrics.score, alignment: .trailing)
-
             ScreenerIconStrip(kinds: row.matchedScreeners, onSelect: onSelectScreener)
                 .accessibilityIdentifier("watchlist.screeners-\(row.symbol)")
                 .frame(width: WatchlistRowMetrics.screeners, alignment: .leading)
+
+            Text(formatScore(row.score))
+                .monospacedDigit()
+                .frame(width: WatchlistRowMetrics.score, alignment: .trailing)
         }
         .padding(.vertical, 6)
         .contentShape(Rectangle())
