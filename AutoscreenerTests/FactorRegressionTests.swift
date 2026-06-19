@@ -119,15 +119,15 @@ private let sectorReturns: [Double] = (0..<42).map { Double($0 % 7 - 3) * 0.01 }
 
     @Test func usesAndReportsMeasuredBetasWhenBarsHaveVariance() {
         let stock = zip(marketReturns, sectorReturns).map { m, s in 1.2 * m + 0.4 * (s - m) }
-        let (_, why) = Modifiers.timing(security(stock: stock, market: marketReturns, sector: sectorReturns),
-                                        config: .balanced)
+        let (_, why) = Modifiers.smartMoneyMomentum(security(stock: stock, market: marketReturns, sector: sectorReturns),
+                                                    leaders: nil, config: .balanced)
         #expect(why.contains("measured"))
         #expect(why.contains("β 1.20/0.40"))
     }
 
     @Test func fallsBackToConfigBetasOnFlatBars() {
         let flat = Array(repeating: 0.0, count: 42)
-        let (mod, why) = Modifiers.timing(security(stock: flat, market: flat, sector: flat), config: .balanced)
+        let (mod, why) = Modifiers.smartMoneyMomentum(security(stock: flat, market: flat, sector: flat), leaders: nil, config: .balanced)
         #expect(mod == 0)
         #expect(why.contains("default"))
         #expect(why.contains("β 1.00/0.50"))   // the configured .balanced placeholders

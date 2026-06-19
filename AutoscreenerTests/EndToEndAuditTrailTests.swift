@@ -138,11 +138,11 @@ private func bbcaSecurity(price: Decimal) -> SecurityData {
         for id in ["GrahamValue ", "Quality ", "GrowthLynch ", "EarningsQuality "] {
             #expect(r.audit.contains { $0.hasPrefix(id) }, "missing \(id) score in audit")
         }
-        #expect(r.audit.contains { $0.hasPrefix("flow ") })
-        // Phase 4.1: timing engaged the rolling regression on the varying bars and recovered β 1.10/0.30.
-        let timing = try #require(r.audit.first { $0.hasPrefix("timing ") })
-        #expect(timing.contains("measured"))
-        #expect(timing.contains("β 1.10/0.30"))
+        // Phase 5: flow + timing + accumulation are one consolidated "momentum" tilt; it still surfaces
+        // the measured betas the rolling regression recovered on the varying bars (β 1.10/0.30).
+        let momentum = try #require(r.audit.first { $0.hasPrefix("momentum ") })
+        #expect(momentum.contains("measured"))
+        #expect(momentum.contains("β 1.10/0.30"))
         #expect(r.audit.last?.hasPrefix("→ conviction ") == true)
     }
 
@@ -163,9 +163,9 @@ private func bbcaSecurity(price: Decimal) -> SecurityData {
         }
         #expect(!r.audit.contains { $0.contains("Solvency") })
         #expect(!r.audit.contains { $0.hasPrefix("GrahamValue ") })
-        let timing = try #require(r.audit.first { $0.hasPrefix("timing ") })
-        #expect(timing.contains("measured"))
-        #expect(timing.contains("β 1.10/0.30"))
+        let momentum = try #require(r.audit.first { $0.hasPrefix("momentum ") })
+        #expect(momentum.contains("measured"))
+        #expect(momentum.contains("β 1.10/0.30"))
     }
 
     @Test func bankAtCapturedPriceIsScreenedOutByMoS() async throws {

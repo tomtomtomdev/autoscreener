@@ -268,8 +268,8 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         // Captured-endpoint overlays (Slice 4) — carried context only, each best-effort: a paywall /
         // no-coverage / failure degrades the leg to nil rather than aborting the name's valuation.
         let peers = try? await paced { try await self.comparisonService.comparison(symbol: t) }
-        let year = Calendar(identifier: .gregorian).component(.year, from: now())
-        let seasonality = try? await paced { try await self.seasonalityService.seasonality(symbol: t, year: year) }
+        // Phase 5: the seasonality tilt was dropped from the engine, so the slow leg no longer fetches
+        // it (one fewer request per name); the slice's `seasonality` is left nil.
         // Gate-3 consensus: sell-side coverage. `coverage` already yields nil for an uncovered name,
         // so the double-optional from `try?` is flattened to a single "no coverage / no fetch" nil.
         let coverage: AnalystCoverage? = (try? await paced { try await self.analyst.coverage(symbol: t) }) ?? nil
@@ -286,7 +286,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
             ttm: ttm,
             sectorIndexSymbol: sectorIndexSymbol,
             peerComparison: peers,
-            seasonality: seasonality,
+            seasonality: nil,
             analystCoverage: coverage,
             governance: governanceAssessment)
     }

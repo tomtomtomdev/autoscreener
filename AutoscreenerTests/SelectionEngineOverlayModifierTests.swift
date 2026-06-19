@@ -135,62 +135,15 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
     }
 }
 
-// MARK: - Seasonality modifier
+// MARK: - Smart-money / momentum modifier (Phase 5: flow + timing + accumulation consolidated)
+//
+// One capped tilt blends three [-1,1] sub-signals — foreign+broker FLOW, idiosyncratic+MA-extension
+// TIMING, and broker-distribution + leaderboard ACCUMULATION — and applies `config.momentum.cap`
+// (0.10). Flow is always considered (so the tilt is always audited); timing needs enough bars (the
+// `overlaySecurity` fixture has one bar, so timing is absent here); accumulation needs its overlay.
+// The seasonality tilt was removed entirely. Expected numbers are hand-derived from the blend formula.
 
-@Suite struct SeasonalityModifierTests {
-
-    private func season(month: String, prob: Double, avg: Double) -> Seasonality {
-        Seasonality(symbol: "TST",
-                    months: [SeasonalMonth(name: month, upCount: 0, downCount: 0, totalYears: 10,
-                                           avgReturnPct: avg, probabilityUpPct: prob)])
-    }
-
-    @Test func absentSeasonalityIsInert() {
-        let (d, why) = Modifiers.seasonality(overlaySecurity(seasonality: nil), config: .balanced)
-        #expect(d == 0)
-        #expect(why.isEmpty)
-    }
-
-    @Test func favorableCurrentMonthTiltsPositive() {
-        // June bar; June P(up)=80 → prob signal +0.6; avg +4% / span 5 → +0.8; blend 0.7 × cap 0.02.
-        let s = overlaySecurity(seasonality: season(month: "Jun", prob: 80, avg: 4.0), lastBarMonth: 6)
-        let (d, why) = Modifiers.seasonality(s, config: .balanced)
-        #expect(abs(d - 0.014) < 1e-9)
-        #expect(why.contains("Jun"))
-    }
-
-    @Test func unfavorableCurrentMonthTiltsNegative() {
-        let s = overlaySecurity(seasonality: season(month: "Jun", prob: 20, avg: -4.0), lastBarMonth: 6)
-        let (d, _) = Modifiers.seasonality(s, config: .balanced)
-        #expect(abs(d - -0.014) < 1e-9)
-    }
-
-    @Test func currentMonthNotInTableIsInert() {
-        // June bar, but the table only has January.
-        let s = overlaySecurity(seasonality: season(month: "Jan", prob: 90, avg: 9), lastBarMonth: 6)
-        let (d, why) = Modifiers.seasonality(s, config: .balanced)
-        #expect(d == 0)
-        #expect(why.isEmpty)
-    }
-
-    @Test func tiltIsClampedToTheCap() {
-        // P(up)=100 → +1; avg 50% / span 5 → clamps to +1; blend 1.0 × cap, but never beyond the cap.
-        let s = overlaySecurity(seasonality: season(month: "Jun", prob: 100, avg: 50), lastBarMonth: 6)
-        let (d, _) = Modifiers.seasonality(s, config: .balanced)
-        #expect(abs(d - 0.02) < 1e-9)
-    }
-
-    @Test func noBarsMeansNoCurrentMonthSoInert() {
-        let s = overlaySecurity(seasonality: season(month: "Jun", prob: 80, avg: 4), hasBars: false)
-        let (d, why) = Modifiers.seasonality(s, config: .balanced)
-        #expect(d == 0)
-        #expect(why.isEmpty)
-    }
-}
-
-// MARK: - Accumulation modifier
-
-@Suite struct AccumulationModifierTests {
+@Suite struct SmartMoneyMomentumTests {
 
     private func distribution(buy: Double, sell: Double) -> BrokerDistribution {
         BrokerDistribution(symbol: "TST", date: "2026-06-11",
@@ -198,56 +151,54 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
                            topSellers: sell > 0 ? [DistributionLeg(code: "YP", type: "Lokal", amount: sell)] : [])
     }
 
-    @Test func absentBothSourcesIsInert() {
-        let (d, why) = Modifiers.accumulation(overlaySecurity(distribution: nil), leaders: nil, config: .balanced)
+    @Test func noFlowNoAccumulationIsZeroButStillAudited() {
+        // overlaySecurity: empty foreign flow + broker 0 ⇒ flow sub-signal 0; one bar ⇒ timing absent;
+        // no distribution/leaderboard ⇒ accumulation absent. Mean of [0] = 0 ⇒ modifier 0, but the
+        // flow leg is always considered, so the rationale is non-empty (the tilt is always audited).
+        let (d, why) = Modifiers.smartMoneyMomentum(overlaySecurity(distribution: nil), leaders: nil, config: .balanced)
         #expect(d == 0)
-        #expect(why.isEmpty)
+        #expect(why.contains("foreign"))
     }
 
-    @Test func netBuyingTiltsPositive() {
-        // buy 8B, sell 2B → imbalance (8−2)/10 = 0.6 → 0.6 × cap 0.03 = 0.018.
+    @Test func netBuyingDistributionTiltsPositive() {
+        // flow 0 averaged with distribution imbalance (8−2)/10 = 0.6 ⇒ mean 0.3 × cap 0.10 = 0.03.
         let s = overlaySecurity(distribution: distribution(buy: 8_000_000_000, sell: 2_000_000_000))
-        let (d, why) = Modifiers.accumulation(s, leaders: nil, config: .balanced)
-        #expect(abs(d - 0.018) < 1e-9)
+        let (d, why) = Modifiers.smartMoneyMomentum(s, leaders: nil, config: .balanced)
+        #expect(abs(d - 0.03) < 1e-9)
         #expect(why.contains("net 0.60"))
     }
 
-    @Test func netSellingTiltsNegative() {
+    @Test func netSellingDistributionTiltsNegative() {
+        // flow 0 averaged with imbalance −0.6 ⇒ mean −0.3 × cap 0.10 = −0.03.
         let s = overlaySecurity(distribution: distribution(buy: 2_000_000_000, sell: 8_000_000_000))
-        let (d, _) = Modifiers.accumulation(s, leaders: nil, config: .balanced)
-        #expect(abs(d - -0.018) < 1e-9)
+        let (d, _) = Modifiers.smartMoneyMomentum(s, leaders: nil, config: .balanced)
+        #expect(abs(d - -0.03) < 1e-9)
     }
 
-    @Test func leaderboardTopBuyMembershipTiltsToTheFullCap() {
+    @Test func leaderboardTopBuyTiltsPositive() {
+        // accumulation = top-buy +1 (no distribution) ⇒ flow 0 averaged with 1.0 ⇒ mean 0.5 × cap = 0.05.
         let s = overlaySecurity(ticker: "TST", distribution: nil)
-        let (d, why) = Modifiers.accumulation(s, leaders: leaderboard(topBuy: ["TST"], topSell: []),
-                                              config: .balanced)
-        #expect(abs(d - 0.03) < 1e-9)
+        let (d, why) = Modifiers.smartMoneyMomentum(s, leaders: leaderboard(topBuy: ["TST"], topSell: []),
+                                                    config: .balanced)
+        #expect(abs(d - 0.05) < 1e-9)
         #expect(why.contains("top-buy"))
     }
 
-    @Test func leaderboardTopSellMembershipTiltsToTheNegativeCap() {
-        let s = overlaySecurity(ticker: "TST", distribution: nil)
-        let (d, why) = Modifiers.accumulation(s, leaders: leaderboard(topBuy: [], topSell: ["TST"]),
-                                              config: .balanced)
-        #expect(abs(d - -0.03) < 1e-9)
-        #expect(why.contains("top-sell"))
-    }
-
-    @Test func tickerAbsentFromLeaderboardContributesNothing() {
-        let s = overlaySecurity(ticker: "TST", distribution: nil)
-        let (d, why) = Modifiers.accumulation(s, leaders: leaderboard(topBuy: ["BBCA"], topSell: ["GOTO"]),
-                                              config: .balanced)
-        #expect(d == 0)
-        #expect(why.isEmpty)
-    }
-
-    @Test func bothSourcesAverageTogether() {
-        // distribution imbalance 0.6 + leaderboard top-buy 1.0 → mean 0.8 × cap 0.03 = 0.024.
+    @Test func distributionAndLeaderboardAverageIntoTheAccumulationLeg() {
+        // accumulation = (distribution 0.6 + leaderboard 1.0)/2 = 0.8; flow 0 averaged with 0.8 ⇒
+        // mean 0.4 × cap 0.10 = 0.04.
         let s = overlaySecurity(ticker: "TST", distribution: distribution(buy: 8_000_000_000, sell: 2_000_000_000))
-        let (d, _) = Modifiers.accumulation(s, leaders: leaderboard(topBuy: ["TST"], topSell: []),
-                                            config: .balanced)
-        #expect(abs(d - 0.024) < 1e-9)
+        let (d, _) = Modifiers.smartMoneyMomentum(s, leaders: leaderboard(topBuy: ["TST"], topSell: []),
+                                                  config: .balanced)
+        #expect(abs(d - 0.04) < 1e-9)
+    }
+
+    @Test func tickerAbsentFromLeaderboardContributesNothingToAccumulation() {
+        // No distribution, ticker not in the leaderboard ⇒ accumulation absent ⇒ only flow 0 ⇒ 0.
+        let s = overlaySecurity(ticker: "TST", distribution: nil)
+        let (d, _) = Modifiers.smartMoneyMomentum(s, leaders: leaderboard(topBuy: ["BBCA"], topSell: ["GOTO"]),
+                                                  config: .balanced)
+        #expect(d == 0)
     }
 }
 
@@ -369,14 +320,15 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
         func marketContext() async throws -> MarketContext { context }
     }
 
-    @Test func overlayLessNameProducesNoTiltLines() async throws {
+    @Test func overlayLessNameHasMomentumButNoOverlayTiltLines() async throws {
         let engine = StockSelectionEngine(
             provider: StubProvider(security: cleanSecurity(withOverlays: false), context: neutralContext()),
             config: .balanced)
         let r = try #require(try await engine.run().first)
+        #expect(r.audit.contains { $0.hasPrefix("momentum ") })       // always applied (the flow leg)
         #expect(!r.audit.contains { $0.hasPrefix("relValue") })
-        #expect(!r.audit.contains { $0.hasPrefix("seasonality") })
-        #expect(!r.audit.contains { $0.hasPrefix("accumulation") })
+        #expect(!r.audit.contains { $0.hasPrefix("consensus") })
+        #expect(!r.audit.contains { $0.hasPrefix("seasonality") })    // tilt removed entirely
     }
 
     @Test func favorableOverlaysRaiseTheCompositeAndAddOrderedAuditLines() async throws {
@@ -391,16 +343,12 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
 
         #expect(boosted.compositeScore > baseline.compositeScore)
 
+        // Phase 5: the consolidated momentum line precedes the present-only overlay tilts, in order.
+        let momentum = try #require(boosted.audit.firstIndex { $0.hasPrefix("momentum ") })
         let rel = try #require(boosted.audit.firstIndex { $0.hasPrefix("relValue") })
-        let sea = try #require(boosted.audit.firstIndex { $0.hasPrefix("seasonality") })
-        let acc = try #require(boosted.audit.firstIndex { $0.hasPrefix("accumulation") })
-        let timing = try #require(boosted.audit.firstIndex { $0.hasPrefix("timing") })
         let conviction = try #require(boosted.audit.firstIndex { $0.hasPrefix("→ conviction") })
-        // Tilts sit between the core modifiers and the sizing line, in declared order.
-        #expect(timing < rel)
-        #expect(rel < sea)
-        #expect(sea < acc)
-        #expect(acc < conviction)
+        #expect(momentum < rel)
+        #expect(rel < conviction)
     }
 
     @Test func bullishConsensusFadesTheCompositeAndCoverageLessNameHasNoLine() async throws {
@@ -422,7 +370,7 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
         #expect(!baseline.audit.contains { $0.hasPrefix("consensus") })
     }
 
-    @Test func consensusLineIsOrderedAfterAccumulationBeforeConviction() async throws {
+    @Test func consensusLineIsOrderedAfterMomentumBeforeConviction() async throws {
         let context = neutralContext(flowLeaders: leaderboard(topBuy: ["GOOD"], topSell: []))
         let r = try #require(try await StockSelectionEngine(
             provider: StubProvider(
@@ -430,10 +378,10 @@ private func leaderboard(topBuy: [String], topSell: [String]) -> FlowLeaderboard
                                         analystCoverage: coverage(buy: 10, hold: 0, sell: 0, target: 1500)),
                 context: context),
             config: .balanced).run().first)
-        let acc = try #require(r.audit.firstIndex { $0.hasPrefix("accumulation") })
+        let momentum = try #require(r.audit.firstIndex { $0.hasPrefix("momentum ") })
         let con = try #require(r.audit.firstIndex { $0.hasPrefix("consensus") })
         let conviction = try #require(r.audit.firstIndex { $0.hasPrefix("→ conviction") })
-        #expect(acc < con)
+        #expect(momentum < con)
         #expect(con < conviction)
     }
 

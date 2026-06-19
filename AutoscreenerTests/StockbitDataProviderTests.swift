@@ -376,7 +376,7 @@ private func makeProvider(
 
         // Captured-endpoint overlays carried best-effort (Slice 4).
         #expect(s.peerComparison?.symbols == ["WIFI", "INDUSTRY", "SECTOR"])
-        #expect(s.seasonality?.month("Jun")?.probabilityUpPct == 60)
+        #expect(s.seasonality == nil)   // Phase 5: the seasonality tilt was dropped, so the slow leg no longer fetches it
         #expect(s.brokerDistribution?.buyConcentration() == 1.0)   // one buyer ⇒ 100% concentrated
     }
 

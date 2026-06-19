@@ -143,6 +143,11 @@ struct SelectionConfig: Sendable, Codable {
         // are estimated over (one trading year ≈ 252). Defaulted so existing call sites are unchanged.
         var betaLookback: Int = 252
     }
+    /// Phase 5: single cap for the consolidated `smartMoneyMomentum` tilt (flow + timing + accumulation
+    /// blended into one modifier). Supersedes the individual flow/timing/accumulation caps.
+    struct MomentumParams: Sendable, Codable {
+        var cap: Double                     // max |modifier| for the blended momentum tilt
+    }
     struct Sizing: Sendable, Codable {
         var portfolioValue: Double
         var liquidityParticipation: Double  // % of ADV we'd take
@@ -283,6 +288,9 @@ struct SelectionConfig: Sendable, Codable {
     var governance: GovernanceParams
     var exit: ExitParams = .init()          // Gate-5 sell discipline; trailing-defaulted so every
                                             // existing `.init(...)` preset call stays source-compatible.
+    /// Phase 5 consolidated momentum cap; trailing-defaulted like `exit` so existing presets stay
+    /// source-compatible (they keep the ±0.10 default).
+    var momentum: MomentumParams = .init(cap: 0.10)
 }
 
 /// What the regime is ALLOWED to set — never which stock to buy. Now Codable so
@@ -768,21 +776,44 @@ struct JustifiedPBValuator: Valuator {
 // MARK: - 8. Capped modifiers
 
 enum Modifiers {
-    static func flow(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
-        let cap = config.flow.cap
-        let recent = s.foreignNetFlow.suffix(config.flow.foreignWindow).map(nsDouble).reduce(0,+)
-        let sign = recent > 0 ? 1.0 : (recent < 0 ? -1.0 : 0.0)
-        let raw = (sign + s.brokerAccumulationSignal) / 2.0
-        return (max(-cap, min(cap, raw * cap)), "foreign \(recent >= 0 ? "+" : "-") · broker \(round2(s.brokerAccumulationSignal))")
+    /// Phase 5 — consolidated smart-money / momentum tilt. Blends three [-1, 1] sub-signals — foreign +
+    /// broker FLOW, idiosyncratic-return + MA-extension TIMING, and broker-distribution + leaderboard
+    /// ACCUMULATION — into ONE modifier capped at `config.momentum.cap`. Flow is always considered;
+    /// timing when there are enough bars; accumulation when its overlay is present. Replaces the former
+    /// separate flow / timing / accumulation tilts (which answered the same "is the move underway?"
+    /// question and double-counted) and the dropped seasonality tilt.
+    static func smartMoneyMomentum(_ s: SecurityData, leaders: FlowLeaderboard?,
+                                   config: SelectionConfig) -> (Double, String) {
+        var parts: [Double] = []
+        var why: [String] = []
+
+        // FLOW: foreign net-flow direction + broker accumulation (always considered).
+        let recent = s.foreignNetFlow.suffix(config.flow.foreignWindow).map(nsDouble).reduce(0, +)
+        let flowSign = recent > 0 ? 1.0 : (recent < 0 ? -1.0 : 0.0)
+        parts.append(clampSigned((flowSign + s.brokerAccumulationSignal) / 2))
+        why.append("foreign \(recent >= 0 ? "+" : "-") · broker \(round2(s.brokerAccumulationSignal))")
+
+        // TIMING: idiosyncratic return + healthy(not-chasing) MA extension, when enough bars.
+        if let timing = timingSignal(s, config: config) { parts.append(timing.0); why.append(timing.1) }
+
+        // ACCUMULATION: broker-distribution imbalance + flow-leaderboard membership, when present.
+        if let acc = accumulationSignal(s, leaders: leaders, config: config) {
+            parts.append(acc.0); why.append(acc.1)
+        }
+
+        let mean = parts.reduce(0, +) / Double(parts.count)
+        let cap = config.momentum.cap
+        return (max(-cap, min(cap, mean * cap)), why.joined(separator: " · "))
     }
-    static func timing(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
+
+    /// TIMING sub-signal in [-1, 1] (nil when bars are insufficient): +0.5 for positive idiosyncratic
+    /// return, +0.5 for a healthy (non-chasing) MA extension, −1 for a chasing spike. Surfaces the betas
+    /// it used — measured by rolling regression (§13-A2), or the configured fallbacks when degenerate.
+    private static func timingSignal(_ s: SecurityData, config: SelectionConfig) -> (Double, String)? {
         let t = config.timing
         guard s.dailyBars.count > t.returnWindow, s.marketIndexBars.count > t.returnWindow,
               s.sectorIndexBars.count > t.returnWindow, let last = s.dailyBars.last
-        else { return (0, "insufficient bars") }
-        // §13-A2: measure the name's own betas by rolling regression; fall back to the configured
-        // placeholders only when the bars are insufficient/degenerate. Surface which was used so the
-        // audit trail is honest about whether the timing read is calibrated or approximate.
+        else { return nil }
         let measured = FactorRegression.betas(stock: s.dailyBars, market: s.marketIndexBars,
                                               sector: s.sectorIndexBars, lookback: t.betaLookback)
         let bm = measured?.market ?? t.marketBeta
@@ -792,12 +823,12 @@ enum Modifiers {
         let secR = ret(s.sectorIndexBars, t.returnWindow)
         let idio = stockR - bm * mktR - bs * (secR - mktR)
         let ma = sma(s.dailyBars, t.maPeriod); let ext = (nsDouble(last.close) - ma) / ma
-        var d = 0.0
-        if idio > 0 { d += t.cap * 0.5 }
-        if ext > 0, ext < t.healthyExtensionMax { d += t.cap * 0.5 }
-        if ext > t.chasingExtensionMin { d -= t.cap }
+        var signal = 0.0
+        if idio > 0 { signal += 0.5 }
+        if ext > 0, ext < t.healthyExtensionMax { signal += 0.5 }
+        if ext > t.chasingExtensionMin { signal -= 1.0 }
         let betaSrc = "β \(round2(bm))/\(round2(bs)) \(measured != nil ? "measured" : "default")"
-        return (max(-t.cap, min(t.cap, d)), "idio \(pct(idio)) · ext \(pct(ext)) · \(betaSrc)")
+        return (clampSigned(signal), "idio \(pct(idio)) · ext \(pct(ext)) · \(betaSrc)")
     }
 
     // Slice 6 captured-endpoint tilts. Each returns `(0, "")` — an EMPTY rationale — exactly when its
@@ -827,28 +858,11 @@ enum Modifiers {
         return (max(-p.cap, min(p.cap, mean * p.cap)), "rel-value \(votes.count)m vote \(round2(mean))")
     }
 
-    /// Seasonality timing tilt from `seasonality`: the current month's historical win-rate
-    /// (`probabilityUpPct`, centred at 50) blended equally with its average return (`avgReturnPct`,
-    /// normalised by `avgReturnSpanPct`). "Current month" is the latest daily bar's calendar month (UTC)
-    /// — deterministic, no wall clock. A SOFT overlay only; never a gate (thin, survivorship-prone).
-    static func seasonality(_ s: SecurityData, config: SelectionConfig) -> (Double, String) {
-        let p = config.seasonality
-        guard let seas = s.seasonality, let last = s.dailyBars.last?.date else { return (0, "") }
-        let abbr = monthAbbrev(last)
-        guard let m = seas.month(abbr) else { return (0, "") }
-        let probSignal = clampSigned((m.probabilityUpPct - 50) / 50)
-        let retSignal = clampSigned(m.avgReturnPct / max(p.avgReturnSpanPct, 1e-9))
-        let blend = (probSignal + retSignal) / 2
-        return (max(-p.cap, min(p.cap, blend * p.cap)),
-                "\(abbr) P(up) \(Int(m.probabilityUpPct))% avg \(round2(m.avgReturnPct))%")
-    }
-
-    /// Smart-money accumulation tilt: per-ticker broker distribution (net buy-vs-sell imbalance, with the
-    /// top-N buy concentration surfaced for context) combined with market-wide leaderboard membership
-    /// (in today's top net-buy ⇒ +1, top net-sell ⇒ −1). Each available source contributes a value in
-    /// [−1, 1]; their mean scales the cap.
-    static func accumulation(_ s: SecurityData, leaders: FlowLeaderboard?,
-                             config: SelectionConfig) -> (Double, String) {
+    /// ACCUMULATION sub-signal in [-1, 1] (nil when neither source is present): per-ticker broker
+    /// distribution net buy-vs-sell imbalance (top-N buy concentration surfaced for context) averaged
+    /// with market-wide leaderboard membership (today's top net-buy ⇒ +1, top net-sell ⇒ −1).
+    private static func accumulationSignal(_ s: SecurityData, leaders: FlowLeaderboard?,
+                                           config: SelectionConfig) -> (Double, String)? {
         let p = config.accumulation
         var parts: [Double] = []
         var why: [String] = []
@@ -865,9 +879,8 @@ enum Modifiers {
             if lb.topBuy.contains(where: { $0.code == s.ticker }) { parts.append(1); why.append("top-buy") }
             else if lb.topSell.contains(where: { $0.code == s.ticker }) { parts.append(-1); why.append("top-sell") }
         }
-        guard !parts.isEmpty else { return (0, "") }
-        let mean = parts.reduce(0, +) / Double(parts.count)
-        return (max(-p.cap, min(p.cap, mean * p.cap)), why.joined(separator: " · "))
+        guard !parts.isEmpty else { return nil }
+        return (parts.reduce(0, +) / Double(parts.count), why.joined(separator: " · "))
     }
 
     /// Gate-3 consensus tilt — FADE the sell-side crowd (Howard Marks "different AND right"). A name
@@ -1087,17 +1100,15 @@ struct StockSelectionEngine: Sendable {
                 audit.append("\(c.id.rawValue) \(round2(c.value)) — \(c.rationale)")
             }
             var composite = den > 0 ? num / den : 0
-            let f = Modifiers.flow(s, config: config); composite += f.0; audit.append("flow \(signed(f.0)) [\(f.1)]")
-            let tm = Modifiers.timing(s, config: config); composite += tm.0; audit.append("timing \(signed(tm.0)) [\(tm.1)]")
-            // Slice 6 captured-endpoint tilts — applied (and audited) only when the overlay contributed,
-            // so a name without the data is byte-for-byte unchanged.
+            // Phase 5: one consolidated smart-money/momentum tilt (flow + timing + accumulation blended),
+            // always applied like the former flow/timing were. The seasonality tilt is dropped.
+            let mm = Modifiers.smartMoneyMomentum(s, leaders: context.flowLeaders, config: config)
+            composite += mm.0; audit.append("momentum \(signed(mm.0)) [\(mm.1)]")
+            // Captured-endpoint tilts — applied (and audited) only when the overlay contributed, so a
+            // name without the data is byte-for-byte unchanged.
             let rv = Modifiers.relativeValue(s, config: config)
             if !rv.1.isEmpty { composite += rv.0; audit.append("relValue \(signed(rv.0)) [\(rv.1)]") }
-            let se = Modifiers.seasonality(s, config: config)
-            if !se.1.isEmpty { composite += se.0; audit.append("seasonality \(signed(se.0)) [\(se.1)]") }
-            let ac = Modifiers.accumulation(s, leaders: context.flowLeaders, config: config)
-            if !ac.1.isEmpty { composite += ac.0; audit.append("accumulation \(signed(ac.0)) [\(ac.1)]") }
-            // Gate-3 consensus check — fade the sell-side crowd. Present-only like the overlays above.
+            // Gate-3 consensus check — fade the sell-side crowd. Present-only like the overlay above.
             let cs = Modifiers.consensus(s, config: config)
             if !cs.1.isEmpty { composite += cs.0; audit.append("consensus \(signed(cs.0)) [\(cs.1)]") }
             composite = clamp01(composite)

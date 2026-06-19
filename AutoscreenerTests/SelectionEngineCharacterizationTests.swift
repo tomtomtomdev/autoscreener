@@ -243,11 +243,11 @@ private func riskOffContext() -> MarketContext {
             "Quality 0.83 — ROE 20% · margin-stable",
             "GrowthLynch 0.70 — PEG 0.44 (P/E 6.67 g 15.0%)",
             "EarningsQuality 1.00 — CFO/NI 1.20",
-            "flow +0.000 [foreign + · broker 0.00]",
-            // Phase 4.1 (§13-A2): the timing rationale now surfaces the betas it used. Flat golden-
-            // master bars are degenerate for the regression, so it falls back to the configured
-            // placeholders (1.00/0.50) and labels them "default" — the +0.000 modifier is unchanged.
-            "timing +0.000 [idio 0% · ext 0% · β 1.00/0.50 default]",
+            // Phase 5: flow + timing + accumulation are one consolidated "momentum" tilt. The clean name
+            // has no flow/accumulation signal and degenerate (flat) bars, so timing falls back to the
+            // configured betas (1.00/0.50, "default") and the blended modifier is +0.000 — composite
+            // unchanged from the old separate flow/timing tilts.
+            "momentum +0.000 [foreign + · broker 0.00 · idio 0% · ext 0% · β 1.00/0.50 default]",
             "→ conviction 0.85 weight 9%",
         ]
         #expect(r.audit == expected)
