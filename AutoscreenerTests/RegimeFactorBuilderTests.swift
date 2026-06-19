@@ -154,6 +154,56 @@ import Testing
         #expect(factors.first { $0.kind == .breadth }?.detail.contains("of 45 LQ45") == true)
     }
 
+    // MARK: - Divergence-aware breadth (LQ45 leaders vs. KOMPAS100 broad market)
+
+    /// Builds an isolated breadth factor (no other inputs) for the two readings.
+    private func breadthFactor(leaders: BreadthReading?, broad: BreadthReading?) -> RegimeFactor? {
+        RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
+            breadth: leaders, kompasBreadth: broad)
+            .first { $0.kind == .breadth }
+    }
+
+    @Test func breadthVotesOnTheBroadMarketSoANarrowingAdvanceReadsRiskOff() {
+        // The point of the feature: leaders still strong (LQ45 70%) while the broad
+        // market has rolled over (KOMPAS100 30%). The vote tracks KOMPAS100 → risk-off,
+        // and the gap is labelled "narrowing" — the late-cycle thinning-advance tell.
+        let factor = breadthFactor(leaders: BreadthReading(above: 7, measured: 10),
+                                   broad: BreadthReading(above: 3, measured: 10))
+        #expect(factor?.signal == .riskOff)
+        #expect(factor?.detail == "KOMPAS100 30% vs LQ45 70% above their 200-day average — narrowing")
+    }
+
+    @Test func breadthReadsRiskOnWhenTheBroadMarketOutpacesTheLeaders() {
+        // KOMPAS100 leading off a bottom (70%) while the leaders lag (30%): a broadening
+        // base. The broad market drives the vote → risk-on, labelled "broadening".
+        let factor = breadthFactor(leaders: BreadthReading(above: 3, measured: 10),
+                                   broad: BreadthReading(above: 7, measured: 10))
+        #expect(factor?.signal == .riskOn)
+        #expect(factor?.detail == "KOMPAS100 70% vs LQ45 30% above their 200-day average — broadening")
+    }
+
+    @Test func breadthAgreementIsLabelledBroadBased() {
+        let strong = breadthFactor(leaders: BreadthReading(above: 7, measured: 10),
+                                   broad: BreadthReading(above: 8, measured: 10))
+        #expect(strong?.signal == .riskOn)
+        #expect(strong?.detail.contains("broad-based strength") == true)
+
+        let weak = breadthFactor(leaders: BreadthReading(above: 3, measured: 10),
+                                 broad: BreadthReading(above: 2, measured: 10))
+        #expect(weak?.signal == .riskOff)
+        #expect(weak?.detail.contains("broad-based weakness") == true)
+    }
+
+    @Test func breadthFallsBackToLQ45OnlyWhenKompasUnavailable() {
+        // No KOMPAS100 membership (offline/cold sweep): the factor degrades to the
+        // LQ45-only vote and *verbatim* detail it produced before becoming divergence-aware.
+        let factor = breadthFactor(leaders: BreadthReading(above: 30, measured: 45), broad: nil)
+        #expect(factor?.signal == .riskOn)   // 30/45 = 67% ≥ 60%
+        #expect(factor?.detail == "67% of 45 LQ45 names above their 200-day average")
+    }
+
     @Test func emptyWhenNothingAvailable() {
         let factors = RegimeFactorBuilder.factors(
             snapshot: nil, netForeignRaw: nil, netForeignText: nil,

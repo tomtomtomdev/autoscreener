@@ -14,7 +14,8 @@ nonisolated enum RegimeFactorBuilder {
         ihsgDistanceFrom200dma: Double?,
         sp500DistanceFrom200dma: Double? = nil,
         usdIdrChangePercent: Double?,
-        breadth: BreadthReading?
+        breadth: BreadthReading?,
+        kompasBreadth: BreadthReading? = nil
     ) -> [RegimeFactor] {
         var factors: [RegimeFactor] = []
 
@@ -91,12 +92,19 @@ nonisolated enum RegimeFactorBuilder {
                 detail: "USD/IDR \(signedPct(changePercent)) today — rupiah \(rupiahWord(signal))"))
         }
 
-        // LQ45 breadth.
-        if let reading = breadth, let fraction = reading.fraction,
-           let signal = RegimeSynthesizer.breadthSignal(fractionAbove200dma: fraction) {
+        // Breadth — divergence-aware when both universes are measured, otherwise the
+        // single-index reading. The *vote* tracks the broad market (KOMPAS100): it's the
+        // truer breadth gauge and it already captures every divergence case — a thinning,
+        // late-cycle advance (leaders holding while the broad market rolls over) votes
+        // risk-off via KOMPAS100 weakness; a broadening base off a bottom votes risk-on.
+        // LQ45 (the leaders) is surfaced as the narrowing/broadening qualifier, not its
+        // own vote. Falls back to LQ45-only — today's exact detail — when KOMPAS100 is
+        // unavailable, so an offline/cold sweep degrades byte-for-byte.
+        if let voteFraction = kompasBreadth?.fraction ?? breadth?.fraction,
+           let signal = RegimeSynthesizer.breadthSignal(fractionAbove200dma: voteFraction) {
             factors.append(RegimeFactor(
                 kind: .breadth, signal: signal,
-                detail: "\(pct0(fraction)) of \(reading.measured) LQ45 names above their 200-day average"))
+                detail: breadthDetail(leaders: breadth, broad: kompasBreadth)))
         }
 
         return factors
@@ -113,6 +121,39 @@ nonisolated enum RegimeFactorBuilder {
     private static func participationContext(_ percent: Double?) -> String {
         guard let percent else { return "" }
         return " — foreigners \(String(format: "%.0f%%", percent)) of turnover"
+    }
+
+    /// The breadth factor's rationale. With both universes measured it contrasts the
+    /// broad market against its large-cap leaders plus a one-word read of the gap;
+    /// otherwise it reports whichever single index is available — the LQ45-only form is
+    /// kept verbatim so an offline/cold sweep (no KOMPAS100 membership) reads identically
+    /// to before this factor became divergence-aware.
+    private static func breadthDetail(leaders: BreadthReading?, broad: BreadthReading?) -> String {
+        if let leadersFraction = leaders?.fraction, let broadFraction = broad?.fraction {
+            return "KOMPAS100 \(pct0(broadFraction)) vs LQ45 \(pct0(leadersFraction)) above their 200-day average — \(breadthDivergenceWord(broad: broadFraction, leaders: leadersFraction))"
+        }
+        if let reading = leaders, let fraction = reading.fraction {
+            return "\(pct0(fraction)) of \(reading.measured) LQ45 names above their 200-day average"
+        }
+        if let reading = broad, let fraction = reading.fraction {
+            return "\(pct0(fraction)) of \(reading.measured) KOMPAS100 names above their 200-day average"
+        }
+        return ""
+    }
+
+    /// A one-word read of the breadth gap. "Narrowing" = the leaders are classified
+    /// stronger than the broad market (a thinning, late-cycle advance); "broadening" =
+    /// the broad market is classified stronger than the leaders (a widening base, often
+    /// off a bottom). When both land in the same band it's broad-based strength/weakness.
+    private static func breadthDivergenceWord(broad: Double, leaders: Double) -> String {
+        let broadVote = RegimeSynthesizer.breadthSignal(fractionAbove200dma: broad)?.vote ?? 0
+        let leadersVote = RegimeSynthesizer.breadthSignal(fractionAbove200dma: leaders)?.vote ?? 0
+        guard leadersVote == broadVote else { return leadersVote > broadVote ? "narrowing" : "broadening" }
+        switch broadVote {
+        case 1: return "broad-based strength"
+        case -1: return "broad-based weakness"
+        default: return "mixed"
+        }
     }
 
     private static func pct0(_ fraction: Double) -> String { String(format: "%.0f%%", fraction * 100) }

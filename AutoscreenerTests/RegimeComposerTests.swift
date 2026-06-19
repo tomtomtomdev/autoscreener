@@ -95,6 +95,25 @@ import Testing
         #expect(detail?.contains("foreigners 51% of turnover") == true)
     }
 
+    @Test func divergenceBreadthVotesOnTheBroadKompasUniverse() {
+        // Both index memberships supplied: the leaders (LQ45) are all above their 200dma
+        // but the broader KOMPAS100 has rolled over (3 of 10). The breadth factor is built
+        // from the SAME .above200MA snapshot for both, votes on the broad market → risk-off,
+        // and names both universes in the detail. The narrowing late-cycle tell.
+        let kompas = constituents + ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]   // 10 names
+        let read = RegimeComposer.compose(
+            snapshot: nil,
+            flow: nil, ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil,
+            aboveSnapshot: above200MA(constituents),     // all 3 LQ45 above; none of the extras
+            constituents: constituents,
+            kompasConstituents: kompas)
+
+        let breadth = read?.factors.first { $0.kind == .breadth }
+        #expect(breadth?.signal == .riskOff)             // 3/10 KOMPAS100 = 30% → weak
+        #expect(breadth?.detail == "KOMPAS100 30% vs LQ45 100% above their 200-day average — narrowing")
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,

@@ -472,7 +472,7 @@ final class DataSweepCoordinator {
 
         let usdIdr = marketStore.quotes[Self.rupiahSymbol]?.changePercent
         let above = store.snapshot(for: .above200MA)
-        let breadth = LQ45Breadth.reading(aboveSnapshot: above, constituents: constituents)
+        let breadth = IndexBreadth.reading(aboveSnapshot: above, constituents: constituents)
         print("[regime] USD/IDR today=\(usdIdr.map { String(format: "%+.2f%%", $0) } ?? "—") · breadth=\(breadth.map { "\($0.above)/\($0.measured) above 200dma" } ?? "—")")
 
         if let read = RegimeComposer.compose(

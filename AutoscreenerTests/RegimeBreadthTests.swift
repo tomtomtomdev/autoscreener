@@ -87,34 +87,34 @@ private final class MapChartService: ChartServicing, @unchecked Sendable {
     }
 }
 
-// MARK: - LQ45Breadth (derived from the screener snapshot)
+// MARK: - IndexBreadth (derived from the screener snapshot)
 
-@Suite struct LQ45BreadthTests {
+@Suite struct IndexBreadthTests {
     private func above200MASnapshot(_ symbols: [String]) -> ScreenerSnapshot {
         let rows = symbols.map { ScreenerRow(symbol: $0, name: "\($0) Co", values: [1], lastPrice: nil, pctChange: nil) }
         return ScreenerSnapshot(config: ScreenerConfig(), rows: rows, fetchedAt: Date(timeIntervalSince1970: 1_000))
     }
 
-    @Test func countsLQ45NamesPresentInTheAbove200MASnapshotOverAFixedDenominator() {
-        // Universe above 200dma includes 2 of our 3 constituents, plus non-LQ45 noise.
+    @Test func countsConstituentsPresentInTheAbove200MASnapshotOverAFixedDenominator() {
+        // Universe above 200dma includes 2 of our 3 constituents, plus non-member noise.
         let snapshot = above200MASnapshot(["BBCA", "TLKM", "ASII", "GOTO"])
-        let reading = LQ45Breadth.reading(aboveSnapshot: snapshot, constituents: ["BBCA", "TLKM", "BMRI"])
+        let reading = IndexBreadth.reading(aboveSnapshot: snapshot, constituents: ["BBCA", "TLKM", "BMRI"])
         #expect(reading?.above == 2)        // BBCA + TLKM (BMRI absent → below its 200dma)
         #expect(reading?.measured == 3)     // fixed = constituent count
         #expect(abs((reading?.fraction ?? 0) - 2.0 / 3.0) < 1e-9)
     }
 
     @Test func nilWhenNoSnapshotYet() {
-        #expect(LQ45Breadth.reading(aboveSnapshot: nil, constituents: ["BBCA"]) == nil)
+        #expect(IndexBreadth.reading(aboveSnapshot: nil, constituents: ["BBCA"]) == nil)
     }
 
     @Test func nilWhenNoConstituents() {
-        #expect(LQ45Breadth.reading(aboveSnapshot: above200MASnapshot(["BBCA"]), constituents: []) == nil)
+        #expect(IndexBreadth.reading(aboveSnapshot: above200MASnapshot(["BBCA"]), constituents: []) == nil)
     }
 
     @Test func zeroAboveWhenNoConstituentIsInTheSnapshot() {
-        let reading = LQ45Breadth.reading(aboveSnapshot: above200MASnapshot(["ASII", "GOTO"]),
-                                          constituents: ["BBCA", "TLKM"])
+        let reading = IndexBreadth.reading(aboveSnapshot: above200MASnapshot(["ASII", "GOTO"]),
+                                           constituents: ["BBCA", "TLKM"])
         #expect(reading?.above == 0)
         #expect(reading?.measured == 2)
         #expect(reading?.fraction == 0)
