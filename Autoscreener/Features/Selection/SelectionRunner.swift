@@ -103,6 +103,10 @@ extension AppDependencies {
             onContext: { self.securityDataStore.updateContext($0, at: now) },
             onData: { _, data in self.securityDataStore.update(data, at: now) },
             onProgress: progress)
+        // A pass that ran to completion (didn't bail offline) is the signal the cache-read policy needs to
+        // start ranking a partial cache — without it, the first open-market read mid-warm strands every
+        // not-yet-reached name as a "not yet swept" skip. An aborted (offline) pass stays incomplete.
+        if !outcome.abortedOffline { securityDataStore.markWarmComplete() }
         return outcome.abortedOffline
     }
 
@@ -141,7 +145,10 @@ extension AppDependencies {
         let policy = CacheReadPolicy(isOpen: marketClock.isOpen())
         let asOf = policy.asOf(lastWarmedAt: securityDataStore.lastWarmedAt())
         let snapshot = cachedSnapshot(within: policy.maxAge)
-        guard snapshot.context != nil, held.contains(where: { snapshot.data[$0] != nil }) else {
+        guard policy.isReadyToRank(
+            contextPresent: snapshot.context != nil,
+            hasFreshCandidate: held.contains(where: { snapshot.data[$0] != nil }),
+            warmCompletedOnce: securityDataStore.warmCompletedOnce) else {
             return ReviewOutcome(decisions: [], skipped: [], awaitingData: true, asOf: asOf)
         }
         let reviewer = PositionReviewer(
@@ -183,8 +190,13 @@ extension AppDependencies {
         let asOf = policy.asOf(lastWarmedAt: securityDataStore.lastWarmedAt())
         let snapshot = cachedSnapshot(within: policy.maxAge)
         // Cold cache: no regime context, or not one candidate cached yet ⇒ wait for the sweep (open: the
-        // in-progress one; closed: the closing-capture sweep that's about to warm it).
-        guard snapshot.context != nil, universe.contains(where: { snapshot.data[$0] != nil }) else {
+        // in-progress one; closed: the closing-capture sweep that's about to warm it). Also wait while an
+        // open-market FIRST warm is still in flight — ranking that partial cache strands every not-yet-
+        // reached name as a "not yet swept" skip (the mid-warm race).
+        guard policy.isReadyToRank(
+            contextPresent: snapshot.context != nil,
+            hasFreshCandidate: universe.contains(where: { snapshot.data[$0] != nil }),
+            warmCompletedOnce: securityDataStore.warmCompletedOnce) else {
             return SelectionOutcome(recommendations: [], skipped: [], awaitingData: true, asOf: asOf)
         }
         let runner = SelectionRunner(
@@ -217,4 +229,16 @@ nonisolated struct CacheReadPolicy {
     /// The "as of" stamp for the screen's label: nil while open (figures are live), the cache's
     /// last-warmed time while closed (so the screen reads "as of <date> · market closed").
     func asOf(lastWarmedAt: Date?) -> Date? { isOpen ? nil : lastWarmedAt }
+
+    /// Whether the cache is ready to rank, or the screen should wait. Beyond "context present + at least
+    /// one fresh candidate", this closes the **mid-warm race**: while the market is OPEN and the first
+    /// warm pass hasn't completed yet (`warmCompletedOnce == false`), the cache holds only the handful of
+    /// names warmed so far — ranking it strands the rest as a wall of "not yet swept" skips. So an
+    /// in-progress first warm reads as not-ready ("waiting"); once a pass completes (entries persist
+    /// across the next re-warm) the still-absent names are genuine valuation skips, so we rank. While
+    /// CLOSED no warm runs, so a completed pass isn't required — rank the last-warmed close.
+    func isReadyToRank(contextPresent: Bool, hasFreshCandidate: Bool, warmCompletedOnce: Bool) -> Bool {
+        guard contextPresent, hasFreshCandidate else { return false }
+        return warmCompletedOnce || !isOpen
+    }
 }

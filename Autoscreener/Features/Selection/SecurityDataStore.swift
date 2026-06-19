@@ -21,6 +21,14 @@ final class SecurityDataStore {
     private(set) var entries: [Ticker: Entry] = [:]
     private(set) var context: (value: MarketContext, fetchedAt: Date)?
 
+    /// True once a full warm pass has completed in this session (set by `markWarmComplete`). Until then
+    /// the cache holds only the names a still-running first warm has reached, so the cache-read policy
+    /// treats a partial open-market cache as "waiting" rather than ranking it into a wall of "not yet
+    /// swept" skips. Stays true for the session — once a pass finishes, later absent names are genuine
+    /// valuation skips (staleness is handled separately by the freshness window). Not persisted: the
+    /// in-memory cache is cold each launch, so this is naturally false until the first warm finishes.
+    private(set) var warmCompletedOnce = false
+
     /// Default staleness window: an entry older than this is treated as a cache miss. This is the
     /// user's "match the sweep" freshness choice — generous enough to survive an overnight close, after
     /// which the next IDX sweep refills it. Injected at the read site so tests can pin it.
@@ -32,6 +40,13 @@ final class SecurityDataStore {
 
     func updateContext(_ context: MarketContext, at now: Date) {
         self.context = (context, now)
+    }
+
+    /// Marks that a full warm pass over the universe has finished — flips `warmCompletedOnce` true so the
+    /// cache-read policy will rank a partial cache (absent names are now genuine valuation skips) instead
+    /// of waiting. Only called when the warm ran to completion, not when it bailed early offline.
+    func markWarmComplete() {
+        warmCompletedOnce = true
     }
 
     func entry(for ticker: Ticker) -> Entry? { entries[ticker] }

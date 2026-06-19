@@ -99,4 +99,31 @@ private final class CallSpy {
         let policy = CacheReadPolicy(isOpen: false)
         #expect(policy.asOf(lastWarmedAt: nil) == nil)              // nothing warmed ⇒ wait for the closing sweep
     }
+
+    // Mid-warm race: while the market is OPEN and the first warm pass hasn't completed yet, the cache
+    // holds only the handful of names warmed so far. Ranking it produces a wall of "not yet swept" skips
+    // for everything not yet reached. The policy must report the cache NOT ready so the screen waits for
+    // the warm to finish instead of ranking a partial universe.
+    @Test func openWithAnIncompleteFirstWarmIsNotReadyEvenWithACandidateCached() {
+        let policy = CacheReadPolicy(isOpen: true)
+        #expect(policy.isReadyToRank(contextPresent: true, hasFreshCandidate: true, warmCompletedOnce: false) == false)
+    }
+
+    @Test func openIsReadyOnceAWarmPassHasCompleted() {
+        let policy = CacheReadPolicy(isOpen: true)
+        // After a full pass, names still absent from cache are genuine valuation skips → rank what's there.
+        #expect(policy.isReadyToRank(contextPresent: true, hasFreshCandidate: true, warmCompletedOnce: true))
+    }
+
+    @Test func closedRanksTheLastWarmedCloseEvenWithoutACompletedPassThisSession() {
+        let policy = CacheReadPolicy(isOpen: false)
+        // No warm runs while closed, so don't gate on a completed pass — rank the cached close.
+        #expect(policy.isReadyToRank(contextPresent: true, hasFreshCandidate: true, warmCompletedOnce: false))
+    }
+
+    @Test func neverReadyWithoutContextOrACandidate() {
+        let open = CacheReadPolicy(isOpen: true)
+        #expect(open.isReadyToRank(contextPresent: false, hasFreshCandidate: true, warmCompletedOnce: true) == false)
+        #expect(open.isReadyToRank(contextPresent: true, hasFreshCandidate: false, warmCompletedOnce: true) == false)
+    }
 }
