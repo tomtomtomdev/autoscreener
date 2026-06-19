@@ -4,7 +4,7 @@ import Observation
 /// One actionable row in the unified Recommendations inbox. It WRAPS — without flattening — the two
 /// engine outputs the screen merges: a buy-side `Recommendation` and a sell-side `ExitDecision`. Each
 /// case keeps its full domain value so the row renders with the metric block native to its kind, while a
-/// single `priority` collapses both into one urgency order (exit → trim → buy → hold).
+/// single `priority` collapses both into one order (buy → hold → trim → exit).
 enum ActionRow: Identifiable {
     case buy(Recommendation)        // a ranked buy candidate from Today's Picks
     case verdict(ExitDecision)      // a hold / trim / exit verdict from the Gate-5 review
@@ -24,22 +24,27 @@ enum ActionRow: Identifiable {
         }
     }
 
-    /// Urgency rank for the single ranked list — lower sorts first. Exits lead (a broken thesis is the
-    /// most pressing), then trims, then fresh buys, with plain holds last (nothing to do).
+    /// Rank for the single ranked list — lower sorts first. Fresh buys lead, then the held-position
+    /// verdicts in escalating order: hold, trim, exit.
     var priority: Int {
         switch self {
+        case .buy: return 0
         case .verdict(let d):
             switch d.action {
-            case .exit: return 0
-            case .trim: return 1
-            case .hold: return 3
+            case .hold: return 1
+            case .trim: return 2
+            case .exit: return 3
             }
-        case .buy: return 2
         }
     }
 
-    /// Everything except a plain HOLD asks the reader to do something (sell, trim, or open a position).
-    var isActionable: Bool { priority < 3 }
+    /// Everything except a plain HOLD asks the reader to do something (open a position, trim, or sell).
+    var isActionable: Bool {
+        switch self {
+        case .buy:            return true
+        case .verdict(let d): return d.action != .hold
+        }
+    }
 
     var id: Ticker { ticker }
 }
@@ -101,10 +106,10 @@ final class RecommendationsViewModel {
         _ = await (buys, sells)
     }
 
-    /// Pure merge: dedupe by ticker (a held name's exit verdict WINS over a fresh buy signal — you
-    /// already own it, so its hold/trim/exit discipline governs), then sort by urgency. Within the buy
-    /// group, ties break by conviction (highest first) so the strongest candidates surface top-left in
-    /// the grid; every other tie (and the buy-conviction tie itself) breaks by ticker for stability.
+    /// Pure merge: dedupe by ticker (a held name's verdict WINS over a fresh buy signal — you already
+    /// own it, so its hold/trim/exit discipline governs), then sort buy → hold → trim → exit. Within the
+    /// buy group, ties break by conviction (highest first) so the strongest candidates surface top-left
+    /// in the grid; every other tie (and the buy-conviction tie itself) breaks by ticker for stability.
     static func merge(picks: [Recommendation], decisions: [ExitDecision]) -> [ActionRow] {
         let held = Set(decisions.map(\.ticker))
         let buys = picks.filter { !held.contains($0.ticker) }.map(ActionRow.buy)

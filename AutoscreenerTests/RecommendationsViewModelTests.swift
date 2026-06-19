@@ -4,7 +4,7 @@ import Testing
 
 // Drives the unified "Recommendations" screen ViewModel. It owns the two child VMs (Today's Picks +
 // Positions to Review), each of which has its own suite; these tests pin the COMPOSITION contract:
-// the pure `merge` (urgency order, and verdict-wins dedupe for held names), the fan-out load, and the
+// the pure `merge` (buy→hold→trim→exit order, and verdict-wins dedupe for held names), the fan-out load, and the
 // aggregated loading / error / loaded state across the two children.
 
 @Suite @MainActor struct RecommendationsViewModelTests {
@@ -56,12 +56,12 @@ import Testing
 
     // MARK: - Pure merge
 
-    @Test func mergeRanksByUrgencyExitTrimBuyHold() {
+    @Test func mergeRanksBuyHoldTrimExit() {
         let rows = RecommendationsViewModel.merge(
             picks: [rec("BBBB")],
             decisions: [dec("HHHH", .hold), dec("EEEE", .exit), dec("TTTT", .trim)])
 
-        #expect(rows.map(\.ticker) == ["EEEE", "TTTT", "BBBB", "HHHH"])
+        #expect(rows.map(\.ticker) == ["BBBB", "HHHH", "TTTT", "EEEE"])
     }
 
     @Test func mergeDedupesHeldNamesSoTheExitVerdictWinsOverAFreshBuy() {
@@ -71,7 +71,7 @@ import Testing
             picks: [rec("WIFI"), rec("AAAA")],
             decisions: [dec("WIFI", .hold)])
 
-        #expect(rows.map(\.ticker) == ["AAAA", "WIFI"])   // buy AAAA (prio 2) then hold WIFI (prio 3)
+        #expect(rows.map(\.ticker) == ["AAAA", "WIFI"])   // buy AAAA (prio 0) then hold WIFI (prio 1)
         if case .verdict(let d)? = rows.first(where: { $0.ticker == "WIFI" }) {
             #expect(d.action == .hold)
         } else {
@@ -91,14 +91,14 @@ import Testing
         #expect(rows.map(\.ticker) == ["CCCC", "ZZZZ", "AAAA"])
     }
 
-    @Test func verdictsStillLeadBuysRegardlessOfConviction() {
-        // Urgency stays the primary key: a top-conviction buy never jumps ahead of an exit/trim
-        // verdict, and a plain hold still sorts last.
+    @Test func buysLeadAllVerdictsAndExitsSortLast() {
+        // Buys are now the primary group: every buy sorts ahead of every verdict, regardless of how
+        // urgent the verdict is. Within verdicts the order is hold → trim → exit.
         let rows = RecommendationsViewModel.merge(
             picks: [rec("HIGH", conviction: 0.99)],
             decisions: [dec("EEEE", .exit), dec("HHHH", .hold)])
 
-        #expect(rows.map(\.ticker) == ["EEEE", "HIGH", "HHHH"])
+        #expect(rows.map(\.ticker) == ["HIGH", "HHHH", "EEEE"])
     }
 
     @Test func mergeOfEmptyInputsIsEmpty() {
@@ -117,7 +117,7 @@ import Testing
 
         #expect(spies.picksCalls == 1)
         #expect(spies.decisionsCalls == 1)
-        #expect(vm.rows.map(\.ticker) == ["XXXX", "BBCA", "WIFI"])   // exit, buy, hold
+        #expect(vm.rows.map(\.ticker) == ["BBCA", "WIFI", "XXXX"])   // buy, hold, exit
         #expect(vm.error == nil)
         #expect(vm.isLoading == false)
         #expect(vm.hasLoaded)

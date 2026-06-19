@@ -85,9 +85,6 @@ struct RecommendationsView: View {
     @State private var selectedTicker: StockTicker?
     /// Set when a watchlist row's screener icon is tapped — drives the push to that screener's list.
     @State private var selectedScreener: BandarScreenerKind?
-    /// Live width of the recommendations grid, fed by a background `GeometryReader`; drives the
-    /// one-vs-two-column choice in `gridColumns`.
-    @State private var availableWidth: CGFloat = 0
 
     @MainActor
     init(vm: RecommendationsViewModel? = nil, watchlist: WatchlistViewModel) {
@@ -146,13 +143,9 @@ struct RecommendationsView: View {
         .accessibilityIdentifier("RecommendationsView")
     }
 
-    /// Two flexible columns once there's room for a pair of ~340pt cards plus spacing, one below that
-    /// (and before the first layout pass, when width is still 0). Top-aligned so uneven-height cards in
-    /// a row line up at the top.
+    /// Always two flexible columns. Top-aligned so uneven-height cards in a row line up at the top.
     private var gridColumns: [GridItem] {
-        let twoUp = availableWidth >= 700
-        return Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top),
-                     count: twoUp ? 2 : 1)
+        Array(repeating: GridItem(.flexible(), spacing: 16, alignment: .top), count: 2)
     }
 
     /// The action inbox at the top of the screen. While the market is closed it ranks the last-warmed
@@ -181,18 +174,13 @@ struct RecommendationsView: View {
         if !vm.rows.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
                 summary
-                // Cards go two-up when the window is wide enough, collapsing to one column when narrow.
-                // `.flexible()` with a width-driven count (not `.adaptive`) caps the grid at two columns
-                // on a maximized window. Summary / skipped / footnote stay full-width above and below.
+                // Cards are always laid out two-up. Summary / skipped / footnote stay full-width above
+                // and below the grid.
                 LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 16) {
                     ForEach(vm.rows) { row in
                         ActionRowView(row: row)
                     }
                 }
-                .background(GeometryReader { proxy in
-                    Color.clear.preference(key: WidthKey.self, value: proxy.size.width)
-                })
-                .onPreferenceChange(WidthKey.self) { availableWidth = $0 }
                 skippedNote
                 footnote
             }
@@ -365,11 +353,4 @@ struct ActionRowView: View {
         }
         .accessibilityIdentifier("recommendations.why.\(row.ticker)")
     }
-}
-
-/// Reports a view's measured width up the tree so `RecommendationsView` can pick one vs. two grid
-/// columns. Carried by a background `GeometryReader` so reading the width never affects layout.
-private struct WidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
