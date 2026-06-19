@@ -465,7 +465,9 @@ final class DataSweepCoordinator {
         print("[regime] IHSG: \(Self.trendSummary(ihsg))")
 
         do { try await throttle() } catch { print("[regime] cancelled before SP500 fetch"); return }
-        let sp500 = try? await chart.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
+        // SP500 (a global index) advertises only the LINE chart type — a CANDLE request fails to
+        // decode (no OHLC per point), which is what left this leg "unavailable".
+        let sp500 = try? await chart.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear, chartType: .line)
         print("[regime] SP500: \(Self.trendSummary(sp500))")
 
         let usdIdr = marketStore.quotes[Self.rupiahSymbol]?.changePercent

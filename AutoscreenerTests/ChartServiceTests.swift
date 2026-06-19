@@ -89,6 +89,28 @@ import Testing
         #expect(c.volume == 237_454_240)     // "237454240.00" → Double
     }
 
+    // Global index (e.g. SP500) only advertises `PRICE_CHART_TYPE_LINE`: each point carries
+    // the close (`value`) but no OHLC/volume. Must parse — the regime's 200dma needs closes only.
+    static let lineSeries = Data(#"""
+    {"data":{"previous":7420.1,"chart_type":"PRICE_CHART_TYPE_LINE","timeframe":"1y","prices":[
+      {"date":"1748970000000","formatted_date":"2025-06-04","xlabel":"","value":"7069.04","percentage":"0.34","change":24.215},
+      {"date":"1749056400000","formatted_date":"2025-06-05","xlabel":"","value":"7100.50","percentage":"0.45","change":31.46}
+    ]}}
+    """#.utf8)
+
+    @Test func parsesLineSeriesWithCloseOnly() throws {
+        let s = try ChartService.parse(Self.lineSeries, symbol: "SP500", timeframe: .oneYear)
+        #expect(s.candles.count == 2)
+        let c = s.candles[0]
+        #expect(c.close == 7069.04)
+        // No OHLC in a line point → flat candle anchored to the close, zero volume.
+        #expect(c.open == 7069.04)
+        #expect(c.high == 7069.04)
+        #expect(c.low == 7069.04)
+        #expect(c.volume == 0)
+        #expect(s.candles.last?.close == 7100.50)
+    }
+
     @Test func toleratesMissingPreviousAndEmptyPrices() throws {
         let data = Data(#"{"data":{"prices":[]}}"#.utf8)
         let s = try ChartService.parse(data, symbol: "X", timeframe: .today)

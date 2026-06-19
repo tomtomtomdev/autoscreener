@@ -282,7 +282,9 @@ actor StockbitDataProvider: DataProvider {
         async let snapshotTask = snapshotProvider.snapshot()
         async let flowTask = flowService.marketFlow()
         async let ihsgTask = chartService.candles(symbol: Self.marketIndexSymbol, timeframe: .oneYear)
-        async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear)
+        // SP500 advertises only the LINE chart type — a CANDLE request fails to decode (no OHLC
+        // per point); the global-equities factor needs closes only, so fetch the line series.
+        async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear, chartType: .line)
         async let rupiahTask = commodityService.quote(symbol: Self.rupiahSymbol)
         async let breadthTask = breadthService.reading(symbols: breadthConstituents)
         // Market-wide flow leaderboard (Slice 4) — best-effort carried context; joins the same

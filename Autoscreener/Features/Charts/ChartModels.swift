@@ -78,13 +78,15 @@ nonisolated struct ChartResponseDTO: Decodable, Sendable {
 
     /// Every numeric field arrives as a *string*; `date` is epoch-millis as a string.
     /// `change` / `percentage` / `xlabel` are presentation-only and intentionally not decoded.
+    /// `open`/`high`/`low`/`volume` are optional: a line series (e.g. SP500 and other global
+    /// indices, which advertise only `PRICE_CHART_TYPE_LINE`) carries the close (`value`) alone.
     nonisolated struct PointDTO: Decodable, Sendable {
         let date: String
         let value: String   // close
-        let open: String
-        let high: String
-        let low: String
-        let volume: String
+        let open: String?
+        let high: String?
+        let low: String?
+        let volume: String?
     }
 }
 
@@ -105,22 +107,18 @@ extension ChartResponseDTO {
 
 private extension ChartResponseDTO.PointDTO {
     func toCandle() throws -> PriceCandle {
-        guard
-            let millis = Double(date),
-            let open = Double(open),
-            let high = Double(high),
-            let low = Double(low),
-            let close = Double(value),
-            let volume = Double(volume)
-        else { throw ChartDecodeError.malformedPoint }
-
+        guard let millis = Double(date), let close = Double(value) else {
+            throw ChartDecodeError.malformedPoint
+        }
+        // A line point omits OHLC/volume — anchor the flat candle to the close so a
+        // close-driven read (e.g. the regime's 200dma) is correct; volume defaults to 0.
         return PriceCandle(
             date: Date(timeIntervalSince1970: millis / 1000),
-            open: open,
-            high: high,
-            low: low,
+            open: open.flatMap(Double.init) ?? close,
+            high: high.flatMap(Double.init) ?? close,
+            low: low.flatMap(Double.init) ?? close,
             close: close,
-            volume: volume
+            volume: volume.flatMap(Double.init) ?? 0
         )
     }
 }
