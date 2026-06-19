@@ -121,6 +121,41 @@ nonisolated enum AllocationEngine {
                               equity: equity, cashTarget: cashTarget, lines: lines)
     }
 
+    /// The responsive **defense** pass: liquidate only the names Gate-5 flagged `.exit` (broken thesis,
+    /// failed hard gate, governance breach, or price run past intrinsic value). Unlike `plan`, a held
+    /// name with no `.exit` verdict is left ALONE — this pass never rebalances, trims toward regime
+    /// targets, or drops a name for falling out of the buy set. That asymmetry is deliberate: exits are
+    /// run on every warm sweep (cut losers fast — Zweig; defense before offense — Marks), while buys and
+    /// regime trims wait for the boundary-gated `plan`. A forced exit overrides the anti-churn band.
+    /// `names` supplies display labels for the held symbols (falls back to the ticker).
+    static func exitPlan(state: PaperPortfolioState,
+                         prices: [String: Double],
+                         exitDecisions: [String: ExitAction],
+                         regime: RegimeRead?,
+                         names: [String: String] = [:],
+                         config: AllocationConfig = .standard) -> AllocationPlan {
+        let score = regime?.score ?? 0
+        let stance = regime?.stance ?? .neutral
+        let exposure = config.exposure(forScore: score)
+        let equity = state.equity(prices: prices)
+        let cashTarget = equity * (1 - exposure)
+
+        var lines: [AllocationLine] = []
+        for (symbol, position) in state.positions where exitDecisions[symbol] == .exit {
+            guard let price = prices[symbol], price > 0 else { continue } // can't value → skip
+            let current = position.shares
+            guard current > 0 else { continue }
+            lines.append(AllocationLine(
+                symbol: symbol, name: names[symbol] ?? symbol, side: .sell,
+                currentShares: current, targetShares: 0, deltaShares: -current,
+                price: price, estValue: current * price, targetWeight: 0,
+                rationale: "Gate-5: \(symbol) flagged for exit — full sale."))
+        }
+        lines.sort { $0.estValue > $1.estValue }                          // larger liquidations first
+        return AllocationPlan(stance: stance, score: score, targetExposure: exposure,
+                              equity: equity, cashTarget: cashTarget, lines: lines)
+    }
+
     // MARK: - Layer 3 weighting
 
     /// Per-name weights as a fraction of total equity, summing to `exposure`: take each candidate's raw

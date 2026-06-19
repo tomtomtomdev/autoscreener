@@ -44,9 +44,10 @@ nonisolated struct PaperPortfolioState: Codable, Sendable {
     var cash: Double
     var positions: [String: PaperPosition]
     var trades: [PaperTrade]
-    /// When the autopilot last auto-rebalanced this book. Drives the once-per-trading-day guard so a
-    /// 5–10 min sweep cadence can't over-trade. `Optional` so old cache files decode (missing ⇒ nil ⇒
-    /// "never run", and the next sweep is due). Audit-only besides the guard; the trade log is the record.
+    /// When the autopilot last auto-rebalanced this book. Drives the once-per-session-boundary guard
+    /// (open / break / resume / close) so a 5–10 min sweep cadence can't over-trade. `Optional` so old
+    /// cache files decode (missing ⇒ nil ⇒ "never run", and the next sweep is due). Audit-only besides
+    /// the guard; the trade log is the record.
     var lastAutoRebalanceAt: Date? = nil
 
     static var seed: PaperPortfolioState {

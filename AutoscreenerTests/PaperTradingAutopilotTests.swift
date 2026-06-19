@@ -2,13 +2,22 @@ import Foundation
 import Testing
 @testable import Autoscreener
 
-/// Covers the hands-free autopilot: the once-per-trading-day guard, the picks→verdicts→plan→book
-/// pipeline, and that a failed picks fetch leaves the day un-stamped so it retries. All offline via
-/// injected sources.
+/// Covers the hands-free autopilot: the once-per-session-boundary guard (open / break / close), the
+/// picks→verdicts→plan→book pipeline, that a failed picks fetch leaves the boundary un-stamped to
+/// retry, and that a cold sweep with no priced candidates yet doesn't burn the boundary's slot. All
+/// offline via injected sources, on an IDX (Asia/Jakarta) clock.
 @MainActor
 @Suite struct PaperTradingAutopilotTests {
 
-    private let gregorian = Calendar(identifier: .gregorian)
+    private let jakarta = TimeZone(identifier: "Asia/Jakarta")!
+    /// The same zone `day(_:_:)` builds dates in, so session-boundary math is deterministic.
+    private let gregorian: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "Asia/Jakarta")!
+        return c
+    }()
+    private var clock: MarketClock { MarketClock(timeZone: jakarta) }
+    /// 2026-06-17 is a Wednesday; `h` is the hour-of-day in Jakarta.
     private func day(_ d: Int, _ h: Int = 10) -> Date {
         gregorian.date(from: DateComponents(year: 2026, month: 6, day: d, hour: h))!
     }
@@ -17,6 +26,18 @@ import Testing
     @MainActor final class PicksCounter {
         private(set) var calls = 0
         let recommendations: [Recommendation]
+        init(_ recommendations: [Recommendation]) { self.recommendations = recommendations }
+        func source(_: SelectionConfig) async throws -> SelectionOutcome {
+            calls += 1
+            return SelectionOutcome(recommendations: recommendations, skipped: [])
+        }
+    }
+
+    /// Picks source whose output can change between calls — models a cold cache (no recommendations)
+    /// that warms into a real pick on a later sweep.
+    @MainActor final class StagedPicks {
+        var recommendations: [Recommendation]
+        private(set) var calls = 0
         init(_ recommendations: [Recommendation]) { self.recommendations = recommendations }
         func source(_: SelectionConfig) async throws -> SelectionOutcome {
             calls += 1
@@ -50,13 +71,28 @@ import Testing
     private func makeAutopilot(_ screener: ScreenerStore, _ market: MarketDataStore, _ paper: PaperTradingStore,
                                recs: RecommendationsStore, exits: ExitDecisionsStore,
                                picks: @escaping (SelectionConfig) async throws -> SelectionOutcome,
+                               review: @escaping (SelectionConfig) async throws -> ReviewOutcome
+                                  = { _ in ReviewOutcome(decisions: [], skipped: []) },
                                autoExecute: Bool = true) -> PaperTradingAutopilot {
         PaperTradingAutopilot(
             store: paper, screenerStore: screener, marketStore: market,
             recommendationsStore: recs, exitDecisionsStore: exits,
             picksSource: picks,
-            reviewSource: { _ in ReviewOutcome(decisions: [], skipped: []) },
-            autoExecute: autoExecute, calendar: gregorian)
+            reviewSource: review,
+            autoExecute: autoExecute, calendar: gregorian, clock: clock)
+    }
+
+    /// Review source whose verdicts can change between sweeps — models a thesis breaking after entry.
+    @MainActor final class StagedReview {
+        var decisions: [ExitDecision]
+        init(_ decisions: [ExitDecision] = []) { self.decisions = decisions }
+        func source(_: SelectionConfig) async throws -> ReviewOutcome {
+            ReviewOutcome(decisions: decisions, skipped: [])
+        }
+    }
+
+    private func exit(_ ticker: String) -> ExitDecision {
+        ExitDecision(ticker: ticker, action: .exit, reason: "test break", audit: [])
     }
 
     @Test func aDueRunBooksTradesFromTheRecommendations() async {
@@ -69,22 +105,35 @@ import Testing
 
         #expect(p.state.positions["BBCA"] != nil)                 // booked the buy
         #expect(p.state.positions["BBCA"]?.thesis != nil)         // stamped the entry thesis
-        #expect(p.state.lastAutoRebalanceAt == day(17))           // day marked done
+        #expect(p.state.lastAutoRebalanceAt == day(17))           // boundary marked done
         #expect(recs.byTicker["BBCA"] != nil)                     // cache freshened for the screens
     }
 
-    @Test func secondRunSameDayIsANoOp() async {
+    @Test func secondRunWithinTheSameSessionBoundaryIsANoOp() async {
         let (s, m, p) = makeStores()
         let counter = PicksCounter([rec("BBCA")])
         let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
                                 picks: counter.source)
-        await bot.runIfDue(now: day(17, 10))
+        await bot.runIfDue(now: day(17, 10))                      // 10:00 — inside the 09:00 open window
         let tradesAfterFirst = p.state.trades.count
-        await bot.runIfDue(now: day(17, 15))                      // same calendar day
+        await bot.runIfDue(now: day(17, 11))                      // 11:00 — still the same open boundary
 
         #expect(counter.calls == 1)                               // not re-fetched
         #expect(p.state.trades.count == tradesAfterFirst)         // no extra trades
-        #expect(!bot.isDue(now: day(17, 23)))
+        #expect(!bot.isDue(now: day(17, 11)))                     // still satisfied for this boundary
+    }
+
+    @Test func crossingIntoTheNextSessionBoundaryReRunsSameDay() async {
+        let (s, m, p) = makeStores()
+        let counter = PicksCounter([rec("BBCA")])
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: counter.source)
+        await bot.runIfDue(now: day(17, 10))                      // open boundary (09:00)
+        #expect(bot.isDue(now: day(17, 14)))                      // 14:00 → past the 13:30 resume boundary
+        await bot.runIfDue(now: day(17, 14))
+
+        #expect(counter.calls == 2)                               // a fresh pull at the new boundary
+        #expect(p.state.lastAutoRebalanceAt == day(17, 14))
     }
 
     @Test func nextTradingDayRunsAgain() async {
@@ -110,10 +159,10 @@ import Testing
 
         #expect(p.state.positions.isEmpty)                        // nothing booked
         #expect(recs.byTicker["BBCA"] != nil)                     // but caches still freshened
-        #expect(p.state.lastAutoRebalanceAt == day(17))           // and the day counts as done
+        #expect(p.state.lastAutoRebalanceAt == day(17))           // and the boundary counts as done
     }
 
-    @Test func failedPicksFetchLeavesTheDayDueForRetry() async {
+    @Test func failedPicksFetchLeavesTheBoundaryDueForRetry() async {
         struct Boom: Error {}
         let (s, m, p) = makeStores()
         let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
@@ -123,5 +172,65 @@ import Testing
         #expect(p.state.positions.isEmpty)
         #expect(p.state.lastAutoRebalanceAt == nil)               // not stamped → still due
         #expect(bot.isDue(now: day(17)))
+    }
+
+    /// Regression for the "stuck at 100% cash" bug: the first sweep of a boundary fired while the
+    /// per-symbol cache was still cold (selection returned nothing). The autopilot must NOT consume the
+    /// boundary on an empty, no-candidate plan — it should leave it due so the next (warm) sweep books.
+    @Test func coldNoCandidateRunDoesNotConsumeTheBoundaryThenBooksWhenWarm() async {
+        let (s, m, p) = makeStores()
+        let staged = StagedPicks([])                              // cache cold: no recommendations yet
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: staged.source)
+        await bot.runIfDue(now: day(17, 9))                       // 09:00 open, cold
+
+        #expect(p.state.positions.isEmpty)                        // nothing booked
+        #expect(p.state.lastAutoRebalanceAt == nil)               // boundary NOT consumed
+        #expect(bot.isDue(now: day(17, 10)))                      // still due in the same open window
+
+        staged.recommendations = [rec("BBCA")]                    // cache warms — the real pick lands
+        await bot.runIfDue(now: day(17, 10))
+
+        #expect(p.state.positions["BBCA"] != nil)                 // now it books on the same boundary
+        #expect(p.state.lastAutoRebalanceAt == day(17, 10))
+    }
+
+    // MARK: - Asymmetric defense: exits run every warm sweep, not just at boundaries
+
+    /// The core of the buy/sell asymmetry: a name that breaks after entry is liquidated on the very next
+    /// warm sweep — even when no session boundary has been crossed (so the rebalance pass is NOT due).
+    @Test func exitVerdictLiquidatesWithoutWaitingForABoundary() async {
+        let (s, m, p) = makeStores()
+        let staged = StagedReview()                               // intact at entry
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in SelectionOutcome(recommendations: [self.rec("BBCA")], skipped: []) },
+                                review: staged.source)
+        await bot.runIfDue(now: day(17, 10))                      // open boundary → buys BBCA
+        #expect(p.state.positions["BBCA"] != nil)
+
+        staged.decisions = [exit("BBCA")]                         // thesis breaks intraday
+        #expect(!bot.isDue(now: day(17, 11)))                     // still the same boundary — no rebalance due
+        await bot.runExits(now: day(17, 11))                      // defense pass on a mid-session sweep
+
+        #expect(p.state.positions["BBCA"] == nil)                 // sold now — didn't wait for the next boundary
+        #expect(p.state.trades.contains { $0.symbol == "BBCA" && $0.side == .sell })
+    }
+
+    /// The exit pass is sell-only and verdict-driven: an unflagged holding is left completely alone
+    /// (no rebalancing/trimming leaks into the every-sweep cadence).
+    @Test func exitPassLeavesUnflaggedHoldingsAlone() async {
+        let (s, m, p) = makeStores()
+        let staged = StagedReview()
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in SelectionOutcome(recommendations: [self.rec("BBCA")], skipped: []) },
+                                review: staged.source)
+        await bot.runIfDue(now: day(17, 10))
+        let sharesAfterBuy = p.state.positions["BBCA"]?.shares
+        #expect(sharesAfterBuy != nil)
+
+        staged.decisions = []                                     // no verdict ⇒ hold
+        await bot.runExits(now: day(17, 11))
+
+        #expect(p.state.positions["BBCA"]?.shares == sharesAfterBuy)  // untouched by the defense pass
     }
 }

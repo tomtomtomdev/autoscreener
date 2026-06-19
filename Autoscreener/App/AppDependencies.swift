@@ -160,13 +160,15 @@ final class AppDependencies {
         // closures, evaluated lazily when a sweep actually fires.
         let autopilot = PaperTradingAutopilot(
             store: self.paperTradingStore, screenerStore: cacheStore, marketStore: marketStore,
-            recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.exitDecisionsStore)
+            recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.exitDecisionsStore,
+            clock: clock)
         self.paperTradingAutopilot = autopilot
-        // Live only: after each full IDX sweep, run the once-per-day auto-rebalance. Disabled under
-        // fixtures/tests so the seed sweep leaves the paper book deterministic (UI tests drive manually).
+        // Live only: after each full IDX sweep, run the autopilot — the exit (defense) pass every warm
+        // sweep plus the once-per-session-boundary rebalance (offense). Disabled under fixtures/tests so
+        // the seed sweep leaves the paper book deterministic (UI tests drive manually).
         var postSweep: DataSweepCoordinator.PostSweep? = nil
         if !headless {
-            postSweep = { [autopilot, clock] in await autopilot.runIfDue(now: clock.now()) }
+            postSweep = { [autopilot, clock] in await autopilot.run(now: clock.now()) }
         }
 
         // Live only: after each full IDX sweep, warm the per-symbol selection cache so the
