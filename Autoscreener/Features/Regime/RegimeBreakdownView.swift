@@ -19,6 +19,7 @@ struct RegimeBreakdownContent: View {
             Divider()
             factorList
             if read.valuationCapped { cappedNote }
+            if read.tapeFloored { tapeNote }
             footnote
         }
     }
@@ -102,6 +103,20 @@ struct RegimeBreakdownContent: View {
         .padding(12)
         .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityIdentifier("regime.cappedNote")
+    }
+
+    private var tapeNote: some View {
+        Label {
+            Text("Tape guard: the index is cheap, but it's below its 200-day average and LQ45 breadth has collapsed — a broad, confirmed downtrend. Don't fight the tape: the read is forced to defence. Cheap doesn't mean going up soon; accumulate slowly, don't size up into a falling market.")
+                .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "arrow.down.right.circle.fill")
+        }
+        .foregroundStyle(.red)
+        .padding(12)
+        .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityIdentifier("regime.tapeNote")
     }
 
     private var footnote: some View {

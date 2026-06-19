@@ -126,6 +126,38 @@ import Testing
         #expect(read.valuationCapped == false)
     }
 
+    @Test func confirmedDowntrendForcesRiskOffDespiteCheapValuation() {
+        // The live screenshot: the index is cheap (risk-on ×2) and the US legs are
+        // green (10y falling, S&P above its 200dma), but the *domestic* tape is in a
+        // broad, confirmed downtrend — IHSG below its 200dma AND LQ45 breadth collapsed.
+        // Raw vote nets to neutral (+1/7 ≈ +0.14); "don't fight the tape / don't catch a
+        // falling knife" forces a defensive read regardless.
+        let factors = [
+            factor(.valuation, .riskOn),      // weight 2
+            factor(.usRates, .riskOn),
+            factor(.globalEquities, .riskOn),
+            factor(.policyRate, .riskOff),
+            factor(.trend, .riskOff),         // IHSG below its 200dma
+            factor(.breadth, .riskOff)]       // <40% of LQ45 above their 200dma
+        let read = RegimeSynthesizer.read(factors: factors, asOf: nil)
+        #expect(read.score > -RegimeSynthesizer.Threshold.stanceBand)  // raw read is neutral
+        #expect(read.stance == .riskOff)                               // …guard forces defense
+        #expect(read.tapeFloored == true)
+    }
+
+    @Test func oneWeakTapeLegDoesNotTripTheGuard() {
+        // Trend below its MA but breadth still holding (neutral) is *not* a confirmed
+        // downtrend — the guard stays its hand. That basing/turn is exactly when cheap
+        // valuation should be allowed to lead, not be overridden into defense.
+        let factors = [
+            factor(.valuation, .riskOn),
+            factor(.trend, .riskOff),
+            factor(.breadth, .neutral)]
+        let read = RegimeSynthesizer.read(factors: factors, asOf: nil)
+        #expect(read.tapeFloored == false)
+        #expect(read.stance != .riskOff)
+    }
+
     @Test func guardDoesNotFireWhenValuationIsNotStretched() {
         // Valuation neutral, tape risk-on → genuinely risk-on, no cap.
         var factors = [factor(.valuation, .neutral)]

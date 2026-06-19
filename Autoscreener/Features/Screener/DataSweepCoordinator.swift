@@ -478,7 +478,7 @@ final class DataSweepCoordinator {
         if let read = RegimeComposer.compose(
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
             usdIdrChangePercent: usdIdr, aboveSnapshot: above, constituents: constituents) {
-            print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")")
+            print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")\(read.tapeFloored ? " · tape-floored" : "")")
             for f in read.factors {
                 print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")
             }

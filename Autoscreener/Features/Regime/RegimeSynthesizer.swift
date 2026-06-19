@@ -12,6 +12,11 @@ import Foundation
 ///     how strong the tape. That is the euphoric top where perceived risk is
 ///     lowest exactly when actual risk is highest — a naïve vote-counter would
 ///     call it offence, which is first-level thinking.
+///   • **The confirmed-downtrend guard (its mirror):** when IHSG trend *and* LQ45
+///     breadth are both risk-off the domestic tape is in a broad markdown, so the
+///     read is forced to risk-off — cheap valuation and a green US tape must not net
+///     it up to neutral (Zweig: don't fight the tape; the falling-knife / value-trap
+///     zone where cheap doesn't yet mean going up).
 ///   • Output is a *posture*, not a prediction.
 ///
 /// Two pure layers, each independently testable: per-factor classifiers map a raw
@@ -132,6 +137,22 @@ nonisolated enum RegimeSynthesizer {
             stance = .neutral
             capped = true
         }
-        return RegimeRead(stance: stance, score: score, factors: factors, asOf: asOf, valuationCapped: capped)
+
+        // Confirmed-downtrend guard (the mirror of the late-cycle guard). When the
+        // domestic tape is in a *broad, confirmed* markdown — IHSG below its 200-day
+        // AND LQ45 breadth collapsed (both risk-off) — the posture is defence, full
+        // stop. Cheap valuation and a green US tape must not net it up to neutral:
+        // that is the falling-knife / value-trap zone (Zweig: don't fight the tape;
+        // Marks: cheap doesn't mean going up soon). Requires *both* legs so a single
+        // weak leg — the basing turn where cheapness should lead — doesn't trip it.
+        var tapeFloored = false
+        let trendSignal = factors.first { $0.kind == .trend }?.signal
+        let breadthSignal = factors.first { $0.kind == .breadth }?.signal
+        if trendSignal == .riskOff, breadthSignal == .riskOff, stance != .riskOff {
+            stance = .riskOff
+            tapeFloored = true
+        }
+        return RegimeRead(stance: stance, score: score, factors: factors, asOf: asOf,
+                          valuationCapped: capped, tapeFloored: tapeFloored)
     }
 }

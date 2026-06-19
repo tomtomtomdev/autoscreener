@@ -120,15 +120,14 @@ nonisolated enum RegimeFactorBuilder {
         }
     }
 
-    /// Fed-funds context appended to the US-rates detail, e.g. " (Fed easing)". Empty
-    /// when fed funds is unavailable so the 10y line still reads cleanly.
+    /// Fed-funds context appended to the US-rates detail, e.g. " (Fed funds rising)".
+    /// Names its own subject so it can't be misread as describing the 10y: the two
+    /// rates routinely diverge (a falling 10y while the Fed still hikes = a flattening
+    /// curve), and the old "(Fed tightening)" jargon contradicted the yield's own
+    /// trend word on the same line. Empty when fed funds is unavailable.
     private static func fedFundsContext(_ series: RegimeSnapshot.MacroSeries?) -> String {
         guard let series else { return "" }
-        switch series.trend {
-        case .up: return " (Fed tightening)"
-        case .down: return " (Fed easing)"
-        case .flat: return " (Fed on hold)"
-        }
+        return " (Fed funds \(trendWord(series.trend)))"
     }
 
     private static func valuationWord(_ signal: RegimeSignal) -> String {

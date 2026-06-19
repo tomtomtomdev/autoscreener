@@ -80,6 +80,28 @@ import Testing
         #expect(factors.first { $0.kind == .globalDollar }?.detail.contains("119.0") == true)
     }
 
+    @Test func usRatesDetailNamesFedFundsSoItDoesntContradictTheYield() {
+        // Curve divergence: the 10y is *falling* while the Fed is still *hiking*. The
+        // old label rendered "US 10y … falling (Fed tightening)" — a self-contradiction
+        // on one line. The parenthetical must name its own subject (fed funds) so the
+        // two rates can legibly move in opposite directions.
+        let divergent = RegimeSnapshot(
+            asOf: "2026-06-18",
+            biRate: nil,
+            macro: RegimeSnapshot.MacroBlock(
+                usFedFunds: RegimeSnapshot.MacroSeries(value: 4.50, trend: .up, asOf: "2026-06-18"),
+                us10y: RegimeSnapshot.MacroSeries(value: 4.49, trend: .down, asOf: "2026-06-18"),
+                broadDollar: nil),
+            indices: [:])
+        let detail = RegimeFactorBuilder.factors(
+            snapshot: divergent, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil)
+            .first { $0.kind == .usRates }?.detail
+        #expect(detail?.contains("US 10y 4.49% falling") == true)
+        #expect(detail?.contains("Fed funds rising") == true)
+        #expect(detail?.contains("Fed tightening") == false)   // no contradictory jargon
+    }
+
     @Test func globalEquitiesIsRiskOffWhenSP500BelowIts200dma() {
         let factors = RegimeFactorBuilder.factors(
             snapshot: nil, netForeignRaw: nil, netForeignText: nil,

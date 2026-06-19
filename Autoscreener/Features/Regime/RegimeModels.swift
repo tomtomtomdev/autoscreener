@@ -79,6 +79,21 @@ nonisolated struct RegimeRead: Sendable, Equatable, Codable {
     /// `true` when the late-cycle guard fired — an otherwise risk-on tape was held
     /// to neutral because valuation is stretched (see `RegimeSynthesizer.read`).
     let valuationCapped: Bool
+    /// `true` when the confirmed-downtrend tape guard fired — IHSG trend AND LQ45
+    /// breadth were both risk-off, so the read was forced to risk-off (defence) no
+    /// matter how cheap the index or how green the US tape. Zweig: don't fight the
+    /// tape; Marks: don't catch a falling knife.
+    let tapeFloored: Bool
+
+    init(stance: RegimeStance, score: Double, factors: [RegimeFactor], asOf: String?,
+         valuationCapped: Bool, tapeFloored: Bool = false) {
+        self.stance = stance
+        self.score = score
+        self.factors = factors
+        self.asOf = asOf
+        self.valuationCapped = valuationCapped
+        self.tapeFloored = tapeFloored
+    }
 }
 
 // MARK: - regime.json contract (server-side scraper output)
