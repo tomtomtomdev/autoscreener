@@ -66,8 +66,16 @@ final class DataSweepCoordinator {
     /// entirely (the screener-only path used by the screener unit tests).
     private let catalog: [MarketSymbol]
     /// LQ45 constituents the regime breadth factor intersects against the screener's
-    /// `.above200MA` snapshot.
+    /// `.above200MA` snapshot. The committed seed (`LQ45Constituents`) is the offline
+    /// fallback; `indexConstituents`, when wired, refreshes it live each day.
     private let constituents: [String]
+    /// Dynamic IDX index membership (LQ45 leaders + KOMPAS100 broad) for the divergence
+    /// breadth factor. `nil` disables it — breadth then uses the static `constituents`
+    /// (LQ45-only), exactly the pre-divergence behaviour (the tests and fixtures path).
+    private let indexConstituents: (any IndexConstituentsServicing)?
+    /// Max age of the cached index memberships before a sweep refetches them. IDX
+    /// reviews LQ45/KOMPAS100 only at scheduled rebalances, so a daily refresh is ample.
+    private let constituentsTTL: TimeInterval
     private let safetyCap: Int
     private let throttleRange: ClosedRange<UInt64>
     /// Gap between sweeps while the IDX is open (default 5–10 min).
@@ -123,6 +131,13 @@ final class DataSweepCoordinator {
     @ObservationIgnored private var cachedMacro: RegimeSnapshot.MacroBlock?
     @ObservationIgnored private var lastMacroFetchAt: Date?
 
+    /// Index memberships are refetched at most daily (`constituentsTTL`) and cached in
+    /// memory across sweeps, mirroring the BI-rate/macro cache. A failed (or empty) fetch
+    /// keeps the prior list and leaves the timestamp unset, so the next sweep retries.
+    @ObservationIgnored private var cachedLQ45: [String]?
+    @ObservationIgnored private var cachedKompas: [String]?
+    @ObservationIgnored private var lastConstituentsFetchAt: Date?
+
     /// IHSG — the composite index, for the regime's 200-day trend signal.
     private static let compositeSymbol = "IHSG"
     /// S&P 500 — the regime's live global risk-appetite leg (200-day trend).
@@ -156,6 +171,8 @@ final class DataSweepCoordinator {
          macroProvider: any FREDMacroProviding,
          catalog: [MarketSymbol] = MarketCatalog.all,
          constituents: [String] = LQ45Constituents.symbols,
+         indexConstituents: (any IndexConstituentsServicing)? = nil,
+         constituentsTTL: TimeInterval = 24 * 60 * 60,
          runsContinuousLoop: Bool = true,
          safetyCap: Int = 20,
          throttleRange: ClosedRange<UInt64> = 1_000_000_000...1_500_000_000,
@@ -182,6 +199,8 @@ final class DataSweepCoordinator {
         self.macroTTL = macroTTL
         self.catalog = catalog
         self.constituents = constituents
+        self.indexConstituents = indexConstituents
+        self.constituentsTTL = constituentsTTL
         self.runsContinuousLoop = runsContinuousLoop
         self.safetyCap = safetyCap
         self.throttleRange = throttleRange
@@ -456,6 +475,10 @@ final class DataSweepCoordinator {
             print("[regime] merged inputs: none (no snapshot/biRate/macro) — read built from market legs only")
         }
 
+        // Refresh LQ45 + KOMPAS100 membership (≤ daily, Stockbit-throttled). No-op on most
+        // sweeps; on a fetch day it throttles its own requests like the other regime legs.
+        await refreshConstituentsIfStale()
+
         do { try await throttle() } catch { print("[regime] cancelled before foreign-flow fetch"); return }
         let flow = try? await self.flow.marketFlow()
         print("[regime] foreign flow: \(flow.map { "net \($0.netForeign.formatted)" } ?? "unavailable")")
@@ -472,12 +495,18 @@ final class DataSweepCoordinator {
 
         let usdIdr = marketStore.quotes[Self.rupiahSymbol]?.changePercent
         let above = store.snapshot(for: .above200MA)
-        let breadth = IndexBreadth.reading(aboveSnapshot: above, constituents: constituents)
-        print("[regime] USD/IDR today=\(usdIdr.map { String(format: "%+.2f%%", $0) } ?? "—") · breadth=\(breadth.map { "\($0.above)/\($0.measured) above 200dma" } ?? "—")")
+        // Live memberships when available, the committed LQ45 seed as the offline fallback;
+        // KOMPAS100 stays empty without the live service, so breadth degrades to LQ45-only.
+        let lq45 = cachedLQ45 ?? constituents
+        let kompas = cachedKompas ?? []
+        let leadersBreadth = IndexBreadth.reading(aboveSnapshot: above, constituents: lq45)
+        let broadBreadth = IndexBreadth.reading(aboveSnapshot: above, constituents: kompas)
+        print("[regime] USD/IDR today=\(usdIdr.map { String(format: "%+.2f%%", $0) } ?? "—") · LQ45 breadth=\(leadersBreadth.map { "\($0.above)/\($0.measured)" } ?? "—") · KOMPAS100 breadth=\(broadBreadth.map { "\($0.above)/\($0.measured)" } ?? "—")")
 
         if let read = RegimeComposer.compose(
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
-            usdIdrChangePercent: usdIdr, aboveSnapshot: above, constituents: constituents) {
+            usdIdrChangePercent: usdIdr, aboveSnapshot: above,
+            constituents: lq45, kompasConstituents: kompas) {
             print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")\(read.tapeFloored ? " · tape-floored" : "")")
             for f in read.factors {
                 print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")
@@ -510,6 +539,27 @@ final class DataSweepCoordinator {
         if let bi { cachedBIRate = bi }
         if let macro { cachedMacro = macro }
         if bi != nil || macro != nil { lastMacroFetchAt = now }
+    }
+
+    /// Refreshes the cached LQ45 + KOMPAS100 memberships when older than `constituentsTTL`
+    /// (or never fetched), mirroring `refreshMacroIfStale`. No-op when no live service is
+    /// wired (the breadth factor then stays on the static LQ45 seed). Each index degrades
+    /// independently — an empty/failed fetch keeps the prior list and leaves the timestamp
+    /// unset so the next sweep retries. The requests hit Stockbit, so each is throttled.
+    private func refreshConstituentsIfStale() async {
+        guard let service = indexConstituents else { return }
+        let now = clock.now()
+        if let last = lastConstituentsFetchAt, now.timeIntervalSince(last) < constituentsTTL { return }
+
+        do { try await throttle() } catch { return }
+        let lq45 = try? await service.constituents(of: .lq45)
+        do { try await throttle() } catch { return }
+        let kompas = try? await service.constituents(of: .kompas100)
+
+        if let lq45, !lq45.isEmpty { cachedLQ45 = lq45 }
+        if let kompas, !kompas.isEmpty { cachedKompas = kompas }
+        if lq45?.isEmpty == false || kompas?.isEmpty == false { lastConstituentsFetchAt = now }
+        print("[regime] constituents: LQ45=\(cachedLQ45?.count ?? 0) · KOMPAS100=\(cachedKompas?.count ?? 0)")
     }
 
     /// Merges the on-device BI rate / macro *over* the published snapshot (device wins,

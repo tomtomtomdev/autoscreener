@@ -57,6 +57,7 @@ enum SweepTestKit {
                             macroProvider: any FREDMacroProviding = StubFREDMacroService(),
                             catalog: [MarketSymbol] = [],
                             constituents: [String] = LQ45Constituents.symbols,
+                            indexConstituents: (any IndexConstituentsServicing)? = nil,
                             clock: MarketClock = SweepTestKit.openClock(),
                             runsContinuousLoop: Bool = false,
                             safetyCap: Int = 20,
@@ -74,7 +75,7 @@ enum SweepTestKit {
             paywall: paywall, templates: templates, screener: screener,
             commodity: commodity, chart: chart, flow: flow, snapshotProvider: snapshotProvider,
             biRateProvider: biRateProvider, macroProvider: macroProvider,
-            catalog: catalog, constituents: constituents,
+            catalog: catalog, constituents: constituents, indexConstituents: indexConstituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
             openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
             continuousAutoFetch: continuousAutoFetch,
@@ -709,6 +710,52 @@ private actor LoopGapGate {
         #expect(read?.factors.contains { $0.kind == .breadth } == true)
         // Valuation + BI rate come from the stub regime snapshot.
         #expect(read?.factors.contains { $0.kind == .valuation } == true)
+    }
+
+    /// Returns fixed memberships for LQ45 + KOMPAS100 (the divergence breadth inputs).
+    private final class FakeIndexConstituents: IndexConstituentsServicing, @unchecked Sendable {
+        let byIndex: [IDXIndex: [String]]
+        init(_ byIndex: [IDXIndex: [String]]) { self.byIndex = byIndex }
+        func constituents(of index: IDXIndex) async throws -> [String] { byIndex[index] ?? [] }
+    }
+
+    @Test func openSweepUsesDynamicKompasMembershipForDivergenceBreadth() async {
+        // All three LQ45 leaders are above their 200dma, but the broader KOMPAS100 (10
+        // names) has only those three above — a 30% broad reading. Wired to the dynamic
+        // service, the sweep votes breadth on the broad market → risk-off, and names both
+        // universes in the detail (the narrowing late-cycle tell).
+        let marketStore = SweepTestKit.marketStore()
+        let lq45 = ["BBCA", "TLKM", "BMRI"]
+        let kompas = lq45 + ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), marketStore: marketStore,
+            templates: templatesWithAbove200MA(lq45),
+            catalog: SweepTestKit.mixedCatalog,
+            constituents: lq45,
+            indexConstituents: FakeIndexConstituents([.lq45: lq45, .kompas100: kompas]))
+
+        await coord.runSweep(includeIDX: true)
+
+        let breadth = marketStore.regimeRead?.factors.first { $0.kind == .breadth }
+        #expect(breadth?.signal == .riskOff)
+        #expect(breadth?.detail == "KOMPAS100 30% vs LQ45 100% above their 200-day average — narrowing")
+    }
+
+    @Test func openSweepWithoutDynamicServiceKeepsLQ45OnlyBreadth() async {
+        // No live service wired (the default / fixtures path): breadth stays on the static
+        // LQ45 seed and reads the single-index detail — byte-for-byte the prior behaviour.
+        let marketStore = SweepTestKit.marketStore()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), marketStore: marketStore,
+            templates: templatesWithAbove200MA(["BBCA", "TLKM", "BMRI"]),
+            catalog: SweepTestKit.mixedCatalog,
+            constituents: ["BBCA", "TLKM", "BMRI"])
+
+        await coord.runSweep(includeIDX: true)
+
+        let breadth = marketStore.regimeRead?.factors.first { $0.kind == .breadth }
+        #expect(breadth?.detail.contains("LQ45 names above their 200-day average") == true)
+        #expect(breadth?.detail.contains("KOMPAS100") == false)
     }
 
     @Test func closedSweepLeavesTheRegimeReadFrozen() async {

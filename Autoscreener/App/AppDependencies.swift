@@ -203,6 +203,10 @@ final class AppDependencies {
             snapshotProvider: self.regimeSnapshotService,
             biRateProvider: self.biRateService,
             macroProvider: self.fredMacroService,
+            // Live only: dynamic LQ45 + KOMPAS100 membership for the divergence breadth
+            // factor. Under fixtures/tests it's nil, so breadth stays on the static LQ45
+            // seed (deterministic, no network) exactly as before.
+            indexConstituents: useFixtures ? nil : IndexConstituentsService(apiClient: client),
             runsContinuousLoop: !headless,
             // Under fixtures/tests the seed sweep should land instantly — skip the
             // anti-burst throttle (it only matters against the live Stockbit API).
