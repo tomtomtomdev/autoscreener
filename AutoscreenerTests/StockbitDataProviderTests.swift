@@ -263,6 +263,19 @@ private struct StubCommodity: CommodityPriceServicing {
     }
 }
 
+/// A symbol-keyed commodity stub so a test can give USD/IDR and each export-basket leg
+/// (coal/CPO/nickel) distinct moves — proving the selection path reads the *basket*, not the
+/// rupiah leg. Throws for any symbol absent from the map (modelling a leg that failed to price).
+private struct StubCommodityBySymbol: CommodityPriceServicing {
+    var changeBySymbol: [String: Double]
+    func quote(symbol: String) async throws -> CommodityQuote {
+        guard let change = changeBySymbol[symbol] else { throw StubError.absent }
+        return CommodityQuote(symbol: symbol, name: symbol, price: 100, previousClose: 99,
+                              change: 1, changePercent: change, volume: nil,
+                              formattedPrice: "100", asOf: "")
+    }
+}
+
 private struct StubBreadth: BreadthServicing {
     var result: BreadthReading
     func reading(symbols: [String], period: Int) async -> BreadthReading { result }
@@ -521,6 +534,40 @@ private func makeProvider(
         await #expect(throws: SelectionProviderError.noRegimeInputs) {
             _ = try await provider.marketContext()
         }
+    }
+
+    // The export-basket → commodityTailwind wiring (the China-channel feeding the *selection*
+    // regime). Before this the provider passed `commodityChangePercent: nil`, so `commodityTailwind`
+    // was always false regardless of Indonesia's terms of trade. These pin that the live fan-out now
+    // reads the SAME coal/CPO/nickel basket the displayed China-channel reads (oil excluded) and
+    // sets the tailwind from its mean daily move — independent of the USD/IDR leg.
+
+    @Test func readsTheExportBasketIntoCommodityTailwind() async throws {
+        let provider = makeProvider(commodity: StubCommodityBySymbol(changeBySymbol: [
+            "USDIDR": -0.50,                                   // rupiah strengthening — not an FX stress
+            "COAL-NEWCASTLE": 1.5, "CPO": 2.1, "NICKEL": 0.9,  // export basket rising → tailwind
+        ]))
+        let c = try await provider.marketContext()
+        #expect(c.commodityTailwind == true)
+    }
+
+    @Test func noTailwindWhenTheExportBasketIsFalling() async throws {
+        let provider = makeProvider(commodity: StubCommodityBySymbol(changeBySymbol: [
+            "USDIDR": 0.50,                                       // even with FX "stress"…
+            "COAL-NEWCASTLE": -1.2, "CPO": -0.4, "NICKEL": -2.0,  // …a falling basket = no tailwind
+        ]))
+        let c = try await provider.marketContext()
+        #expect(c.commodityTailwind == false)
+    }
+
+    @Test func degradesToNoTailwindWhenNoBasketCommodityPrices() async throws {
+        // Basket legs all fail to price, but the rest of the regime is present: the context still
+        // builds (no phantom-regime throw) and the absent basket reads as no tailwind, not a
+        // fabricated one — matching the adapter's neutral degradation policy.
+        let provider = makeProvider(commodity: StubCommodityBySymbol(changeBySymbol: [:]))
+        let c = try await provider.marketContext()
+        #expect(c.commodityTailwind == false)
+        #expect(c.indexValuationPercentile == 0.42)   // the rest of the regime is unaffected
     }
 }
 

@@ -367,6 +367,10 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         // per point); the global-equities factor needs closes only, so fetch the line series.
         async let sp500Task = chartService.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear, chartType: .line)
         async let rupiahTask = commodityService.quote(symbol: Self.rupiahSymbol)
+        // China-channel terms-of-trade leg: Indonesia's coal/CPO/nickel export basket (the same set
+        // the displayed China-channel reads; oil excluded as a net-import drag). Best-effort, like
+        // the rupiah leg — it degrades to nil rather than aborting the regime read.
+        async let exportBasketTask = exportBasketReading()
         async let breadthTask = breadthService.reading(symbols: breadthConstituents)
         // Market-wide flow leaderboard (Slice 4) — best-effort carried context; joins the same
         // one-shot concurrent fan-out (not throttled), degrading to nil on failure.
@@ -378,12 +382,14 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         let sp500 = try? await sp500Task
         let rupiah = try? await rupiahTask
         let breadth = await breadthTask
+        let exportBasket = await exportBasketTask
         let flowLeaders = try? await flowLeadersTask
         let distance = ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
         let sp500Distance = sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
 
         // Decide emptiness exactly as the regime screen does: if no factor resolves, refuse to
-        // score a phantom regime (§1.7). `RegimeFactorBuilder` is the single source of that rule.
+        // score a phantom regime (§1.7). `RegimeFactorBuilder` is the single source of that rule —
+        // it must see the same input set the adapter below does, so the export basket joins here too.
         let factors = RegimeFactorBuilder.factors(
             snapshot: snapshot,
             netForeignRaw: flow?.netForeign.raw,
@@ -391,7 +397,8 @@ actor StockbitDataProvider: DataProvider, LegProvider {
             ihsgDistanceFrom200dma: distance,
             sp500DistanceFrom200dma: sp500Distance,
             usdIdrChangePercent: rupiah?.changePercent,
-            breadth: breadth)
+            breadth: breadth,
+            commodityChannel: exportBasket)
         guard !factors.isEmpty else { throw SelectionProviderError.noRegimeInputs }
 
         var context = SelectionFundamentals.marketContext(
@@ -400,10 +407,32 @@ actor StockbitDataProvider: DataProvider, LegProvider {
             ihsgDistanceFrom200dma: distance,
             usdIdrChangePercent: rupiah?.changePercent,
             breadth: breadth,
-            // v1: no single market-wide "relevant" commodity to read — left neutral (§3 note).
-            commodityChangePercent: nil)
+            // Export-basket mean move (> 0 ⇒ tailwind); nil when no basket commodity priced, which
+            // the adapter degrades to "no tailwind" rather than a fabricated one.
+            commodityChangePercent: exportBasket?.basketChangePercent)
         context.flowLeaders = flowLeaders
         return context
+    }
+
+    /// Indonesia's export-commodity basket (coal/CPO/nickel — the same set `CommodityChannel`
+    /// feeds the displayed China-channel; oil is excluded as a net-import drag) as one regime
+    /// reading, or `nil` when no leg priced. Concurrent and best-effort: each leg degrades
+    /// independently, mirroring how the rupiah leg fails soft above.
+    private func exportBasketReading() async -> CommodityChannelReading? {
+        let service = commodityService
+        let quotes = await withTaskGroup(of: (String, CommodityQuote)?.self) { group in
+            for item in CommodityChannel.basket {
+                let symbol = item.symbol
+                group.addTask {
+                    guard let quote = try? await service.quote(symbol: symbol) else { return nil }
+                    return (symbol, quote)
+                }
+            }
+            var dict: [String: CommodityQuote] = [:]
+            for await pair in group { if let (symbol, quote) = pair { dict[symbol] = quote } }
+            return dict
+        }
+        return CommodityChannel.reading(quotes: quotes)
     }
 
     // MARK: - Throttle helper
