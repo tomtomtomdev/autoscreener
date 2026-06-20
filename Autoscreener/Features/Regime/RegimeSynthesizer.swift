@@ -37,6 +37,10 @@ nonisolated enum RegimeSynthesizer {
         /// ±1.5% dead-band on the export-basket daily move. Commodities are noisier than FX,
         /// so a basket swing must clear this band to register as a terms-of-trade signal.
         static let commodityBand = 0.015
+        /// ±1.5% dead-band on the Asia-EM equity read — the EM-vs-DM 200dma spread (or the absolute
+        /// regional trend in fallback). The basket must lead/lag the developed-market tape by more
+        /// than this to register as a rotation signal, filtering a small or noisy gap to neutral.
+        static let asiaEMBand = 0.015
         /// Normalised-score band that separates the three stances.
         static let stanceBand = 0.33
     }
@@ -118,6 +122,19 @@ nonisolated enum RegimeSynthesizer {
         guard let c = change else { return nil }
         if c > Threshold.commodityBand { return .riskOn }
         if c < -Threshold.commodityBand { return .riskOff }
+        return .neutral
+    }
+
+    /// The Asia-EM equity-appetite leg. `strength` is the EM-vs-developed-market 200dma spread
+    /// (Asia-EM basket distance − S&P 500 distance) when the benchmark is available, otherwise the
+    /// absolute regional 200dma trend. Positive (Asia-EM leading the DM tape) = the EM periphery is
+    /// being bid = risk-on; negative (lagging a DM-led advance) = appetite isn't reaching IDX =
+    /// risk-off; within the band = neutral. Voting the *relative* spread keeps this from echoing the
+    /// US 10y / dollar / S&P legs that already count the one global cycle (see `AsiaEMReading`).
+    static func asiaEMSignal(strength value: Double?) -> RegimeSignal? {
+        guard let v = value else { return nil }
+        if v > Threshold.asiaEMBand { return .riskOn }
+        if v < -Threshold.asiaEMBand { return .riskOff }
         return .neutral
     }
 

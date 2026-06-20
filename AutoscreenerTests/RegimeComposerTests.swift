@@ -129,6 +129,21 @@ import Testing
         #expect(factor?.detail.contains("Export basket +2.00% (coal/nickel)") == true)
     }
 
+    @Test func threadsTheAsiaEMFactorWhenSupplied() {
+        // The coordinator builds the reading from the basket's series and hands it in; the composer
+        // just threads it to the factor builder, yielding the Asia-EM factor in the read.
+        let read = RegimeComposer.compose(
+            snapshot: nil, flow: nil, ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil, aboveSnapshot: nil,
+            constituents: constituents,
+            asiaEM: AsiaEMReading(
+                regionalDistance: 0.05, contributors: ["Hang Seng", "KOSPI"], relativeToSP: 0.04))
+
+        let factor = read?.factors.first { $0.kind == .asiaEM }
+        #expect(factor?.signal == .riskOn)                                  // +4.0% ahead of S&P > band
+        #expect(factor?.detail.contains("4.0% ahead of the S&P") == true)
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,

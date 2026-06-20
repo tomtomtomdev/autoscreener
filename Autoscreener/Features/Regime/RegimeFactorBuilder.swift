@@ -16,7 +16,8 @@ nonisolated enum RegimeFactorBuilder {
         usdIdrChangePercent: Double?,
         breadth: BreadthReading?,
         kompasBreadth: BreadthReading? = nil,
-        commodityChannel: CommodityChannelReading? = nil
+        commodityChannel: CommodityChannelReading? = nil,
+        asiaEM: AsiaEMReading? = nil
     ) -> [RegimeFactor] {
         var factors: [RegimeFactor] = []
 
@@ -64,6 +65,18 @@ nonisolated enum RegimeFactorBuilder {
             factors.append(RegimeFactor(
                 kind: .globalEquities, signal: signal,
                 detail: "S&P 500 \(pct1(abs(distance))) \(position) its 200-day average"))
+        }
+
+        // Asia-EM equities — the regional risk-appetite leg (EEM proxy). The *vote* is the
+        // EM-vs-developed-market 200dma spread (Asia-EM basket vs. the S&P), so it scores rotation
+        // into/out of the EM periphery rather than echoing the S&P/dollar/10y legs that already
+        // count the one global cycle. Falls back to the absolute regional trend when the S&P leg is
+        // unavailable. The leading/lagging-DM read rides along as the detail qualifier (no 2nd vote).
+        if let asiaEM,
+           let signal = RegimeSynthesizer.asiaEMSignal(strength: asiaEM.voteStrength) {
+            factors.append(RegimeFactor(
+                kind: .asiaEM, signal: signal,
+                detail: asiaEMDetail(asiaEM, signal: signal)))
         }
 
         // Aggregate net foreign flow.
@@ -186,8 +199,39 @@ nonisolated enum RegimeFactorBuilder {
         }
     }
 
+    /// The Asia-EM factor's rationale: the regional 200dma position with its contributing indices
+    /// named, then — when the developed-market benchmark is present — the EM-vs-DM qualifier
+    /// (ahead of / behind / level with the S&P) that the vote keys off; otherwise the absolute
+    /// regional read. A one-word appetite read closes it, keyed off the (single) vote.
+    private static func asiaEMDetail(_ reading: AsiaEMReading, signal: RegimeSignal) -> String {
+        let regional = "Asia-EM \(signedPct1(reading.regionalDistance)) vs 200-day avg (\(reading.contributors.joined(separator: "/")))"
+        if let relative = reading.relativeToSP {
+            return "\(regional) — \(spGapClause(relative)), EM appetite \(emAppetiteWord(signal))"
+        }
+        return "\(regional) — regional appetite \(emAppetiteWord(signal))"
+    }
+
+    /// How the basket sits versus the S&P 500 on a 200dma basis. The gap must clear the same
+    /// dead-band the vote uses, so "level with" lines up with the neutral classification.
+    private static func spGapClause(_ relative: Double) -> String {
+        if relative > RegimeSynthesizer.Threshold.asiaEMBand { return "\(pct1(relative)) ahead of the S&P" }
+        if relative < -RegimeSynthesizer.Threshold.asiaEMBand { return "\(pct1(abs(relative))) behind the S&P" }
+        return "level with the S&P"
+    }
+
+    private static func emAppetiteWord(_ signal: RegimeSignal) -> String {
+        switch signal {
+        case .riskOn: "firming"
+        case .riskOff: "softening"
+        case .neutral: "steady"
+        }
+    }
+
     private static func pct0(_ fraction: Double) -> String { String(format: "%.0f%%", fraction * 100) }
     private static func pct1(_ fraction: Double) -> String { String(format: "%.1f%%", fraction * 100) }
+    /// A fraction (e.g. 0.05) as a signed one-decimal percentage ("+5.0%"). Used for the Asia-EM
+    /// regional 200dma distance, which can be above or below the average.
+    private static func signedPct1(_ fraction: Double) -> String { String(format: "%+.1f%%", fraction * 100) }
     /// A figure that is already a percentage (e.g. a `changePercent` of −1.96), with sign.
     private static func signedPct(_ percent: Double) -> String { String(format: "%+.2f%%", percent) }
     private static func rateText(_ value: Double) -> String { String(format: "%.2f%%", value) }

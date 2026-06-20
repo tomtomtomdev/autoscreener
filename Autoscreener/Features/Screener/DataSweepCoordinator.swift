@@ -493,6 +493,20 @@ final class DataSweepCoordinator {
         let sp500 = try? await chart.candles(symbol: Self.globalEquitySymbol, timeframe: .oneYear, chartType: .line)
         print("[regime] SP500: \(Self.trendSummary(sp500))")
 
+        // Asia-EM equity appetite — fetch the basket's 1y series through the throttle (like S&P, the
+        // regional indices advertise only the LINE chart type), then read EM-vs-developed-market
+        // rotation off them against the S&P's own 200dma distance.
+        var asiaSeries: [String: PriceSeries] = [:]
+        for symbol in AsiaEM.basket.map(\.symbol) {
+            do { try await throttle() } catch { print("[regime] cancelled before \(symbol) fetch"); return }
+            if let series = try? await chart.candles(symbol: symbol, timeframe: .oneYear, chartType: .line) {
+                asiaSeries[symbol] = series
+            }
+        }
+        let sp500Distance = sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
+        let asiaEM = AsiaEM.reading(series: asiaSeries, sp500Distance: sp500Distance)
+        print("[regime] Asia-EM: \(asiaEM.map { String(format: "regional %+.2f%% (\($0.contributors.joined(separator: "/")))" + ($0.relativeToSP.map { String(format: " · %+.2f%% vs S&P", $0 * 100) } ?? ""), $0.regionalDistance * 100) } ?? "—")")
+
         let usdIdr = marketStore.quotes[Self.rupiahSymbol]?.changePercent
         let above = store.snapshot(for: .above200MA)
         // Live memberships when available, the committed LQ45 seed as the offline fallback;
@@ -512,7 +526,7 @@ final class DataSweepCoordinator {
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
             usdIdrChangePercent: usdIdr, aboveSnapshot: above,
             constituents: lq45, kompasConstituents: kompas,
-            commodityChannel: chinaChannel) {
+            commodityChannel: chinaChannel, asiaEM: asiaEM) {
             print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")\(read.tapeFloored ? " · tape-floored" : "")")
             for f in read.factors {
                 print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")

@@ -61,6 +61,7 @@ nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable, Codable {
         case rupiah = "Rupiah (USD/IDR)"
         case breadth = "Breadth (LQ45)"
         case commodityChannel = "China channel" // export terms of trade (coal/CPO/nickel) — China-demand proxy
+        case asiaEM = "Asia-EM equities"       // EM-vs-developed-market equity rotation (EEM proxy) — regional appetite
 
         /// Marks: valuation is the dominant driver of *future* risk, so it carries
         /// more weight than the coincident sentiment/momentum factors.

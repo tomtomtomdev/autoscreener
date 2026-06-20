@@ -20,7 +20,8 @@ nonisolated enum RegimeComposer {
         aboveSnapshot: ScreenerSnapshot?,
         constituents: [String] = LQ45Constituents.symbols,
         kompasConstituents: [String] = [],
-        commodityChannel: CommodityChannelReading? = nil
+        commodityChannel: CommodityChannelReading? = nil,
+        asiaEM: AsiaEMReading? = nil
     ) -> RegimeRead? {
         let factors = RegimeFactorBuilder.factors(
             snapshot: snapshot,
@@ -32,7 +33,8 @@ nonisolated enum RegimeComposer {
             usdIdrChangePercent: usdIdrChangePercent,
             breadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: constituents),
             kompasBreadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: kompasConstituents),
-            commodityChannel: commodityChannel)
+            commodityChannel: commodityChannel,
+            asiaEM: asiaEM)
 
         guard !factors.isEmpty else { return nil }
         return RegimeSynthesizer.read(factors: factors, asOf: snapshot?.asOf)

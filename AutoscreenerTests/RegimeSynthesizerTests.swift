@@ -66,6 +66,16 @@ import Testing
         #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: -0.03) == .riskOff)
         #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: nil) == nil)
     }
+
+    @Test func asiaEMLeadingDevelopedMarketsIsRiskOnLaggingIsRiskOff() {
+        // The Asia-EM equity leg scores the EM-vs-DM 200dma spread (or the absolute regional trend
+        // in fallback): leading the developed-market tape → risk-on, lagging → risk-off, with a
+        // ±1.5% dead-band so a small or noisy gap stays neutral. Input is a fraction.
+        #expect(RegimeSynthesizer.asiaEMSignal(strength: 0.03) == .riskOn)
+        #expect(RegimeSynthesizer.asiaEMSignal(strength: 0.0) == .neutral)
+        #expect(RegimeSynthesizer.asiaEMSignal(strength: -0.03) == .riskOff)
+        #expect(RegimeSynthesizer.asiaEMSignal(strength: nil) == nil)
+    }
 }
 
 // MARK: - Weighted aggregation + the late-cycle guard

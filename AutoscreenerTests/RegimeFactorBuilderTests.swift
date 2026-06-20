@@ -25,7 +25,9 @@ import Testing
             usdIdrChangePercent: -1.8,            // USD/IDR down → rupiah strengthening
             breadth: BreadthReading(above: 30, measured: 45),
             commodityChannel: CommodityChannelReading(   // export basket up → tailwind
-                basketChangePercent: 2.5, contributors: ["coal", "nickel"], cnyChangePercent: 0.3))
+                basketChangePercent: 2.5, contributors: ["coal", "nickel"], cnyChangePercent: 0.3),
+            asiaEM: AsiaEMReading(                        // Asia-EM leading the S&P → risk-on
+                regionalDistance: 0.05, contributors: ["Hang Seng"], relativeToSP: 0.03))
 
         #expect(Set(factors.map(\.kind)) == Set(RegimeFactor.Kind.allCases))
         #expect(signal(factors, .valuation) == .riskOn)    // 10th pctile → cheap
@@ -38,6 +40,7 @@ import Testing
         #expect(signal(factors, .rupiah) == .riskOn)        // strengthening
         #expect(signal(factors, .breadth) == .riskOn)       // 67% > MA
         #expect(signal(factors, .commodityChannel) == .riskOn) // basket +2.5% → tailwind
+        #expect(signal(factors, .asiaEM) == .riskOn)        // +3% ahead of the S&P → risk-on
     }
 
     @Test func dropsServerFactorsWhenSnapshotMissing() {
@@ -247,5 +250,59 @@ import Testing
             ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
             breadth: nil, commodityChannel: nil)
         #expect(factors.contains { $0.kind == .commodityChannel } == false)
+    }
+
+    // MARK: - Asia-EM equities (EM-vs-developed-market rotation)
+
+    /// Builds an isolated Asia-EM factor (no other inputs) for one reading.
+    private func asiaFactor(_ reading: AsiaEMReading?) -> RegimeFactor? {
+        RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
+            breadth: nil, asiaEM: reading)
+            .first { $0.kind == .asiaEM }
+    }
+
+    @Test func asiaEMNamesTheBasketAndTheLeadOverTheSPWhenFirming() {
+        // Regional +5% above its 200dma, 3% ahead of the S&P (> 1.5% band) → risk-on; the relative
+        // lead is the vote and rides in the detail as the qualifier (no second vote).
+        let factor = asiaFactor(AsiaEMReading(
+            regionalDistance: 0.05, contributors: ["Hang Seng", "Shanghai", "KOSPI"], relativeToSP: 0.03))
+        #expect(factor?.signal == .riskOn)
+        #expect(factor?.detail == "Asia-EM +5.0% vs 200-day avg (Hang Seng/Shanghai/KOSPI) — 3.0% ahead of the S&P, EM appetite firming")
+    }
+
+    @Test func asiaEMReadsSofteningWhenLaggingARisingDevelopedMarketTape() {
+        // Regional −2% and 4% behind the S&P (< −1.5% band) → risk-off: a DM-led advance not
+        // reaching the EM periphery.
+        let factor = asiaFactor(AsiaEMReading(
+            regionalDistance: -0.02, contributors: ["Hang Seng"], relativeToSP: -0.04))
+        #expect(factor?.signal == .riskOff)
+        #expect(factor?.detail == "Asia-EM -2.0% vs 200-day avg (Hang Seng) — 4.0% behind the S&P, EM appetite softening")
+    }
+
+    @Test func asiaEMFallsBackToTheAbsoluteRegionalTrendWithoutABenchmark() {
+        // No S&P benchmark (relativeToSP nil) → the vote is the absolute regional trend (+6% → on),
+        // and the detail drops the comparison clause.
+        let factor = asiaFactor(AsiaEMReading(
+            regionalDistance: 0.06, contributors: ["Hang Seng", "Shanghai", "KOSPI"], relativeToSP: nil))
+        #expect(factor?.signal == .riskOn)
+        #expect(factor?.detail == "Asia-EM +6.0% vs 200-day avg (Hang Seng/Shanghai/KOSPI) — regional appetite firming")
+    }
+
+    @Test func asiaEMIsNeutralAndLevelWhenInLineWithTheSP() {
+        // A small lead inside the dead-band → neutral, and the detail says "level with the S&P".
+        let factor = asiaFactor(AsiaEMReading(
+            regionalDistance: 0.01, contributors: ["Hang Seng"], relativeToSP: 0.005))
+        #expect(factor?.signal == .neutral)
+        #expect(factor?.detail == "Asia-EM +1.0% vs 200-day avg (Hang Seng) — level with the S&P, EM appetite steady")
+    }
+
+    @Test func asiaEMDroppedWhenAbsent() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
+            breadth: nil, asiaEM: nil)
+        #expect(factors.contains { $0.kind == .asiaEM } == false)
     }
 }
