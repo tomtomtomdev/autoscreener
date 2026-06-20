@@ -34,6 +34,9 @@ nonisolated enum RegimeSynthesizer {
         /// Classic breadth bands: >60% healthy, <40% weak.
         static let breadthStrong = 0.60
         static let breadthWeak = 0.40
+        /// ±1.5% dead-band on the export-basket daily move. Commodities are noisier than FX,
+        /// so a basket swing must clear this band to register as a terms-of-trade signal.
+        static let commodityBand = 0.015
         /// Normalised-score band that separates the three stances.
         static let stanceBand = 0.33
     }
@@ -103,6 +106,19 @@ nonisolated enum RegimeSynthesizer {
         case .down: return .riskOn
         case .flat: return .neutral
         }
+    }
+
+    /// Indonesia's commodity export terms of trade — the "China channel". `change` is the
+    /// fractional daily move of the export basket (coal/CPO/nickel); rising = an external-demand
+    /// tailwind = risk-on, falling = headwind = risk-off, within the band = neutral. The sign is
+    /// the *opposite* of the rupiah leg by design: a higher export price helps Indonesia, a higher
+    /// dollar hurts it. (Oil is excluded from the basket upstream — Indonesia is a net oil importer,
+    /// so a higher oil price is an import-cost drag, wrong-signed as a terms-of-trade input.)
+    static func commodityChannelSignal(basketChange change: Double?) -> RegimeSignal? {
+        guard let c = change else { return nil }
+        if c > Threshold.commodityBand { return .riskOn }
+        if c < -Threshold.commodityBand { return .riskOff }
+        return .neutral
     }
 
     // MARK: - Aggregation

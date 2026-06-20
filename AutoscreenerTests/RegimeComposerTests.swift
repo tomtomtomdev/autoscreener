@@ -114,6 +114,21 @@ import Testing
         #expect(breadth?.detail == "KOMPAS100 30% vs LQ45 100% above their 200-day average — narrowing")
     }
 
+    @Test func threadsTheChinaChannelFactorWhenSupplied() {
+        // The coordinator builds the reading from the priced quotes and hands it in; the composer
+        // just threads it to the factor builder, yielding the China-channel factor in the read.
+        let read = RegimeComposer.compose(
+            snapshot: nil, flow: nil, ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil, aboveSnapshot: nil,
+            constituents: constituents,
+            commodityChannel: CommodityChannelReading(
+                basketChangePercent: 2.0, contributors: ["coal", "nickel"], cnyChangePercent: nil))
+
+        let factor = read?.factors.first { $0.kind == .commodityChannel }
+        #expect(factor?.signal == .riskOn)                                  // +2.0% > 1.5% band
+        #expect(factor?.detail.contains("Export basket +2.00% (coal/nickel)") == true)
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,

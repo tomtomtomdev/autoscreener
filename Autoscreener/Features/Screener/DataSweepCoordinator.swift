@@ -503,10 +503,16 @@ final class DataSweepCoordinator {
         let broadBreadth = IndexBreadth.reading(aboveSnapshot: above, constituents: kompas)
         print("[regime] USD/IDR today=\(usdIdr.map { String(format: "%+.2f%%", $0) } ?? "—") · LQ45 breadth=\(leadersBreadth.map { "\($0.above)/\($0.measured)" } ?? "—") · KOMPAS100 breadth=\(broadBreadth.map { "\($0.above)/\($0.measured)" } ?? "—")")
 
+        // China channel — read off the commodity/FX quotes already priced this sweep
+        // (sweepMarketQuotes runs first), so no extra network. Nil when no basket commodity priced.
+        let chinaChannel = CommodityChannel.reading(quotes: marketStore.quotes)
+        print("[regime] China channel: \(chinaChannel.map { String(format: "basket %+.2f%% (\($0.contributors.joined(separator: "/")))", $0.basketChangePercent) } ?? "—")")
+
         if let read = RegimeComposer.compose(
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
             usdIdrChangePercent: usdIdr, aboveSnapshot: above,
-            constituents: lq45, kompasConstituents: kompas) {
+            constituents: lq45, kompasConstituents: kompas,
+            commodityChannel: chinaChannel) {
             print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")\(read.tapeFloored ? " · tape-floored" : "")")
             for f in read.factors {
                 print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")

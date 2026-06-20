@@ -56,6 +56,16 @@ import Testing
         #expect(RegimeSynthesizer.globalHeadwindSignal(trend: .down) == .riskOn)
         #expect(RegimeSynthesizer.globalHeadwindSignal(trend: nil) == nil)
     }
+
+    @Test func risingExportBasketIsRiskOnFallingIsRiskOff() {
+        // Indonesia's export terms of trade (coal/CPO/nickel): a rising basket is an external-
+        // demand tailwind → risk-on; a falling basket → risk-off. The ±1.5% dead-band keeps a
+        // noisy single-day wiggle neutral. Input is a fraction (basket mean % / 100).
+        #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: 0.03) == .riskOn)
+        #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: 0.0) == .neutral)
+        #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: -0.03) == .riskOff)
+        #expect(RegimeSynthesizer.commodityChannelSignal(basketChange: nil) == nil)
+    }
 }
 
 // MARK: - Weighted aggregation + the late-cycle guard

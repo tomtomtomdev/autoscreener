@@ -19,7 +19,8 @@ nonisolated enum RegimeComposer {
         usdIdrChangePercent: Double?,
         aboveSnapshot: ScreenerSnapshot?,
         constituents: [String] = LQ45Constituents.symbols,
-        kompasConstituents: [String] = []
+        kompasConstituents: [String] = [],
+        commodityChannel: CommodityChannelReading? = nil
     ) -> RegimeRead? {
         let factors = RegimeFactorBuilder.factors(
             snapshot: snapshot,
@@ -30,7 +31,8 @@ nonisolated enum RegimeComposer {
             sp500DistanceFrom200dma: sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) },
             usdIdrChangePercent: usdIdrChangePercent,
             breadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: constituents),
-            kompasBreadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: kompasConstituents))
+            kompasBreadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: kompasConstituents),
+            commodityChannel: commodityChannel)
 
         guard !factors.isEmpty else { return nil }
         return RegimeSynthesizer.read(factors: factors, asOf: snapshot?.asOf)

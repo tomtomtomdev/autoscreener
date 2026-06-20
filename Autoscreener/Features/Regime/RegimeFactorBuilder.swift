@@ -15,7 +15,8 @@ nonisolated enum RegimeFactorBuilder {
         sp500DistanceFrom200dma: Double? = nil,
         usdIdrChangePercent: Double?,
         breadth: BreadthReading?,
-        kompasBreadth: BreadthReading? = nil
+        kompasBreadth: BreadthReading? = nil,
+        commodityChannel: CommodityChannelReading? = nil
     ) -> [RegimeFactor] {
         var factors: [RegimeFactor] = []
 
@@ -92,6 +93,18 @@ nonisolated enum RegimeFactorBuilder {
                 detail: "USD/IDR \(signedPct(changePercent)) today — rupiah \(rupiahWord(signal))"))
         }
 
+        // China channel — Indonesia's commodity export terms of trade (coal/CPO/nickel), the
+        // cleanest on-device proxy for external (China) demand. A rising basket is a tailwind
+        // (risk-on); a falling one a headwind (risk-off). CNY/IDR rides along as corroborating
+        // context in the detail but does NOT vote — the yuan-vs-rupiah cross conflates yuan
+        // strength with rupiah-specific weakness, so scoring it would risk a wrong-signed leg.
+        if let channel = commodityChannel,
+           let signal = RegimeSynthesizer.commodityChannelSignal(basketChange: channel.basketChangePercent / 100) {
+            factors.append(RegimeFactor(
+                kind: .commodityChannel, signal: signal,
+                detail: commodityChannelDetail(channel, signal: signal)))
+        }
+
         // Breadth — divergence-aware when both universes are measured, otherwise the
         // single-index reading. The *vote* tracks the broad market (KOMPAS100): it's the
         // truer breadth gauge and it already captures every divergence case — a thinning,
@@ -153,6 +166,23 @@ nonisolated enum RegimeFactorBuilder {
         case 1: return "broad-based strength"
         case -1: return "broad-based weakness"
         default: return "mixed"
+        }
+    }
+
+    /// The China-channel factor's rationale: the export basket's move with its contributing
+    /// commodities named, CNY/IDR appended as context when priced, and a one-word read of the
+    /// demand pulse keyed off the (basket-only) vote.
+    private static func commodityChannelDetail(_ reading: CommodityChannelReading, signal: RegimeSignal) -> String {
+        let basket = "Export basket \(signedPct(reading.basketChangePercent)) (\(reading.contributors.joined(separator: "/")))"
+        let cny = reading.cnyChangePercent.map { " · CNY/IDR \(signedPct($0))" } ?? ""
+        return "\(basket)\(cny) — China demand \(chinaDemandWord(signal))"
+    }
+
+    private static func chinaDemandWord(_ signal: RegimeSignal) -> String {
+        switch signal {
+        case .riskOn: "firming"
+        case .riskOff: "softening"
+        case .neutral: "steady"
         }
     }
 

@@ -23,7 +23,9 @@ import Testing
             ihsgDistanceFrom200dma: 0.04,
             sp500DistanceFrom200dma: 0.06,        // S&P 500 above its 200dma
             usdIdrChangePercent: -1.8,            // USD/IDR down → rupiah strengthening
-            breadth: BreadthReading(above: 30, measured: 45))
+            breadth: BreadthReading(above: 30, measured: 45),
+            commodityChannel: CommodityChannelReading(   // export basket up → tailwind
+                basketChangePercent: 2.5, contributors: ["coal", "nickel"], cnyChangePercent: 0.3))
 
         #expect(Set(factors.map(\.kind)) == Set(RegimeFactor.Kind.allCases))
         #expect(signal(factors, .valuation) == .riskOn)    // 10th pctile → cheap
@@ -35,6 +37,7 @@ import Testing
         #expect(signal(factors, .trend) == .riskOn)         // above 200dma
         #expect(signal(factors, .rupiah) == .riskOn)        // strengthening
         #expect(signal(factors, .breadth) == .riskOn)       // 67% > MA
+        #expect(signal(factors, .commodityChannel) == .riskOn) // basket +2.5% → tailwind
     }
 
     @Test func dropsServerFactorsWhenSnapshotMissing() {
@@ -209,5 +212,40 @@ import Testing
             snapshot: nil, netForeignRaw: nil, netForeignText: nil,
             ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil)
         #expect(factors.isEmpty)
+    }
+
+    // MARK: - China channel (commodity export terms of trade)
+
+    /// Builds an isolated China-channel factor (no other inputs) for one reading.
+    private func chinaFactor(_ reading: CommodityChannelReading?) -> RegimeFactor? {
+        RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
+            breadth: nil, commodityChannel: reading)
+            .first { $0.kind == .commodityChannel }
+    }
+
+    @Test func chinaChannelNamesTheBasketAndCnyContextWhenFirming() {
+        // Basket +1.8% (> 1.5% band) → risk-on, CNY corroborates in the detail (no second vote).
+        let factor = chinaFactor(CommodityChannelReading(
+            basketChangePercent: 1.8, contributors: ["coal", "CPO", "nickel"], cnyChangePercent: 0.3))
+        #expect(factor?.signal == .riskOn)
+        #expect(factor?.detail == "Export basket +1.80% (coal/CPO/nickel) · CNY/IDR +0.30% — China demand firming")
+    }
+
+    @Test func chinaChannelOmitsCnyWhenAbsentAndReadsSofteningOnAFallingBasket() {
+        // Basket −2.1% (< −1.5% band) → risk-off; CNY unpriced → no CNY clause in the detail.
+        let factor = chinaFactor(CommodityChannelReading(
+            basketChangePercent: -2.1, contributors: ["nickel"], cnyChangePercent: nil))
+        #expect(factor?.signal == .riskOff)
+        #expect(factor?.detail == "Export basket -2.10% (nickel) — China demand softening")
+    }
+
+    @Test func chinaChannelDroppedWhenAbsent() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil, netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil,
+            breadth: nil, commodityChannel: nil)
+        #expect(factors.contains { $0.kind == .commodityChannel } == false)
     }
 }
