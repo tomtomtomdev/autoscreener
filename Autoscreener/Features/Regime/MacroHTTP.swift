@@ -26,4 +26,26 @@ nonisolated enum MacroHTTP {
         }
         return String(data: data, encoding: .utf8)
     }
+
+    /// A JSON `POST` returning the decoded body text on success or `nil` on any failure — the
+    /// `text(from:session:)` analogue for the one regime leg (`IndonesiaSovereignService`) that
+    /// reads a country API which only answers `POST`. `headers` carries the per-host extras the
+    /// endpoint requires (e.g. the `Origin` worldgovernmentbonds.com gates on); the browser UA and
+    /// JSON content-type are always set.
+    static func postJSON(_ body: String, to url: URL,
+                         headers: [String: String] = [:],
+                         session: any HTTPSession) async -> String? {
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
+        request.httpBody = body.data(using: .utf8)
+
+        guard let (data, response) = try? await session.data(for: request) else { return nil }
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
 }

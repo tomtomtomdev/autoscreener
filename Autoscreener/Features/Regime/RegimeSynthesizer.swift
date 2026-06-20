@@ -41,6 +41,10 @@ nonisolated enum RegimeSynthesizer {
         /// regional trend in fallback). The basket must lead/lag the developed-market tape by more
         /// than this to register as a rotation signal, filtering a small or noisy gap to neutral.
         static let asiaEMBand = 0.015
+        /// ±5% dead-band on the 1-month 5y-CDS move. Sovereign CDS is noisier than a yield level,
+        /// so the spread must move more than this over the month to register as a genuine shift in
+        /// the country risk premium rather than day-to-day chop.
+        static let sovereignCdsBand = 0.05
         /// Normalised-score band that separates the three stances.
         static let stanceBand = 0.33
     }
@@ -135,6 +139,19 @@ nonisolated enum RegimeSynthesizer {
         guard let v = value else { return nil }
         if v > Threshold.asiaEMBand { return .riskOn }
         if v < -Threshold.asiaEMBand { return .riskOff }
+        return .neutral
+    }
+
+    /// Indonesia's sovereign-risk premium, read off the 5y CDS trend. `change` is the fractional
+    /// 1-month move in the CDS spread; *widening* (positive) lifts the country risk premium —
+    /// foreign holders demand more to carry IDR assets, a headwind to flow and multiples — so it is
+    /// risk-off, while *tightening* (negative) is improving credit = risk-on, within the band =
+    /// neutral. The sign matches the rupiah leg (a rising risk gauge is risk-off) and is the
+    /// opposite of the commodity-tailwind leg (a rising export price helps Indonesia).
+    static func sovereignCreditSignal(cdsChange change: Double?) -> RegimeSignal? {
+        guard let c = change else { return nil }
+        if c > Threshold.sovereignCdsBand { return .riskOff }
+        if c < -Threshold.sovereignCdsBand { return .riskOn }
         return .neutral
     }
 

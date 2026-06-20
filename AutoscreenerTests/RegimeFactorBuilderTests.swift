@@ -27,7 +27,9 @@ import Testing
             commodityChannel: CommodityChannelReading(   // export basket up → tailwind
                 basketChangePercent: 2.5, contributors: ["coal", "nickel"], cnyChangePercent: 0.3),
             asiaEM: AsiaEMReading(                        // Asia-EM leading the S&P → risk-on
-                regionalDistance: 0.05, contributors: ["Hang Seng"], relativeToSP: 0.03))
+                regionalDistance: 0.05, contributors: ["Hang Seng"], relativeToSP: 0.03),
+            sovereign: IndonesiaSovereignReading(         // 5y CDS tightening 7.39% over 1M → risk-on
+                bond10yPercent: 7.07, cds5y: 86.48, cdsChange1MPercent: -7.39))
 
         #expect(Set(factors.map(\.kind)) == Set(RegimeFactor.Kind.allCases))
         #expect(signal(factors, .valuation) == .riskOn)    // 10th pctile → cheap
@@ -41,6 +43,45 @@ import Testing
         #expect(signal(factors, .breadth) == .riskOn)       // 67% > MA
         #expect(signal(factors, .commodityChannel) == .riskOn) // basket +2.5% → tailwind
         #expect(signal(factors, .asiaEM) == .riskOn)        // +3% ahead of the S&P → risk-on
+        #expect(signal(factors, .sovereignRisk) == .riskOn) // CDS tightening 7.39% over 1M → risk-on
+    }
+
+    @Test func sovereignDetailNamesTheCdsMoveTheBondYieldAndTheSpreadOverUST() {
+        // With the macro leg present (UST 10y = 4.10), the detail carries the 5y CDS level + its
+        // 1-month move (the vote), the INDOGB 10y yield, and the EM sovereign spread over the UST.
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: Self.snapshot,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            sovereign: IndonesiaSovereignReading(
+                bond10yPercent: 7.07, cds5y: 86.48, cdsChange1MPercent: -7.39))
+
+        let detail = factors.first { $0.kind == .sovereignRisk }?.detail
+        #expect(detail == "5y CDS 86 bps -7.39% 1M — INDOGB 10y 7.07% · +297 bps over UST, risk premium easing")
+    }
+
+    @Test func sovereignDetailOmitsTheSpreadWhenTheMacroLegIsAbsent() {
+        // No snapshot (so no UST 10y) → the spread clause drops; the CDS vote + bond yield remain,
+        // and a widening CDS reads "rising".
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            sovereign: IndonesiaSovereignReading(
+                bond10yPercent: 7.20, cds5y: 120, cdsChange1MPercent: 11.4))
+
+        let factor = factors.first { $0.kind == .sovereignRisk }
+        #expect(factor?.signal == .riskOff)
+        #expect(factor?.detail == "5y CDS 120 bps +11.40% 1M — INDOGB 10y 7.20%, risk premium rising")
+    }
+
+    @Test func sovereignDroppedWhenAbsent() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: Self.snapshot,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            sovereign: nil)
+        #expect(!factors.contains { $0.kind == .sovereignRisk })
     }
 
     @Test func dropsServerFactorsWhenSnapshotMissing() {

@@ -116,6 +116,13 @@ nonisolated struct StubFREDMacroService: FREDMacroProviding {
     func macro() async -> RegimeSnapshot.MacroBlock? { UITestFixtures.regimeSnapshot.macro }
 }
 
+/// Returns `nil` so the sovereign-risk factor drops under fixtures — keeping the canned regime
+/// read (and its asserted stance) byte-identical, the same way the dynamic-constituents leg is
+/// disabled under fixtures. The factor's behaviour is covered by the unit suite, not the UI run.
+nonisolated struct StubIndonesiaSovereignService: IndonesiaSovereignProviding {
+    func sovereign() async -> IndonesiaSovereignReading? { nil }
+}
+
 nonisolated struct StubBreadthService: BreadthServicing {
     func reading(symbols: [String], period: Int) async -> BreadthReading {
         // 28 of 45 LQ45 above their 200-day average → 62% → broad (risk-on).

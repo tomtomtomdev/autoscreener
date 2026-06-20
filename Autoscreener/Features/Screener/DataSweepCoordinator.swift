@@ -62,6 +62,10 @@ final class DataSweepCoordinator {
     /// FRED global anchors (US fed funds / 10y / broad dollar), fetched on-device —
     /// replaces the scraper's `macro` block. Merged over the published snapshot's `macro`.
     private let macroProvider: any FREDMacroProviding
+    /// Indonesia sovereign-risk leg (5y CDS + INDOGB 10y), fetched on-device from the public
+    /// worldgovernmentbonds.com API. `nil` disables the sovereign-risk factor (fixtures/tests
+    /// path), exactly like a missing macro series. Refreshed on the same daily-ish `macroTTL`.
+    private let sovereignProvider: (any IndonesiaSovereignProviding)?
     /// Markets symbols to price each sweep. Empty disables the market + regime legs
     /// entirely (the screener-only path used by the screener unit tests).
     private let catalog: [MarketSymbol]
@@ -129,6 +133,9 @@ final class DataSweepCoordinator {
     /// (and leaves the timestamp unset) so the next sweep retries rather than blanking.
     @ObservationIgnored private var cachedBIRate: RegimeSnapshot.BIRate?
     @ObservationIgnored private var cachedMacro: RegimeSnapshot.MacroBlock?
+    /// Indonesia sovereign-risk reading (5y CDS + INDOGB 10y), cached on the same `macroTTL` as the
+    /// other off-host macro legs. `nil` until first fetched (or with no `sovereignProvider` wired).
+    @ObservationIgnored private var cachedSovereign: IndonesiaSovereignReading?
     @ObservationIgnored private var lastMacroFetchAt: Date?
 
     /// Index memberships are refetched at most daily (`constituentsTTL`) and cached in
@@ -169,6 +176,7 @@ final class DataSweepCoordinator {
          snapshotProvider: any RegimeSnapshotProviding,
          biRateProvider: any BIRateProviding,
          macroProvider: any FREDMacroProviding,
+         sovereignProvider: (any IndonesiaSovereignProviding)? = nil,
          catalog: [MarketSymbol] = MarketCatalog.all,
          constituents: [String] = LQ45Constituents.symbols,
          indexConstituents: (any IndexConstituentsServicing)? = nil,
@@ -196,6 +204,7 @@ final class DataSweepCoordinator {
         self.snapshotProvider = snapshotProvider
         self.biRateProvider = biRateProvider
         self.macroProvider = macroProvider
+        self.sovereignProvider = sovereignProvider
         self.macroTTL = macroTTL
         self.catalog = catalog
         self.constituents = constituents
@@ -522,11 +531,16 @@ final class DataSweepCoordinator {
         let chinaChannel = CommodityChannel.reading(quotes: marketStore.quotes)
         print("[regime] China channel: \(chinaChannel.map { String(format: "basket %+.2f%% (\($0.contributors.joined(separator: "/")))", $0.basketChangePercent) } ?? "—")")
 
+        // Indonesia sovereign risk — cached off-host (worldgovernmentbonds.com) on the macro TTL,
+        // refreshed above in refreshMacroIfStale(). Nil until first fetched / without a provider.
+        let sovereign = cachedSovereign
+        print("[regime] sovereign: \(sovereign.map { String(format: "5y CDS %.0f (%+.2f%% 1M) · INDOGB 10y %.2f%%", $0.cds5y, $0.cdsChange1MPercent, $0.bond10yPercent) } ?? "—")")
+
         if let read = RegimeComposer.compose(
             snapshot: snapshot, flow: flow, ihsg: ihsg, sp500: sp500,
             usdIdrChangePercent: usdIdr, aboveSnapshot: above,
             constituents: lq45, kompasConstituents: kompas,
-            commodityChannel: chinaChannel, asiaEM: asiaEM) {
+            commodityChannel: chinaChannel, asiaEM: asiaEM, sovereign: sovereign) {
             print("[regime] READ → \(read.stance.rawValue) · score \(String(format: "%+.3f", read.score)) · \(read.factors.count) factors\(read.valuationCapped ? " · valuation-capped" : "")\(read.tapeFloored ? " · tape-floored" : "")")
             for f in read.factors {
                 print("[regime]    · \(f.kind.rawValue): \(f.signal.rawValue) — \(f.detail)")
@@ -556,9 +570,11 @@ final class DataSweepCoordinator {
 
         let bi = await biRateProvider.biRate()
         let macro = await macroProvider.macro()
+        let sovereign = await sovereignProvider?.sovereign()
         if let bi { cachedBIRate = bi }
         if let macro { cachedMacro = macro }
-        if bi != nil || macro != nil { lastMacroFetchAt = now }
+        if let sovereign { cachedSovereign = sovereign }
+        if bi != nil || macro != nil || sovereign != nil { lastMacroFetchAt = now }
     }
 
     /// Refreshes the cached LQ45 + KOMPAS100 memberships when older than `constituentsTTL`

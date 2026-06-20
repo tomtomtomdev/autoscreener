@@ -76,6 +76,17 @@ import Testing
         #expect(RegimeSynthesizer.asiaEMSignal(strength: -0.03) == .riskOff)
         #expect(RegimeSynthesizer.asiaEMSignal(strength: nil) == nil)
     }
+
+    @Test func wideningSovereignCdsIsRiskOffTighteningIsRiskOn() {
+        // The sovereign-risk leg votes on the 1-month CDS move (a fraction): widening (a rising
+        // country risk premium) → risk-off, tightening → risk-on, with a ±5% dead-band so a small
+        // monthly move stays neutral. The sign is the mirror of the commodity-tailwind leg.
+        #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: 0.08) == .riskOff)   // +8% widening
+        #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: 0.0) == .neutral)
+        #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: -0.0739) == .riskOn) // -7.39% tightening
+        #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: 0.03) == .neutral)   // inside the band
+        #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: nil) == nil)
+    }
 }
 
 // MARK: - Weighted aggregation + the late-cycle guard

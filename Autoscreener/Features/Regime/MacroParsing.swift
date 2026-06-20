@@ -194,6 +194,47 @@ nonisolated enum MacroParsing {
         let observations: [Row]
     }
 
+    // MARK: - worldgovernmentbonds.com country API (sovereign-risk leg)
+
+    /// Parse the `wp-json/country/v1/main` payload into the Indonesia sovereign reading. The two
+    /// levels come straight off the (string-typed) top-level fields — `bond10y` (10y govt yield)
+    /// and `lastCds` (5y sovereign CDS); the 1-month CDS change is read from the CDS table HTML,
+    /// where the columns are `Var % 1W`, `Var % 1M`, `Var % 1Y`, `Implied PD` — so the signed
+    /// percent tokens after the row label are `[1W, 1M, 1Y, PD]` and the vote uses the 2nd (1M).
+    /// `nil` when the body isn't the expected JSON or any of the three figures is missing — the
+    /// factor then drops, like any absent leg (FRED's `error_*` JSON also parses to `nil` here).
+    static func parseWorldGovBonds(_ json: String) -> IndonesiaSovereignReading? {
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(WGBPayload.self, from: data),
+              let bond10y = normalisedNumber(payload.bond10y),
+              let cds = normalisedNumber(payload.lastCds),
+              let change1M = cdsMonthlyChange(payload.cdsTableHtml)
+        else { return nil }
+        return IndonesiaSovereignReading(
+            bond10yPercent: bond10y, cds5y: cds, cdsChange1MPercent: change1M)
+    }
+
+    /// The slice of the country payload we read. The figures arrive as *strings* ("7.070"); the
+    /// CDS change lives only inside the rendered table HTML, parsed out separately.
+    private struct WGBPayload: Decodable {
+        let bond10y: String
+        let lastCds: String
+        let cdsTableHtml: String
+    }
+
+    /// The 1-month CDS change (percent) from the CDS table markup. Strips the tags, then takes the
+    /// ordered signed-percent tokens (`-7.26 %`, `-7.39 %`, `+4.87 %`, `1.44 %` = 1W/1M/1Y/PD) and
+    /// returns the 2nd — the 1-month move the factor votes on. `nil` if fewer than two are present.
+    /// Parses with `Double` directly (not `normalisedNumber`, whose anchor rejects a leading `+`) so
+    /// a *widening* (positively-signed) move — the risk-off case — isn't silently dropped, which
+    /// would shift the column positions and misread the vote.
+    private static func cdsMonthlyChange(_ html: String) -> Double? {
+        let percents = matches(#"([+-]?\d+(?:\.\d+)?)\s*%"#, in: stripTags(html))
+            .compactMap { Double($0) }
+        guard percents.count >= 2 else { return nil }
+        return percents[1]
+    }
+
     // MARK: - BI-rate HTML
 
     /// Scrape the BI-Rate history table (bi.go.id — server-rendered HTML, no Cloudflare).

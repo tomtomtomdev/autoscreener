@@ -17,7 +17,8 @@ nonisolated enum RegimeFactorBuilder {
         breadth: BreadthReading?,
         kompasBreadth: BreadthReading? = nil,
         commodityChannel: CommodityChannelReading? = nil,
-        asiaEM: AsiaEMReading? = nil
+        asiaEM: AsiaEMReading? = nil,
+        sovereign: IndonesiaSovereignReading? = nil
     ) -> [RegimeFactor] {
         var factors: [RegimeFactor] = []
 
@@ -116,6 +117,18 @@ nonisolated enum RegimeFactorBuilder {
             factors.append(RegimeFactor(
                 kind: .commodityChannel, signal: signal,
                 detail: commodityChannelDetail(channel, signal: signal)))
+        }
+
+        // Indonesia sovereign risk — the country's own credit/risk-premium leg, voting on the 5y
+        // sovereign CDS trend (the purest market price of default risk: widening = risk-off,
+        // tightening = risk-on). The INDOGB 10y level and its spread over the UST 10y (when the
+        // macro leg is present) ride along as detail qualifiers, not second votes — the CDS trend
+        // and the bond yield co-move in EM stress, so scoring both would over-count one risk.
+        if let sovereign,
+           let signal = RegimeSynthesizer.sovereignCreditSignal(cdsChange: sovereign.cdsChange1MPercent / 100) {
+            factors.append(RegimeFactor(
+                kind: .sovereignRisk, signal: signal,
+                detail: sovereignDetail(sovereign, usTenYear: snapshot?.macro?.us10y?.value, signal: signal)))
         }
 
         // Breadth — divergence-aware when both universes are measured, otherwise the
@@ -226,6 +239,30 @@ nonisolated enum RegimeFactorBuilder {
         case .neutral: "steady"
         }
     }
+
+    /// The sovereign-risk factor's rationale: the 5y CDS level + its 1-month move (the vote), then
+    /// the INDOGB 10y yield and — when the macro leg supplied the UST 10y — the EM sovereign spread
+    /// over it (a qualifier, not a second vote). A one-word read of the risk premium closes it.
+    private static func sovereignDetail(_ reading: IndonesiaSovereignReading,
+                                        usTenYear: Double?, signal: RegimeSignal) -> String {
+        let cds = "5y CDS \(bpsText(reading.cds5y)) \(signedPct(reading.cdsChange1MPercent)) 1M"
+        let bond = "INDOGB 10y \(rateText(reading.bond10yPercent))"
+        let spread = usTenYear.map { " · \(signedBps((reading.bond10yPercent - $0) * 100)) over UST" } ?? ""
+        return "\(cds) — \(bond)\(spread), risk premium \(riskPremiumWord(signal))"
+    }
+
+    private static func riskPremiumWord(_ signal: RegimeSignal) -> String {
+        switch signal {
+        case .riskOn: "easing"
+        case .riskOff: "rising"
+        case .neutral: "steady"
+        }
+    }
+
+    /// A spread/level in basis points, no decimals (e.g. `86.48` → "86 bps").
+    private static func bpsText(_ bps: Double) -> String { String(format: "%.0f bps", bps) }
+    /// A signed spread in basis points (e.g. `+297 bps`) — used for the INDOGB-over-UST gap.
+    private static func signedBps(_ bps: Double) -> String { String(format: "%+.0f bps", bps) }
 
     private static func pct0(_ fraction: Double) -> String { String(format: "%.0f%%", fraction * 100) }
     private static func pct1(_ fraction: Double) -> String { String(format: "%.1f%%", fraction * 100) }

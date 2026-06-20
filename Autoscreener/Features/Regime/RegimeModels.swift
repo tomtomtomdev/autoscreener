@@ -62,6 +62,7 @@ nonisolated struct RegimeFactor: Sendable, Equatable, Identifiable, Codable {
         case breadth = "Breadth (LQ45)"
         case commodityChannel = "China channel" // export terms of trade (coal/CPO/nickel) — China-demand proxy
         case asiaEM = "Asia-EM equities"       // EM-vs-developed-market equity rotation (EEM proxy) — regional appetite
+        case sovereignRisk = "Sovereign risk"  // Indonesia 5y CDS trend (+ INDOGB 10y / UST spread) — country risk premium
 
         /// Marks: valuation is the dominant driver of *future* risk, so it carries
         /// more weight than the coincident sentiment/momentum factors.

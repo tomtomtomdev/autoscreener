@@ -144,6 +144,21 @@ import Testing
         #expect(factor?.detail.contains("4.0% ahead of the S&P") == true)
     }
 
+    @Test func threadsTheSovereignRiskFactorWhenSupplied() {
+        // The coordinator caches the off-host reading (worldgovernmentbonds.com) and hands it in;
+        // the composer threads it to the factor builder, yielding the sovereign-risk factor.
+        let read = RegimeComposer.compose(
+            snapshot: nil, flow: nil, ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil, aboveSnapshot: nil,
+            constituents: constituents,
+            sovereign: IndonesiaSovereignReading(
+                bond10yPercent: 7.07, cds5y: 86.48, cdsChange1MPercent: -7.39))
+
+        let factor = read?.factors.first { $0.kind == .sovereignRisk }
+        #expect(factor?.signal == .riskOn)                                  // CDS tightening 7.39% > band
+        #expect(factor?.detail.contains("5y CDS 86 bps -7.39% 1M") == true)
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,
