@@ -490,7 +490,8 @@ enum SelectionFundamentals {
         ihsgDistanceFrom200dma: Double?,
         usdIdrChangePercent: Double?,
         breadth: BreadthReading?,
-        commodityChangePercent: Double?
+        commodityChangePercent: Double?,
+        bondFlowChangePercent: Double? = nil
     ) -> MarketContext {
         MarketContext(
             indexValuationPercentile: snapshot?.composite?.valuationPercentile ?? 0.5,
@@ -499,6 +500,11 @@ enum SelectionFundamentals {
             idrWeakeningTrend: usdIdrChangePercent.map { $0 > 0 } ?? false,
             biRateRising: snapshot?.biRate?.direction == .hike,
             marketForeignFlowNet: Decimal(marketForeignFlowNet ?? 0),
-            commodityTailwind: commodityChangePercent.map { $0 > 0 } ?? false)
+            commodityTailwind: commodityChangePercent.map { $0 > 0 } ?? false,
+            // Foreign SBN holdings falling more than the displayed factor's ±0.5% month-to-date band
+            // ⇒ genuine bond-side capital flight (not noise). Absent ⇒ false (no fabricated risk),
+            // the same neutral-degradation policy the other legs use. The dead-band keeps this
+            // selection-side read in step with the displayed bond-flow factor.
+            bondFlowOutflow: bondFlowChangePercent.map { $0 < -0.5 } ?? false)
     }
 }

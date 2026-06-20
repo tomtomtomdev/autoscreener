@@ -53,7 +53,7 @@ extension AppDependencies {
             governance: governanceService,
             snapshotProvider: regimeSnapshotService, flowService: aggregateForeignFlowService,
             chartService: chartService, commodityService: commodityPriceService,
-            breadthService: breadthService)
+            breadthService: breadthService, bondFlowProvider: bondFlowService)
     }
 
     /// Assembles the live Tier-A provider + engine over an explicit candidate universe (§8). Pure

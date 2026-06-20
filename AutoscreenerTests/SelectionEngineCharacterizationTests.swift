@@ -137,6 +137,21 @@ private func riskOffContext() -> MarketContext {
         #expect(p.regime == .riskOff)
         #expect(p.minMarginOfSafety == 0.45)
     }
+
+    @Test func foreignBondOutflowTiltsABorderlineRiskOnContextToNeutral() {
+        // A clean low-risk context: risk = 0.5·1.0 + (1−1.0)·0.5 = 0.50 → < riskOnMax(0.6) → riskOn.
+        // The bond-outflow leg adds w.bondOutflow(0.15) → 0.65 → in [0.6, 1.1) → neutral. Only the
+        // bond-flow input changes, so the flip is attributable to it alone.
+        let base = MarketContext(
+            indexValuationPercentile: 0.5, breadthAbove200dma: 1.0, indexAbove200dma: true,
+            idrWeakeningTrend: false, biRateRising: false, marketForeignFlowNet: 0,
+            commodityTailwind: true)
+        #expect(RegimeAssessor.assess(base, config: .balanced).regime == .riskOn)
+
+        var withOutflow = base
+        withOutflow.bondFlowOutflow = true
+        #expect(RegimeAssessor.assess(withOutflow, config: .balanced).regime == .neutral)
+    }
 }
 
 // MARK: - Hard gates (each returns a stable failure reason)

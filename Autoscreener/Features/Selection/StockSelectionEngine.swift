@@ -257,6 +257,10 @@ struct SelectionConfig: Sendable, Codable {
             var biRateRising: Double
             var foreignOutflow: Double
             var noCommodityTailwind: Double
+            /// Penalty when foreign holders are reducing IDR government bonds (capital flight, bond
+            /// side). Trailing-defaulted so existing in-code `.init(...)` presets stay
+            /// source-compatible without naming it (it's set explicitly in `.balanced` below).
+            var bondOutflow: Double = 0.15
         }
         var riskWeights: RiskWeights
         var riskOnMax: Double               // risk < this → riskOn
@@ -332,7 +336,7 @@ extension SelectionConfig {
         regime: .init(
             riskWeights: .init(valuationPercentile: 1.0, belowTrend: 0.25, breadthInverse: 0.5,
                                idrWeakening: 0.25, biRateRising: 0.15, foreignOutflow: 0.25,
-                               noCommodityTailwind: 0.10),
+                               noCommodityTailwind: 0.10, bondOutflow: 0.15),
             riskOnMax: 0.6, neutralMax: 1.1,
             riskOnPolicy: .init(regime: .riskOn, minMarginOfSafety: 0.20, maxTotalExposure: 0.90,
                                 maxPositionPct: 0.12, maxSectorPct: 0.30, maxNames: 12,
@@ -474,6 +478,15 @@ struct MarketContext: Sendable {
     let biRateRising: Bool
     let marketForeignFlowNet: Rupiah
     let commodityTailwind: Bool
+    /// Foreign capital exiting the IDR sovereign-bond market — non-resident SBN holdings falling
+    /// month-to-date. The bond-side face of capital flight: it pressures the rupiah and lifts the
+    /// country risk premium, a *permanent-loss* risk for IDX equities (Marks), so it tilts the regime
+    /// defensive. Deliberately a modest, correlated leg (it co-moves with `foreignOutflow` /
+    /// `idrWeakeningTrend`), not a dominant one — don't double-count the one capital-flight theme.
+    /// Defaults to `false` (no penalty) so an absent reading never fabricates risk, mirroring how the
+    /// displayed bond-flow factor drops when unavailable; the default also keeps every existing
+    /// `MarketContext(...)` construction — and the regime golden master — byte-for-byte.
+    var bondFlowOutflow: Bool = false
     // Market-wide accumulation leaderboard (Slice 4, order-trade/top-stock). Carried context only —
     // no regime input reads it yet; absent ⇒ nil.
     var flowLeaders: FlowLeaderboard? = nil
@@ -490,6 +503,7 @@ enum RegimeAssessor {
         risk += c.biRateRising ? w.biRateRising : 0
         risk += (c.marketForeignFlowNet < 0) ? w.foreignOutflow : 0
         risk += c.commodityTailwind ? 0 : w.noCommodityTailwind
+        risk += c.bondFlowOutflow ? w.bondOutflow : 0
 
         if risk < config.regime.riskOnMax { return config.regime.riskOnPolicy }
         if risk < config.regime.neutralMax { return config.regime.neutralPolicy }

@@ -112,6 +112,11 @@ actor StockbitDataProvider: DataProvider, LegProvider {
     private let chartService: any ChartServicing
     private let commodityService: any CommodityPriceServicing
     private let breadthService: any BreadthServicing
+    /// Foreign SBN bond-flow leg (DJPPR), fed into the engine's `MarketContext` so a foreign
+    /// bond-market exit tilts the live regime defensive. Optional/best-effort: `nil` (the default,
+    /// and the tests' path) ⇒ the leg is absent and the context degrades to no bond-flow penalty,
+    /// keeping the golden master byte-for-byte.
+    private let bondFlowProvider: (any BondFlowProviding)?
     private let breadthConstituents: [String]
 
     private let tickers: [Ticker]
@@ -158,6 +163,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         chartService: any ChartServicing,
         commodityService: any CommodityPriceServicing,
         breadthService: any BreadthServicing,
+        bondFlowProvider: (any BondFlowProviding)? = nil,
         breadthConstituents: [String] = LQ45Constituents.symbols,
         history: TimeInterval = StockbitDataProvider.defaultHistory,
         throttleRange: ClosedRange<UInt64> = RequestThrottle.defaultRange,
@@ -182,6 +188,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         self.chartService = chartService
         self.commodityService = commodityService
         self.breadthService = breadthService
+        self.bondFlowProvider = bondFlowProvider
         self.breadthConstituents = breadthConstituents
         self.history = history
         self.now = now
@@ -371,6 +378,9 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         // the displayed China-channel reads; oil excluded as a net-import drag). Best-effort, like
         // the rupiah leg — it degrades to nil rather than aborting the regime read.
         async let exportBasketTask = exportBasketReading()
+        // Foreign SBN bond-flow leg (DJPPR). Best-effort and off-host, like the rupiah/export legs —
+        // degrades to nil rather than aborting the regime read; absent when no provider is wired.
+        async let bondFlowTask = bondFlowProvider?.bondFlow()
         async let breadthTask = breadthService.reading(symbols: breadthConstituents)
         // Market-wide flow leaderboard (Slice 4) — best-effort carried context; joins the same
         // one-shot concurrent fan-out (not throttled), degrading to nil on failure.
@@ -383,6 +393,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         let rupiah = try? await rupiahTask
         let breadth = await breadthTask
         let exportBasket = await exportBasketTask
+        let bondFlow = await bondFlowTask ?? nil
         let flowLeaders = try? await flowLeadersTask
         let distance = ihsg.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
         let sp500Distance = sp500.flatMap { MovingAverage.distanceFromSMA($0, period: 200) }
@@ -409,7 +420,10 @@ actor StockbitDataProvider: DataProvider, LegProvider {
             breadth: breadth,
             // Export-basket mean move (> 0 ⇒ tailwind); nil when no basket commodity priced, which
             // the adapter degrades to "no tailwind" rather than a fabricated one.
-            commodityChangePercent: exportBasket?.basketChangePercent)
+            commodityChangePercent: exportBasket?.basketChangePercent,
+            // Foreign SBN month-to-date move (< −0.5% ⇒ bond-side capital flight); nil when the leg
+            // is absent, which the adapter degrades to "no outflow" rather than a fabricated one.
+            bondFlowChangePercent: bondFlow?.mtdChangePercent)
         context.flowLeaders = flowLeaders
         return context
     }

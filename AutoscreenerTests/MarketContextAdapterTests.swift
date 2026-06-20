@@ -28,7 +28,8 @@ import Testing
         distance: Double? = nil,
         usdIdr: Double? = nil,
         breadth: BreadthReading? = nil,
-        commodity: Double? = nil
+        commodity: Double? = nil,
+        bondFlow: Double? = nil
     ) -> MarketContext {
         SelectionFundamentals.marketContext(
             snapshot: snapshot,
@@ -36,7 +37,8 @@ import Testing
             ihsgDistanceFrom200dma: distance,
             usdIdrChangePercent: usdIdr,
             breadth: breadth,
-            commodityChangePercent: commodity)
+            commodityChangePercent: commodity,
+            bondFlowChangePercent: bondFlow)
     }
 
     @Test func mapsAllSevenRegimeInputsWhenPresent() {
@@ -89,6 +91,15 @@ import Testing
         #expect(ctx(flow: 0).marketForeignFlowNet == 0)
     }
 
+    @Test func foreignBondOutflowIsFlaggedOnlyBeyondTheHalfPercentBand() {
+        // The MTD move must clear the displayed factor's ±0.5% band to count as bond-side flight,
+        // so noise inside the band — and accumulation — reads as no outflow.
+        #expect(ctx(bondFlow: -1.8).bondFlowOutflow == true)    // clearly distributing
+        #expect(ctx(bondFlow: -0.2).bondFlowOutflow == false)   // inside the band → noise
+        #expect(ctx(bondFlow: 1.2).bondFlowOutflow == false)    // accumulating
+        #expect(ctx(bondFlow: -0.5).bondFlowOutflow == false)   // exactly the band edge (strict <)
+    }
+
     @Test func biRateHoldIsNotRising() {
         let c = ctx(snapshot: snapshot(valuationPercentile: 0.5, rate: .hold))
         #expect(c.biRateRising == false)
@@ -105,6 +116,7 @@ import Testing
         #expect(c.biRateRising == false)
         #expect(c.marketForeignFlowNet == 0)
         #expect(c.commodityTailwind == false)
+        #expect(c.bondFlowOutflow == false)   // absent bond-flow reading ⇒ no fabricated risk
     }
 
     @Test func unmeasurableBreadthAndUnpublishedValuationFallToNeutralMidpoint() {

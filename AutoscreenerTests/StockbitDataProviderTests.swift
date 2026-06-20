@@ -325,6 +325,7 @@ private func makeProvider(
     chart: any ChartServicing = StubChart(),
     commodity: any CommodityPriceServicing = StubCommodity(value: makeCommodity(changePercent: 0.35)),
     breadth: any BreadthServicing = StubBreadth(result: BreadthReading(above: 30, measured: 40)),
+    bondFlow: (any BondFlowProviding)? = nil,
     sleeper: @escaping RequestThrottle.Sleeper = { _ in }
 ) -> StockbitDataProvider {
     StockbitDataProvider(
@@ -333,7 +334,13 @@ private func makeProvider(
         comparisonService: comparison, seasonalityService: seasonality, orderFlowService: orderFlow,
         analyst: analyst, governance: governance, snapshotProvider: snapshot,
         flowService: flow, chartService: chart, commodityService: commodity, breadthService: breadth,
-        breadthConstituents: ["BBCA"], sleeper: sleeper)
+        bondFlowProvider: bondFlow, breadthConstituents: ["BBCA"], sleeper: sleeper)
+}
+
+/// A fixed bond-flow reading — the off-host DJPPR fetch, stubbed.
+private struct StubBondFlow: BondFlowProviding {
+    let reading: BondFlowReading?
+    func bondFlow() async -> BondFlowReading? { reading }
 }
 
 // MARK: - universe()
@@ -567,6 +574,32 @@ private func makeProvider(
         let provider = makeProvider(commodity: StubCommodityBySymbol(changeBySymbol: [:]))
         let c = try await provider.marketContext()
         #expect(c.commodityTailwind == false)
+        #expect(c.indexValuationPercentile == 0.42)   // the rest of the regime is unaffected
+    }
+
+    // The DJPPR bond-flow leg feeding the *selection* regime. The provider fetches the foreign-SBN
+    // reading and the adapter flags an outflow when the MTD move clears the −0.5% band, so a foreign
+    // bond-market exit tilts the live engine defensive (RegimeAssessor adds the bondOutflow leg).
+
+    @Test func readsForeignBondOutflowIntoTheContext() async throws {
+        let provider = makeProvider(bondFlow: StubBondFlow(reading: BondFlowReading(
+            foreignHoldingsTrillions: 820.0, foreignSharePercent: 12.0, mtdChangePercent: -1.8)))
+        let c = try await provider.marketContext()
+        #expect(c.bondFlowOutflow == true)
+    }
+
+    @Test func accumulatingBondFlowIsNotAnOutflow() async throws {
+        let provider = makeProvider(bondFlow: StubBondFlow(reading: BondFlowReading(
+            foreignHoldingsTrillions: 880.0, foreignSharePercent: 12.8, mtdChangePercent: 1.5)))
+        let c = try await provider.marketContext()
+        #expect(c.bondFlowOutflow == false)
+    }
+
+    @Test func degradesToNoBondOutflowWithoutAProvider() async throws {
+        // Default path (no bond-flow provider wired) → the leg is absent and reads as no outflow,
+        // not a fabricated one — keeping the regime golden master byte-for-byte.
+        let c = try await makeProvider().marketContext()
+        #expect(c.bondFlowOutflow == false)
         #expect(c.indexValuationPercentile == 0.42)   // the rest of the regime is unaffected
     }
 }
