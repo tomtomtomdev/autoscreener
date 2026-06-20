@@ -22,7 +22,8 @@ nonisolated enum RegimeComposer {
         kompasConstituents: [String] = [],
         commodityChannel: CommodityChannelReading? = nil,
         asiaEM: AsiaEMReading? = nil,
-        sovereign: IndonesiaSovereignReading? = nil
+        sovereign: IndonesiaSovereignReading? = nil,
+        bondFlow: BondFlowReading? = nil
     ) -> RegimeRead? {
         let factors = RegimeFactorBuilder.factors(
             snapshot: snapshot,
@@ -36,7 +37,8 @@ nonisolated enum RegimeComposer {
             kompasBreadth: IndexBreadth.reading(aboveSnapshot: aboveSnapshot, constituents: kompasConstituents),
             commodityChannel: commodityChannel,
             asiaEM: asiaEM,
-            sovereign: sovereign)
+            sovereign: sovereign,
+            bondFlow: bondFlow)
 
         guard !factors.isEmpty else { return nil }
         return RegimeSynthesizer.read(factors: factors, asOf: snapshot?.asOf)

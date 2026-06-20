@@ -123,6 +123,14 @@ nonisolated struct StubIndonesiaSovereignService: IndonesiaSovereignProviding {
     func sovereign() async -> IndonesiaSovereignReading? { nil }
 }
 
+/// Returns `nil` so the bond-flow factor drops under fixtures — keeping the canned regime read
+/// (and its asserted stance) byte-identical, the same way the sovereign-risk and dynamic-
+/// constituents legs are disabled under fixtures. The factor's behaviour is covered by the unit
+/// suite, not the UI run.
+nonisolated struct StubBondFlowService: BondFlowProviding {
+    func bondFlow() async -> BondFlowReading? { nil }
+}
+
 nonisolated struct StubBreadthService: BreadthServicing {
     func reading(symbols: [String], period: Int) async -> BreadthReading {
         // 28 of 45 LQ45 above their 200-day average → 62% → broad (risk-on).

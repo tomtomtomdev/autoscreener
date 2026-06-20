@@ -15,16 +15,28 @@ nonisolated enum MacroHTTP {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
         + "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
-    static func text(from url: URL, session: any HTTPSession) async -> String? {
+    static func text(from url: URL, headers: [String: String] = [:],
+                     session: any HTTPSession) async -> String? {
+        guard let data = await data(from: url, headers: headers, session: session) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// The raw-bytes `GET` — the `text(from:…)` analogue for the one regime leg
+    /// (`BondFlowService`) that fetches a binary document (the DJPPR ownership PDF) rather than a
+    /// text body. `headers` carries any per-host extras (e.g. a `Referer`); the browser UA is always
+    /// set. `nil` on any failure (network error, non-2xx), like the text path.
+    static func data(from url: URL, headers: [String: String] = [:],
+                     session: any HTTPSession) async -> Data? {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(browserUserAgent, forHTTPHeaderField: "User-Agent")
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
 
         guard let (data, response) = try? await session.data(for: request) else { return nil }
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             return nil
         }
-        return String(data: data, encoding: .utf8)
+        return data
     }
 
     /// A JSON `POST` returning the decoded body text on success or `nil` on any failure — the

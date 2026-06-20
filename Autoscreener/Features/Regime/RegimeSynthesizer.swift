@@ -45,6 +45,10 @@ nonisolated enum RegimeSynthesizer {
         /// so the spread must move more than this over the month to register as a genuine shift in
         /// the country risk premium rather than day-to-day chop.
         static let sovereignCdsBand = 0.05
+        /// ±0.5% dead-band on the month-to-date change in foreign SBN holdings. A daily foreign
+        /// bond flow is small against the ~Rp 870 trn book, so the holding must move more than this
+        /// over the window to register as genuine accumulation/distribution rather than chop.
+        static let bondFlowBand = 0.005
         /// Normalised-score band that separates the three stances.
         static let stanceBand = 0.33
     }
@@ -152,6 +156,19 @@ nonisolated enum RegimeSynthesizer {
         guard let c = change else { return nil }
         if c > Threshold.sovereignCdsBand { return .riskOff }
         if c < -Threshold.sovereignCdsBand { return .riskOn }
+        return .neutral
+    }
+
+    /// Foreign (non-resident) ownership of tradable SBN — the bond-side flow leg. `change` is the
+    /// fractional month-to-date move in foreign holdings; rising (foreigners accumulating IDR
+    /// duration) = capital flowing in = risk-on, falling (distributing) = the bond face of capital
+    /// flight = risk-off, within the band = neutral. The sign matches the equity foreign-flow leg
+    /// (net buying = risk-on) and is the mirror of the sovereign-risk/rupiah legs (a rising risk
+    /// gauge is risk-off).
+    static func bondFlowSignal(holdingsChange change: Double?) -> RegimeSignal? {
+        guard let c = change else { return nil }
+        if c > Threshold.bondFlowBand { return .riskOn }
+        if c < -Threshold.bondFlowBand { return .riskOff }
         return .neutral
     }
 

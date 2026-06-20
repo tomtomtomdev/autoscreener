@@ -55,6 +55,7 @@ enum SweepTestKit {
                             snapshotProvider: any RegimeSnapshotProviding = StubRegimeSnapshotService(),
                             biRateProvider: any BIRateProviding = StubBIRateService(),
                             macroProvider: any FREDMacroProviding = StubFREDMacroService(),
+                            bondFlowProvider: (any BondFlowProviding)? = nil,
                             catalog: [MarketSymbol] = [],
                             constituents: [String] = LQ45Constituents.symbols,
                             indexConstituents: (any IndexConstituentsServicing)? = nil,
@@ -75,6 +76,7 @@ enum SweepTestKit {
             paywall: paywall, templates: templates, screener: screener,
             commodity: commodity, chart: chart, flow: flow, snapshotProvider: snapshotProvider,
             biRateProvider: biRateProvider, macroProvider: macroProvider,
+            bondFlowProvider: bondFlowProvider,
             catalog: catalog, constituents: constituents, indexConstituents: indexConstituents,
             runsContinuousLoop: runsContinuousLoop, safetyCap: safetyCap,
             openGapRange: openGapRange, closedGapRange: closedGapRange, macroTTL: macroTTL, sleeper: sleeper,
@@ -756,6 +758,44 @@ private actor LoopGapGate {
         let breadth = marketStore.regimeRead?.factors.first { $0.kind == .breadth }
         #expect(breadth?.detail.contains("LQ45 names above their 200-day average") == true)
         #expect(breadth?.detail.contains("KOMPAS100") == false)
+    }
+
+    /// Returns a fixed bond-flow reading — the off-host (DJPPR) fetch, stubbed.
+    private struct StubBondFlow: BondFlowProviding {
+        let reading: BondFlowReading?
+        func bondFlow() async -> BondFlowReading? { reading }
+    }
+
+    @Test func openSweepCachesTheBondFlowReadingAndThreadsItIntoTheRead() async {
+        // The coordinator fetches the leg in refreshMacroIfStale(), caches it on the macro TTL, and
+        // the regime sweep threads it to the composer → the bond-flow factor lands in the read.
+        let marketStore = SweepTestKit.marketStore()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), marketStore: marketStore,
+            templates: templatesWithAbove200MA(["BBCA", "TLKM", "BMRI"]),
+            bondFlowProvider: StubBondFlow(reading: BondFlowReading(
+                foreignHoldingsTrillions: 870.0, foreignSharePercent: 12.6, mtdChangePercent: 1.2)),
+            catalog: SweepTestKit.mixedCatalog)
+
+        await coord.runSweep(includeIDX: true)
+
+        let bondFlow = marketStore.regimeRead?.factors.first { $0.kind == .bondFlow }
+        #expect(bondFlow?.signal == .riskOn)   // +1.2% MTD > band → accumulating
+        #expect(bondFlow?.detail.contains("Foreign SBN Rp870 trn") == true)
+    }
+
+    @Test func openSweepWithoutABondFlowProviderDropsTheFactor() async {
+        // Default factory (no provider) → the bond-flow factor is absent, the rest of the read stands.
+        let marketStore = SweepTestKit.marketStore()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(), marketStore: marketStore,
+            templates: templatesWithAbove200MA(["BBCA", "TLKM", "BMRI"]),
+            catalog: SweepTestKit.mixedCatalog)
+
+        await coord.runSweep(includeIDX: true)
+
+        #expect(marketStore.regimeRead != nil)
+        #expect(marketStore.regimeRead?.factors.contains { $0.kind == .bondFlow } == false)
     }
 
     @Test func closedSweepLeavesTheRegimeReadFrozen() async {

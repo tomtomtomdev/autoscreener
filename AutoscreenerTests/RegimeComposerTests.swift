@@ -159,6 +159,21 @@ import Testing
         #expect(factor?.detail.contains("5y CDS 86 bps -7.39% 1M") == true)
     }
 
+    @Test func threadsTheBondFlowFactorWhenSupplied() {
+        // The coordinator caches the off-host reading (DJPPR Kemenkeu) and hands it in; the composer
+        // threads it to the factor builder, yielding the bond-flow factor.
+        let read = RegimeComposer.compose(
+            snapshot: nil, flow: nil, ihsg: nil, sp500: nil,
+            usdIdrChangePercent: nil, aboveSnapshot: nil,
+            constituents: constituents,
+            bondFlow: BondFlowReading(
+                foreignHoldingsTrillions: 870.0, foreignSharePercent: 12.6, mtdChangePercent: 1.2))
+
+        let factor = read?.factors.first { $0.kind == .bondFlow }
+        #expect(factor?.signal == .riskOn)                                  // +1.2% MTD > band
+        #expect(factor?.detail.contains("Foreign SBN Rp870 trn (12.6% of tradable SBN)") == true)
+    }
+
     @Test func breadthFactorAbsentWithoutAScreenerSnapshot() {
         let read = RegimeComposer.compose(
             snapshot: UITestFixtures.regimeSnapshot,

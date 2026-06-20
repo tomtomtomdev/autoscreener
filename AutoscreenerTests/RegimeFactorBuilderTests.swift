@@ -29,7 +29,9 @@ import Testing
             asiaEM: AsiaEMReading(                        // Asia-EM leading the S&P → risk-on
                 regionalDistance: 0.05, contributors: ["Hang Seng"], relativeToSP: 0.03),
             sovereign: IndonesiaSovereignReading(         // 5y CDS tightening 7.39% over 1M → risk-on
-                bond10yPercent: 7.07, cds5y: 86.48, cdsChange1MPercent: -7.39))
+                bond10yPercent: 7.07, cds5y: 86.48, cdsChange1MPercent: -7.39),
+            bondFlow: BondFlowReading(                    // foreign SBN holdings +1.0% MTD → risk-on
+                foreignHoldingsTrillions: 870, foreignSharePercent: 12.6, mtdChangePercent: 1.0))
 
         #expect(Set(factors.map(\.kind)) == Set(RegimeFactor.Kind.allCases))
         #expect(signal(factors, .valuation) == .riskOn)    // 10th pctile → cheap
@@ -44,6 +46,42 @@ import Testing
         #expect(signal(factors, .commodityChannel) == .riskOn) // basket +2.5% → tailwind
         #expect(signal(factors, .asiaEM) == .riskOn)        // +3% ahead of the S&P → risk-on
         #expect(signal(factors, .sovereignRisk) == .riskOn) // CDS tightening 7.39% over 1M → risk-on
+        #expect(signal(factors, .bondFlow) == .riskOn)      // foreign holdings +1.0% MTD → risk-on
+    }
+
+    @Test func bondFlowDetailNamesTheHoldingShareAndMonthToDateMove() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            bondFlow: BondFlowReading(
+                foreignHoldingsTrillions: 865.89, foreignSharePercent: 12.53, mtdChangePercent: -0.23))
+
+        let factor = factors.first { $0.kind == .bondFlow }
+        #expect(factor?.signal == .neutral)   // −0.23% is inside the ±0.5% band
+        #expect(factor?.detail == "Foreign SBN Rp866 trn (12.5% of tradable SBN), -0.23% MTD — foreign flow flat")
+    }
+
+    @Test func bondFlowDetailOmitsTheShareWhenAbsentAndReadsDistributingWhenFalling() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: nil,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            bondFlow: BondFlowReading(
+                foreignHoldingsTrillions: 820.0, foreignSharePercent: nil, mtdChangePercent: -1.8))
+
+        let factor = factors.first { $0.kind == .bondFlow }
+        #expect(factor?.signal == .riskOff)   // −1.8% clears the band → distributing
+        #expect(factor?.detail == "Foreign SBN Rp820 trn, -1.80% MTD — foreign flow leaving")
+    }
+
+    @Test func bondFlowDroppedWhenAbsent() {
+        let factors = RegimeFactorBuilder.factors(
+            snapshot: Self.snapshot,
+            netForeignRaw: nil, netForeignText: nil,
+            ihsgDistanceFrom200dma: nil, usdIdrChangePercent: nil, breadth: nil,
+            bondFlow: nil)
+        #expect(!factors.contains { $0.kind == .bondFlow })
     }
 
     @Test func sovereignDetailNamesTheCdsMoveTheBondYieldAndTheSpreadOverUST() {

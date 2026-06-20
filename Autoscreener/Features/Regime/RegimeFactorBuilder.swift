@@ -18,7 +18,8 @@ nonisolated enum RegimeFactorBuilder {
         kompasBreadth: BreadthReading? = nil,
         commodityChannel: CommodityChannelReading? = nil,
         asiaEM: AsiaEMReading? = nil,
-        sovereign: IndonesiaSovereignReading? = nil
+        sovereign: IndonesiaSovereignReading? = nil,
+        bondFlow: BondFlowReading? = nil
     ) -> [RegimeFactor] {
         var factors: [RegimeFactor] = []
 
@@ -129,6 +130,20 @@ nonisolated enum RegimeFactorBuilder {
             factors.append(RegimeFactor(
                 kind: .sovereignRisk, signal: signal,
                 detail: sovereignDetail(sovereign, usTenYear: snapshot?.macro?.us10y?.value, signal: signal)))
+        }
+
+        // Indonesia bond flow — foreign (non-resident) ownership of tradable SBN, the bond-side
+        // analogue of the equity foreign-flow leg. The *vote* is the month-to-date change in foreign
+        // holdings: accumulation = capital flowing into IDR duration = risk-on; distribution = the
+        // bond face of capital flight = risk-off. The holding level (Rp trn) and the share of all
+        // tradable SBN ride along as detail qualifiers, not a second vote — they describe the very
+        // position the flow is moving, so scoring them too would over-count one leg (same
+        // "don't double-count" rule as the CDS/CNY/breadth qualifiers).
+        if let bondFlow,
+           let signal = RegimeSynthesizer.bondFlowSignal(holdingsChange: bondFlow.mtdChangePercent / 100) {
+            factors.append(RegimeFactor(
+                kind: .bondFlow, signal: signal,
+                detail: bondFlowDetail(bondFlow, signal: signal)))
         }
 
         // Breadth — divergence-aware when both universes are measured, otherwise the
@@ -258,6 +273,28 @@ nonisolated enum RegimeFactorBuilder {
         case .neutral: "steady"
         }
     }
+
+    /// The bond-flow factor's rationale: the foreign holding level (with its share of all tradable
+    /// SBN when available, a qualifier), the month-to-date move that drives the vote, and a one-word
+    /// read of the flow keyed off the (single) vote.
+    private static func bondFlowDetail(_ reading: BondFlowReading, signal: RegimeSignal) -> String {
+        let level = "Foreign SBN \(trillionsRupiah(reading.foreignHoldingsTrillions))"
+        let share = reading.foreignSharePercent.map { " (\(pctValue($0)) of tradable SBN)" } ?? ""
+        return "\(level)\(share), \(signedPct(reading.mtdChangePercent)) MTD — foreign flow \(bondFlowWord(signal))"
+    }
+
+    private static func bondFlowWord(_ signal: RegimeSignal) -> String {
+        switch signal {
+        case .riskOn: "building"
+        case .riskOff: "leaving"
+        case .neutral: "flat"
+        }
+    }
+
+    /// A holding in trillions of rupiah, no decimals (e.g. `865.89` → "Rp866 trn").
+    private static func trillionsRupiah(_ value: Double) -> String { String(format: "Rp%.0f trn", value) }
+    /// A figure that is already a percentage (e.g. a share of `12.53`) to one decimal ("12.5%").
+    private static func pctValue(_ percent: Double) -> String { String(format: "%.1f%%", percent) }
 
     /// A spread/level in basis points, no decimals (e.g. `86.48` → "86 bps").
     private static func bpsText(_ bps: Double) -> String { String(format: "%.0f bps", bps) }

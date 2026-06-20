@@ -87,6 +87,18 @@ import Testing
         #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: 0.03) == .neutral)   // inside the band
         #expect(RegimeSynthesizer.sovereignCreditSignal(cdsChange: nil) == nil)
     }
+
+    @Test func risingForeignBondHoldingsIsRiskOnFallingIsRiskOff() {
+        // The bond-flow leg votes on the month-to-date move in foreign SBN holdings (a fraction):
+        // accumulation (capital into IDR duration) → risk-on, distribution → risk-off, with a
+        // ±0.5% dead-band so a small monthly move stays neutral. The sign matches the equity
+        // foreign-flow leg (net buying = risk-on).
+        #expect(RegimeSynthesizer.bondFlowSignal(holdingsChange: 0.018) == .riskOn)    // +1.8% accumulating
+        #expect(RegimeSynthesizer.bondFlowSignal(holdingsChange: 0.0) == .neutral)
+        #expect(RegimeSynthesizer.bondFlowSignal(holdingsChange: -0.018) == .riskOff)  // −1.8% distributing
+        #expect(RegimeSynthesizer.bondFlowSignal(holdingsChange: -0.0023) == .neutral) // inside the band
+        #expect(RegimeSynthesizer.bondFlowSignal(holdingsChange: nil) == nil)
+    }
 }
 
 // MARK: - Weighted aggregation + the late-cycle guard

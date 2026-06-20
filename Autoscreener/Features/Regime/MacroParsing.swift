@@ -90,6 +90,21 @@ nonisolated enum MacroParsing {
         return Double(s.replacingOccurrences(of: ",", with: ""))
     }
 
+    /// A number in Indonesian (id-ID) locale formatting: `.` is the thousands separator and
+    /// `,` the decimal point (`"1.861,39"` → `1861.39`); accounting parentheses are negative
+    /// (`"(329,83)"` → `-329.83`); `"-"` and blanks → `nil`. Used by the DJPPR SBN-ownership
+    /// parser, whose figures arrive in this format. (Distinct from `normalisedNumber`, whose
+    /// heuristic treats a lone `.` as a decimal — wrong for a thousands-grouped cell.)
+    private static func indonesianNumber(_ text: String) -> Double? {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != "-" else { return nil }
+        var negative = false
+        if t.hasPrefix("("), t.hasSuffix(")") { negative = true; t = String(t.dropFirst().dropLast()) }
+        t = t.replacingOccurrences(of: ".", with: "").replacingOccurrences(of: ",", with: ".")
+        guard firstMatch(#"^\d+(\.\d+)?$"#, in: t) != nil, let v = Double(t) else { return nil }
+        return negative ? -v : v
+    }
+
     /// Shared numeric normalisation for `parseRate`: strip `%`, fold the Bahasa decimal
     /// comma, drop thousands separators, and validate the shape before converting.
     private static func normalisedNumber(_ text: String) -> Double? {
@@ -233,6 +248,55 @@ nonisolated enum MacroParsing {
             .compactMap { Double($0) }
         guard percents.count >= 2 else { return nil }
         return percents[1]
+    }
+
+    // MARK: - DJPPR SBN ownership (bond-flow leg)
+
+    /// The latest daily SBN-ownership file's media link from the DJPPR page payload
+    /// (`api-djppr.kemenkeu.go.id/.../page?url=…`). The page embeds the file list newest-first as
+    /// a CMS "repeater" widget whose records carry a `@link` media URL, so the *first* `@link`
+    /// pointing at a `media/` asset is the most recent month's file. `nil` when the body carries no
+    /// such link (an unexpected/blocked payload) → the factor drops, like any absent leg. A regex
+    /// keyed on the `@link` field (not just any `media/` URL) skips the page's own logo `imageUrl`.
+    static func latestSBNFile(_ json: String) -> String? {
+        firstMatch(#""@link"\s*:\s*"([^"]*media/[^"]*)""#, in: json)?[1]
+    }
+
+    /// Parse the DJPPR daily SBN-ownership PDF — already text-extracted (PDFKit) — into the foreign
+    /// bond-flow reading. Reads **only the reliable page-1 "Non Residen" row form**: a single line
+    /// `Non Residen <SUN> <SBSN> <TOTAL>  …` repeating one value-triple per trading day, in
+    /// chronological order, so the `TOTAL` of every triple is the daily non-resident holding. The
+    /// trillions table (`first TOTAL > 100`) drives the vote; the percentage table (`< 50`) supplies
+    /// the share. The latter pages render column-wise under PDFKit (one line per date, no row label)
+    /// and are deliberately *not* parsed — restricting to the row form keeps extraction robust at
+    /// the cost of leaning on the early-month days (the user-chosen trade-off). Hard-validates the
+    /// holding is in a plausible range (Rp 300–2 000 trn) so a layout change degrades to `nil`
+    /// rather than a fabricated figure. The share is dropped (kept `nil`) if outside 5–30%.
+    static func parseSBNOwnership(_ text: String) -> BondFlowReading? {
+        var trillions: [Double] = []
+        var percents: [Double] = []
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            // The footnote ("1) Non Residen terdiri …") and the English label ("Non Resident",
+            // no trailing space) both fail this prefix, so only the two data rows match.
+            guard line.hasPrefix("Non Residen ") else { continue }
+            let values = line.dropFirst("Non Residen ".count)
+                .split(separator: " ").compactMap { indonesianNumber(String($0)) }
+            guard values.count >= 3, values.count % 3 == 0 else { continue }
+            let totals = stride(from: 2, to: values.count, by: 3).map { values[$0] }
+            guard let first = totals.first else { continue }
+            if first > 100, trillions.isEmpty { trillions = totals }
+            else if first > 0, first < 50, percents.isEmpty { percents = totals }
+        }
+        guard trillions.count >= 2,
+              let latest = trillions.last, let opening = trillions.first,
+              (300.0...2000.0).contains(latest), opening > 0
+        else { return nil }
+        let share = percents.last.flatMap { (5.0...30.0).contains($0) ? $0 : nil }
+        return BondFlowReading(
+            foreignHoldingsTrillions: latest,
+            foreignSharePercent: share,
+            mtdChangePercent: (latest - opening) / opening * 100)
     }
 
     // MARK: - BI-rate HTML

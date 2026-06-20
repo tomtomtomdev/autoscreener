@@ -35,6 +35,7 @@ final class AppDependencies {
     let biRateService: any BIRateProviding
     let fredMacroService: any FREDMacroProviding
     let sovereignService: any IndonesiaSovereignProviding
+    let bondFlowService: any BondFlowProviding
     let breadthService: any BreadthServicing
     // Per-ticker legs the Tier-A selection engine consumes (StockbitDataProvider, §8).
     let fundachartService: any FundachartServicing
@@ -132,6 +133,9 @@ final class AppDependencies {
         self.sovereignService = useFixtures
             ? StubIndonesiaSovereignService()
             : IndonesiaSovereignService(session: session)
+        self.bondFlowService = useFixtures
+            ? StubBondFlowService()
+            : BondFlowService(session: session)
         // Breadth fans out per-constituent chart calls, so it wraps whichever chart
         // service we resolved (real or the deterministic stub under UI fixtures).
         self.breadthService = useFixtures ? StubBreadthService() : BreadthService(chartService: self.chartService)
@@ -208,6 +212,7 @@ final class AppDependencies {
             biRateProvider: self.biRateService,
             macroProvider: self.fredMacroService,
             sovereignProvider: self.sovereignService,
+            bondFlowProvider: self.bondFlowService,
             // Live only: dynamic LQ45 + KOMPAS100 membership for the divergence breadth
             // factor. Under fixtures/tests it's nil, so breadth stays on the static LQ45
             // seed (deterministic, no network) exactly as before.
