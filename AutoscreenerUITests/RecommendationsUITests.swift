@@ -29,6 +29,13 @@ final class RecommendationsUITests: XCTestCase {
         app.descendants(matching: .any).matching(identifier: identifier).firstMatch
     }
 
+    /// macOS segmented `Picker` options surface as radio buttons in most builds and plain buttons in
+    /// others — query whichever exists. Mirrors `StockDetailUITests`.
+    private func segment(_ app: XCUIApplication, _ label: String) -> XCUIElement {
+        let radio = app.radioButtons[label]
+        return radio.exists ? radio : app.buttons[label]
+    }
+
     private func sidebarItem(_ app: XCUIApplication, _ label: String) -> XCUIElement {
         let button = app.buttons[label]
         return button.exists ? button : app.staticTexts[label].firstMatch
@@ -81,16 +88,17 @@ final class RecommendationsUITests: XCTestCase {
 
         // The consolidation's proof: a buy-side pick and the sell-side verdicts share the ONE list.
         // XXXX is exit-only (not among the picks) and BBCA is buy-only (not among the held positions),
-        // so both rows appearing in the same RecommendationsView is exactly the buy+sell merge. (We
-        // query the row containers, the convention these suites already prove queryable — SwiftUI
-        // collapses a card's nested elements once the card itself carries an accessibility identifier.)
-        XCTAssertTrue(element(app, "recommendations.row.XXXX").waitForExistence(timeout: 5),
+        // so both rows appearing in the same RecommendationsView is exactly the buy+sell merge. Each
+        // card exposes its identity through the tappable stock-code button (the card itself no longer
+        // carries an identifier, so that nested button stays queryable — see
+        // `testTappingRecommendationStockCodeOpensStockDetail`).
+        XCTAssertTrue(element(app, "recommendations.stockcode-XXXX").waitForExistence(timeout: 5),
                       "Exit verdict row (sell-side only) should render")
-        XCTAssertTrue(element(app, "recommendations.row.BBNI").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "recommendations.stockcode-BBNI").waitForExistence(timeout: 5),
                       "Trim verdict row should render")
-        XCTAssertTrue(element(app, "recommendations.row.BBCA").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "recommendations.stockcode-BBCA").waitForExistence(timeout: 5),
                       "Buy-only candidate row (buy-side only) should render in the same list")
-        XCTAssertTrue(element(app, "recommendations.row.WIFI").waitForExistence(timeout: 5),
+        XCTAssertTrue(element(app, "recommendations.stockcode-WIFI").waitForExistence(timeout: 5),
                       "Hold verdict row should render")
     }
 
@@ -146,5 +154,32 @@ final class RecommendationsUITests: XCTestCase {
         // uniquely proves we navigated to the screener's list, not back to the watchlist.
         XCTAssertTrue(element(app, "stockcode-BBCA").waitForExistence(timeout: 10),
                       "Tapping the screener icon should push that screener's results list")
+    }
+
+    @MainActor
+    func testTappingRecommendationStockCodeOpensStockDetail() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = launchWithFixtures()
+
+        landOnRecommendations(app)
+        XCTAssertTrue(element(app, "RecommendationsView").waitForExistence(timeout: 15),
+                      "The merged Recommendations screen should render")
+
+        // BBCA is a buy-only pick — its card sits in the inbox at the top of the screen (above the
+        // watchlist), so its stock code is reachable without scrolling. Tapping it pushes Stock Detail.
+        let bbca = element(app, "recommendations.stockcode-BBCA")
+        XCTAssertTrue(bbca.waitForExistence(timeout: 10),
+                      "The BBCA recommendation card's stock code should render as a tappable link")
+        bbca.click()
+
+        // Detail opens on the Chart tab: its timeframe control (default 1Y) is present — the same proof
+        // `StockDetailUITests` uses for the watchlist entry point. (`recommendations.stockcode-BBCA` and
+        // `watchlist.stockcode-BBCA` are distinct ids, so this uniquely exercises the card entry point.)
+        XCTAssertTrue(segment(app, "1Y").waitForExistence(timeout: 5),
+                      "Tapping the recommendation's stock code should push the Stock Detail screen")
     }
 }

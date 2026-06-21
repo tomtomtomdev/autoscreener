@@ -179,7 +179,7 @@ struct RecommendationsView: View {
                 // and below the grid.
                 LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 16) {
                     ForEach(vm.rows) { row in
-                        ActionRowView(row: row)
+                        ActionRowView(row: row, onSelect: { selectedTicker = $0 })
                     }
                 }
                 skippedNote
@@ -272,6 +272,10 @@ struct RecommendationsView: View {
 /// shows its sizing metrics and gate chips; a verdict shows its one-line reason.
 struct ActionRowView: View {
     let row: ActionRow
+    /// Dispatched upward when the card's stock code is tapped — the parent (`RecommendationsView`)
+    /// owns the `selectedTicker` state and the `.navigationDestination`, so the card never navigates
+    /// itself (mirrors `WatchlistRowView`).
+    let onSelect: (StockTicker) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -282,14 +286,25 @@ struct ActionRowView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-        .accessibilityIdentifier("recommendations.row.\(row.ticker)")
+        // No card-level accessibility identifier: it would collapse the card into one element and hide
+        // the nested stock-code button from XCUITest. Per-row identity lives on that button
+        // (`recommendations.stockcode-<ticker>`), mirroring `WatchlistRowView`.
     }
 
     private var header: some View {
         let style = RecommendationFormatting.actionStyle(row)
         return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(row.ticker)
-                .font(.title3.bold())
+            // The stock code drills into Stock Detail. `.plain` keeps the prominent title styling
+            // (a `.link` style would recolour it); the tap target is the code only, not the whole card.
+            Button {
+                onSelect(StockTicker(symbol: row.ticker, name: row.ticker))
+            } label: {
+                Text(row.ticker)
+                    .font(.title3.bold())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("recommendations.stockcode-\(row.ticker)")
+            .help("View \(row.ticker) financials")
             Spacer(minLength: 0)
             Text(style.label)
                 .font(.caption.weight(.bold))
