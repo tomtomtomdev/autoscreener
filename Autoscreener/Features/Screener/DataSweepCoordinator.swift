@@ -37,6 +37,9 @@ final class DataSweepCoordinator {
     /// progress the title bar shows during `isWarming`. Both reset at the start of each warm.
     private(set) var warmedSecurityCount: Int = 0
     private(set) var securityUniverseCount: Int = 0
+    /// The per-symbol name whose data is being fetched this instant during the warming phase — what
+    /// the title bar names ("Warming BBCA x/y"). Nil between names, at completion, and outside a warm.
+    private(set) var currentlyWarmingTicker: Ticker?
     /// Page currently being pulled within a multi-page screener fetch. 1 on the first page
     /// (and 0 between screeners / on the non-paginated market+regime legs); ≥2 once a screener
     /// runs deep, which the title-bar status surfaces as a "page x" suffix.
@@ -118,7 +121,7 @@ final class DataSweepCoordinator {
     /// Warms the per-symbol selection cache. Reports incremental `(done, total)` progress so the
     /// title bar can show real warming progress, and returns `true` if it aborted early because the
     /// feed looked unreachable (so the bar can surface an offline error rather than a silent stall).
-    typealias SecuritySweep = @MainActor (_ progress: @escaping @MainActor (_ done: Int, _ total: Int) -> Void) async -> Bool
+    typealias SecuritySweep = @MainActor (_ progress: @escaping @MainActor (_ done: Int, _ total: Int, _ current: Ticker?) -> Void) async -> Bool
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var didStart = false
@@ -327,7 +330,7 @@ final class DataSweepCoordinator {
         currentPage = 0
         hasIssuedFirstRequest = false
         lastError = nil
-        defer { isSweeping = false; isWarming = false }
+        defer { isSweeping = false; isWarming = false; currentlyWarmingTicker = nil }
 
         let idx = includeIDX ?? clock.isOpen()
 
@@ -353,11 +356,14 @@ final class DataSweepCoordinator {
             isWarming = true
             warmedSecurityCount = 0
             securityUniverseCount = 0
-            let abortedOffline = await securitySweep { [weak self] done, total in
+            currentlyWarmingTicker = nil
+            let abortedOffline = await securitySweep { [weak self] done, total, current in
                 self?.warmedSecurityCount = done
                 self?.securityUniverseCount = total
+                self?.currentlyWarmingTicker = current
             }
             isWarming = false
+            currentlyWarmingTicker = nil
             // The warmer bailed because the feed was unreachable — say so (and let the next loop tick
             // retry) instead of landing a misleading "Updated" with a half-warmed cache.
             if abortedOffline { lastError = "Couldn’t reach the data feed — will retry." }

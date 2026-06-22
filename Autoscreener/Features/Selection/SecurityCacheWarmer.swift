@@ -43,10 +43,10 @@ struct SecurityCacheWarmer {
               onFundamentals: (Ticker, FundamentalSlice) -> Void = { _, _ in },
               onData: (Ticker, SecurityData) -> Void,
               cachedFundamentals: (Ticker) -> FundamentalSlice? = { _ in nil },
-              onProgress: (_ done: Int, _ total: Int) -> Void = { _, _ in }) async -> Outcome {
+              onProgress: (_ done: Int, _ total: Int, _ current: Ticker?) -> Void = { _, _, _ in }) async -> Outcome {
         let total = universe.count
         guard total > 0 else { return Outcome(warmed: 0, total: 0, abortedOffline: false) }
-        onProgress(0, total)
+        onProgress(0, total, nil)
 
         var consecutiveFailures = 0
 
@@ -65,6 +65,10 @@ struct SecurityCacheWarmer {
                 // The feed is unreachable — bail instead of burning ~90s per remaining name.
                 return Outcome(warmed: warmed, total: total, abortedOffline: true)
             }
+            // Announce the name being fetched (1-based, so the count matches the named stock's
+            // ordinal) so the title bar can show "Warming BBCA 3/20" — which stock is in flight,
+            // not just a bare counter.
+            onProgress(index + 1, total, t)
             do {
                 if let cached = cachedFundamentals(t) {
                     // INTRADAY reuse: the slow leg is still fresh in cache → fetch ONLY the fast leg
@@ -90,8 +94,10 @@ struct SecurityCacheWarmer {
                 // field) are expected, name-specific outcomes — neutral, neither reset nor strike.
                 if Self.isTransportFailure(error) { consecutiveFailures += 1 }
             }
-            onProgress(index + 1, total)
         }
+        // The universe drained cleanly — report completion and clear the in-flight ticker so the bar
+        // shows a bare "Warming n/n" instead of leaving the last name's label lingering.
+        onProgress(total, total, nil)
         return Outcome(warmed: warmed, total: total, abortedOffline: false)
     }
 

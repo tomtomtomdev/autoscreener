@@ -152,12 +152,35 @@ import Testing
         var progress: [(Int, Int)] = []
         let outcome = await warmer.warm(
             universe: Self.universe(50), onContext: { _ in }, onData: { _, _ in },
-            onProgress: { progress.append(($0, $1)) })
+            onProgress: { done, total, _ in progress.append((done, total)) })
 
         #expect(!outcome.abortedOffline)
         let calls = await provider.dataCallCount
         #expect(calls == 50)                            // breaker stayed shut across all skips
         #expect(progress.last?.0 == 50 && progress.last?.1 == 50)
+    }
+
+    // MARK: - Progress names the in-flight ticker (title bar shows "Warming BBCA x/y")
+
+    @Test func progressAnnouncesEachTickerBeingWarmedInOrderThenClearsIt() async {
+        // The warmer reports the name it's about to fetch (1-based count) so the title bar can show
+        // WHICH stock is in flight, then a final tick clears the ticker once the universe drains.
+        let fundamental = fundamentalSlice(sector: "S", sectorIndexSymbol: nil)
+        let warmer = SecurityCacheWarmer(
+            provider: OneNameProvider(fundamental: fundamental, live: liveSlice(price: 1)))
+
+        var ticks: [(Int, Ticker?)] = []
+        let outcome = await warmer.warm(
+            universe: ["AAA", "BBB", "CCC"], onContext: { _ in }, onData: { _, _ in },
+            onProgress: { done, _, current in ticks.append((done, current)) })
+
+        #expect(!outcome.abortedOffline)
+        // Each name announced in order, paired with its 1-based ordinal.
+        #expect(ticks.contains { $0 == (1, "AAA") })
+        #expect(ticks.contains { $0 == (2, "BBB") })
+        #expect(ticks.contains { $0 == (3, "CCC") })
+        #expect(ticks.compactMap { $0.1 } == ["AAA", "BBB", "CCC"])   // order preserved, no extras
+        #expect(ticks.last?.1 == nil)                                 // completion clears the ticker
     }
 
     // MARK: - An intermittent success resets the breaker (a slow-but-alive feed warms fully)

@@ -59,6 +59,15 @@ import Testing
         #expect(status == .warming(loaded: 37, total: 142))
     }
 
+    @Test func warmingCarriesTheCurrentTickerThroughResolve() {
+        // The name being fetched this instant flows onto the warming status so the bar can name it.
+        let status = FetchStatus.resolve(
+            isSweeping: true, loaded: 20, total: 20,
+            isWarming: true, warmedCount: 3, warmingTotal: 20, warmingTicker: "BBCA",
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(status == .warming(loaded: 3, total: 20, current: "BBCA"))
+    }
+
     @Test func warmingFallsBackToFetchingUntilTheUniverseIsKnown() {
         // isWarming flips true a beat before the warmer reports the universe size; until then
         // (warmingTotal == 0) the bar keeps the screener fetching label rather than "Warming 0/0".
@@ -161,6 +170,17 @@ import Testing
 
     @Test func warmingLabelShowsProgress() {
         #expect(FetchStatus.warming(loaded: 37, total: 142).displayLabel == "Warming 37/142…")
+    }
+
+    @Test func warmingLabelNamesTheCurrentTickerWhenPresent() {
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "BBCA").displayLabel
+                == "Warming BBCA 3/20…")
+    }
+
+    @Test func warmingLabelFallsBackToBareCountWhenNoTicker() {
+        // nil or empty ticker (between names / final tick) renders the plain counter.
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: nil).displayLabel == "Warming 3/20…")
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "").displayLabel == "Warming 3/20…")
     }
 
     @Test func throttlingLabelIsBareRegardlessOfProgress() {
