@@ -126,6 +126,14 @@ struct RecommendationsView: View {
         .onChange(of: AppDependencies.shared.dataSweepCoordinator.isWarming) { _, warming in
             if !warming { Task { await vm.load(force: true) } }
         }
+        // …and re-rank stock-by-stock AS the cache warms, not just at the end: each considered stock lands
+        // in the cache and bumps `warmedSecurityCount`, so the inbox fills in progressively. Coalesced in
+        // the VM so the per-stock ticks never stack overlapping engine passes. The very first cold warm
+        // still reads as "waiting" until it completes (CacheReadPolicy's mid-warm guard prevents ranking a
+        // half-warm cache as a wall of skips); every later sweep refreshes the list as each stock lands.
+        .onChange(of: AppDependencies.shared.dataSweepCoordinator.warmedSecurityCount) { _, _ in
+            Task { await vm.reloadForWarmProgress() }
+        }
         .navigationDestination(item: $selectedTicker) { ticker in
             StockDetailView(ticker: ticker)
         }

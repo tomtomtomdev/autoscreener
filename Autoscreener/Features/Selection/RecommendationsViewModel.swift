@@ -145,6 +145,29 @@ final class RecommendationsViewModel {
         }
     }
 
+    /// Coalescing guards for the per-stock warm-progress reloads. While the cache warms, the screen
+    /// re-ranks after each stock is considered; those ticks can outpace a load, so a reload already in
+    /// flight folds further ticks into a single trailing re-run rather than stacking overlapping engine
+    /// passes. Both touched only on the main actor, so the check/set is race-free.
+    private var isWarmReloadInFlight = false
+    private var warmReloadRequestedAgain = false
+
+    /// Re-rank from the (still warming) cache for one warm-progress tick, coalesced so concurrent ticks
+    /// never run overlapping loads. If a load is already running the tick is remembered and folded into a
+    /// single trailing reload, so the list lands on the latest cache state without N stacked engine passes.
+    func reloadForWarmProgress() async {
+        if isWarmReloadInFlight {
+            warmReloadRequestedAgain = true
+            return
+        }
+        isWarmReloadInFlight = true
+        defer { isWarmReloadInFlight = false }
+        repeat {
+            warmReloadRequestedAgain = false
+            await load(force: true)
+        } while warmReloadRequestedAgain
+    }
+
     /// Pure merge: dedupe by ticker (a held name's verdict WINS over a fresh buy signal — you already
     /// own it, so its hold/trim/exit discipline governs), then sort buy → hold → trim → exit. Within the
     /// buy group, ties break by conviction (highest first) so the strongest candidates surface top-left

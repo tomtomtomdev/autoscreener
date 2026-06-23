@@ -187,6 +187,46 @@ import Testing
         #expect(Set(vm.skipped.map(\.ticker)) == ["BAD1", "BAD2"])     // buy- + sell-side merged
     }
 
+    // MARK: - Incremental warm-progress reloads (coalesced)
+    //
+    // While the per-symbol cache warms, the screen re-ranks after EACH stock is considered (driven off
+    // the sweep coordinator's per-stock progress) instead of waiting for the whole warm to finish. Those
+    // ticks can fire faster than a load completes, so the VM coalesces them: never two overlapping engine
+    // passes, and a tick that arrives mid-load folds into a single trailing re-rank.
+
+    /// A source that records peak concurrency, so an overlapping second load is observable. Each call
+    /// suspends (via `Task.yield`) long enough for a racing call to be detected if the guard were absent.
+    @MainActor private final class ConcurrencyProbe {
+        private(set) var calls = 0
+        private var inFlight = 0
+        private(set) var maxInFlight = 0
+        func source(_ c: SelectionConfig) async throws -> SelectionOutcome {
+            calls += 1
+            inFlight += 1
+            maxInFlight = max(maxInFlight, inFlight)
+            await Task.yield(); await Task.yield()
+            inFlight -= 1
+            return SelectionOutcome(recommendations: [], skipped: [])
+        }
+    }
+
+    @Test func warmProgressReloadsNeverRunOverlappingEnginePasses() async {
+        let probe = ConcurrencyProbe()
+        let spies = Spies()   // positions side returns immediately
+        let vm = RecommendationsViewModel(
+            picks: TodaysPicksViewModel(source: probe.source, recommendationsStore: RecommendationsStore()),
+            positions: PositionReviewViewModel(source: spies.decisionsSource, exitDecisionsStore: ExitDecisionsStore()),
+            snapshotStore: RecommendationsSnapshotStore(fileURL: nil, loadFromDisk: false))
+
+        // Five warm-progress ticks fire before the first reload can finish (as they would per-stock).
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<5 { group.addTask { @MainActor in await vm.reloadForWarmProgress() } }
+        }
+
+        #expect(probe.maxInFlight == 1)   // the picks engine never re-ran while a pass was already running
+        #expect(probe.calls >= 1)         // …but at least one re-rank actually happened
+    }
+
     // MARK: - Cold-start cache (stale-while-revalidate)
     //
     // On a cold launch (or the first visit before the sweep warms the cache) the screen should render
