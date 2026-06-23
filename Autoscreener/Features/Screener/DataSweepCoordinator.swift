@@ -50,6 +50,10 @@ final class DataSweepCoordinator {
     /// (and 0 between screeners / on the non-paginated market+regime legs); ≥2 once a screener
     /// runs deep, which the title-bar status surfaces as a "page x" suffix.
     private(set) var currentPage: Int = 0
+    /// Display name of the screener being fetched this instant (e.g. "Volume Spike"), surfaced
+    /// by the title bar as "Fetching Volume Spike…". Nil before/after the screener fan-out and on
+    /// the market-quote + regime legs, where the bar falls back to the `loaded/total` count.
+    private(set) var currentScreenerName: String?
     var paywallMessage: String?
     var lastError: String?
 
@@ -334,9 +338,10 @@ final class DataSweepCoordinator {
         isSweeping = true
         loadedScreenerCount = 0
         currentPage = 0
+        currentScreenerName = nil
         hasIssuedFirstRequest = false
         lastError = nil
-        defer { isSweeping = false; isWarming = false; currentlyWarmingTicker = nil; currentlyWarmingStep = nil }
+        defer { isSweeping = false; isWarming = false; currentlyWarmingTicker = nil; currentlyWarmingStep = nil; currentScreenerName = nil }
 
         let idx = includeIDX ?? clock.isOpen()
 
@@ -418,6 +423,7 @@ final class DataSweepCoordinator {
         }
 
         currentPage = 0
+        currentScreenerName = nil
         store.markSweepComplete(at: clock.now())
         surfaceFailures(perKind)
     }
@@ -434,6 +440,7 @@ final class DataSweepCoordinator {
     /// the screener's full result set (which lets the per-tab views drop pagination).
     private func fetchAll(_ kind: BandarScreenerKind) async -> Result<KindFetch, Error> {
         sweepLog.info("\(kind.displayName, privacy: .public): GET templates/\(kind.templateID, privacy: .public)")
+        currentScreenerName = kind.displayName
         currentPage = 1
         do {
             try await throttle()

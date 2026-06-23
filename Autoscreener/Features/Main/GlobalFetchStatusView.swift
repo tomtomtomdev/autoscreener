@@ -35,6 +35,7 @@ struct GlobalFetchStatusView: View {
             loaded: coordinator.loadedScreenerCount,
             total: coordinator.totalScreenerCount,
             page: coordinator.currentPage >= 2 ? coordinator.currentPage : nil,
+            screenerName: coordinator.currentScreenerName,
             isWarming: coordinator.isWarming,
             warmedCount: coordinator.warmedSecurityCount,
             warmingTotal: coordinator.securityUniverseCount,

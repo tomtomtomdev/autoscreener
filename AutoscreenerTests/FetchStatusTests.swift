@@ -26,6 +26,15 @@ import Testing
         #expect(status == .throttling(loaded: 7, total: 20))
     }
 
+    @Test func screenerNameCarriesThroughResolveIntoFetching() {
+        // The screener in flight names the live-sweep fetching state so the bar can say what it's pulling.
+        let status = FetchStatus.resolve(
+            isSweeping: true, isThrottling: false, loaded: 7, total: 20, page: 3,
+            screenerName: "Volume Spike",
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(status == .fetching(loaded: 7, total: 20, page: 3, screener: "Volume Spike"))
+    }
+
     @Test func pageCarriesThroughIntoFetchingAndThrottling() {
         // A deep paginated screener feeds its page through resolve onto whichever
         // live-sweep state applies.
@@ -212,6 +221,24 @@ import Testing
         // without counts or page, so the bar reads as "waiting" rather than progressing.
         #expect(FetchStatus.throttling(loaded: 7, total: 20).displayLabel == "Throttling…")
         #expect(FetchStatus.throttling(loaded: 7, total: 20, page: 3).displayLabel == "Throttling…")
+    }
+
+    @Test func fetchingLabelNamesTheScreenerWhenPresent() {
+        // During the screener leg the bar names the screener instead of a bare counter.
+        #expect(FetchStatus.fetching(loaded: 7, total: 20, screener: "Volume Spike").displayLabel
+                == "Fetching Volume Spike…")
+    }
+
+    @Test func fetchingLabelAppendsPageToTheScreenerName() {
+        // A deep paginated screener keeps the "page x" tail after the name.
+        #expect(FetchStatus.fetching(loaded: 7, total: 20, page: 3, screener: "Volume Spike").displayLabel
+                == "Fetching Volume Spike… (page 3)")
+    }
+
+    @Test func fetchingFallsBackToCountWhenNoScreenerName() {
+        // The market-quote / regime legs carry no screener name — the bar keeps the count there.
+        #expect(FetchStatus.fetching(loaded: 20, total: 20, screener: nil).displayLabel == "Fetching 20/20…")
+        #expect(FetchStatus.fetching(loaded: 20, total: 20, screener: "").displayLabel == "Fetching 20/20…")
     }
 
     @Test func paginatedFetchingAppendsParenthesizedPageSuffix() {

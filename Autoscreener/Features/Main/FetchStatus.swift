@@ -11,7 +11,10 @@ nonisolated enum FetchStatus: Equatable {
     /// `page` is the current page of a multi-page screener fetch (≥2), or nil on the first
     /// page / non-paginated legs — surfaced as a "page x" suffix so the bar shows progress
     /// through a deep paginated screener instead of looking stuck on one counter.
-    case fetching(loaded: Int, total: Int, page: Int? = nil)
+    /// `screener` is the display name of the screener in flight (e.g. "Volume Spike"), shown
+    /// in place of the bare count so the bar names what it's pulling. Nil on the market-quote
+    /// and regime legs (no screener), where the label falls back to the `loaded/total` count.
+    case fetching(loaded: Int, total: Int, page: Int? = nil, screener: String? = nil)
     /// A sweep is in flight but paused in the anti-burst throttle gap between two
     /// requests — waiting rather than fetching this instant. Carries the same progress
     /// fields as `.fetching` for `resolve`/`Equatable`, but `displayLabel` renders a bare
@@ -51,6 +54,7 @@ nonisolated enum FetchStatus: Equatable {
                         loaded: Int,
                         total: Int,
                         page: Int? = nil,
+                        screenerName: String? = nil,
                         isWarming: Bool = false,
                         warmedCount: Int = 0,
                         warmingTotal: Int = 0,
@@ -69,7 +73,7 @@ nonisolated enum FetchStatus: Equatable {
             }
             return isThrottling
                 ? .throttling(loaded: loaded, total: total, page: page)
-                : .fetching(loaded: loaded, total: total, page: page)
+                : .fetching(loaded: loaded, total: total, page: page, screener: screenerName)
         }
         if let lastError { return .error(lastError) }
         if let paywall { return .paywall(paywall) }
@@ -82,7 +86,9 @@ nonisolated enum FetchStatus: Equatable {
     /// The text shown in the title bar.
     var displayLabel: String {
         switch self {
-        case let .fetching(loaded, total, page):   return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
+        case let .fetching(loaded, total, page, screener):
+            if let screener, !screener.isEmpty { return "Fetching \(screener)…" + Self.pageSuffix(page) }
+            return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
         case .throttling:                          return "Throttling…"
         case let .warming(loaded, total, current, step):
             guard let current, !current.isEmpty else { return "Considering \(loaded)/\(total)…" }

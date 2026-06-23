@@ -269,6 +269,30 @@ enum SweepTestKit {
         #expect(coord.currentPage == 0)   // cleared once the screener fan-out ends
     }
 
+    /// Snapshots `currentScreenerName` from inside the sleeper, same shape as `CurrentPageProbe`.
+    @MainActor
+    final class CurrentScreenerProbe {
+        private(set) var names: [String?] = []
+        weak var coord: DataSweepCoordinator?
+        func snapshot() { names.append(coord?.currentScreenerName) }
+    }
+
+    @Test func currentScreenerNameNamesEachKindThenClearsAfterTheFanOut() async {
+        let probe = CurrentScreenerProbe()
+        let coord = SweepTestKit.coordinator(
+            store: SweepTestKit.store(),
+            sleeper: { _ in await probe.snapshot() })
+        probe.coord = coord
+
+        await coord.runSweep()
+
+        // The first kind's page-1 GET is the free first request (no throttle snapshot); the
+        // remaining 19 each throttle while their name is the one in flight, in fan-out order.
+        let expected = DataSweepCoordinator.fanOutOrder.dropFirst().map { $0.displayName as String? }
+        #expect(probe.names == Array(expected))
+        #expect(coord.currentScreenerName == nil)   // cleared once the screener fan-out ends
+    }
+
     @Test func cancellationMidSweepKeepsPartialSnapshotsAndSurfacesNoError() async {
         let store = SweepTestKit.store()
         let templates = WatchlistFakeTemplates()
