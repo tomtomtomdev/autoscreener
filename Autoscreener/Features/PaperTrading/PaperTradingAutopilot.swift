@@ -140,7 +140,7 @@ final class PaperTradingAutopilot {
                 for: plan, recommendations: recommendationsStore.byTicker, at: now)
             store.apply(plan: plan, theses: theses, config: config, at: now)
             autopilotLog.info("auto-rebalanced: booked \(plan.lines.count) order(s)")
-        } else if autoExecute, !candidates.contains(where: { (priceMap[$0.symbol] ?? 0) > 0 }) {
+        } else if autoExecute, !candidates.contains(where: { (priceMap[$0.symbol] ?? 0) > 0 || ($0.referencePrice ?? 0) > 0 }) {
             // No *priced* recommendations yet — the per-symbol selection cache or the screener price cache
             // is still warming on this sweep. This covers both a fully empty candidate set AND the partial
             // warm where a few names rank but none can be valued: in either case the empty plan is a DATA

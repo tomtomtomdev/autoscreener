@@ -171,6 +171,33 @@ import Testing
         #expect(!plan.lines.contains { $0.symbol == "NPR" })
     }
 
+    @Test func aCandidateIsPricedFromItsReferencePriceWhenTheMapHasNone() {
+        // The screener snapshot carried no last price for AAA this sweep, but the recommendation knows the
+        // price the selection engine valued it at. The allocator must still size and buy it from that
+        // reference price — otherwise a fully-recommended name is stranded unbought (the RiBeTS bug).
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA", conviction: 1, suggestedWeight: 0.1,
+                                referencePrice: 1_000),
+        ]
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOn, score: 1.0), prices: [:])   // empty price map
+        let line = plan.lines.first { $0.symbol == "AAA" }
+        #expect(line?.side == .buy)
+        #expect(line?.price == 1_000)
+    }
+
+    @Test func aLiveScreenerPriceIsPreferredOverTheReferencePrice() {
+        // When both are present the live price wins — the reference price is only a fallback, never an
+        // override of fresher market data.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA", conviction: 1, suggestedWeight: 0.1,
+                                referencePrice: 1_000),
+        ]
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOn, score: 1.0), prices: ["AAA": 1_200])
+        #expect(plan.lines.first { $0.symbol == "AAA" }?.price == 1_200)
+    }
+
     @Test func subBandDeltaIsSuppressed() {
         // Already holding almost exactly the target → the tiny top-up is below the
         // rebalance band and must not generate a line.

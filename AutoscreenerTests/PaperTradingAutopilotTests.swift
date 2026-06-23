@@ -45,8 +45,8 @@ import Testing
         }
     }
 
-    private func rec(_ ticker: String, weight: Double = 0.12) -> Recommendation {
-        Recommendation(ticker: ticker, compositeScore: 0.6, intrinsicValue: 10_000,
+    private func rec(_ ticker: String, weight: Double = 0.12, price: Double? = nil) -> Recommendation {
+        Recommendation(ticker: ticker, compositeScore: 0.6, intrinsicValue: 10_000, price: price,
                        marginOfSafety: 0.3, conviction: 0.6, suggestedWeight: weight, audit: [])
     }
 
@@ -237,6 +237,23 @@ import Testing
 
         #expect(p.state.positions["GOTO"] != nil)                 // now it books on the same boundary
         #expect(p.state.lastAutoRebalanceAt == day(17, 10))
+    }
+
+    /// The fix for the live RiBeTS "no book file" gap: the recommended name (GOTO) NEVER appears in any
+    /// screener snapshot, so the screener-derived price map can't value it — but the recommendation
+    /// carries the price the selection engine valued it at. The allocator sizes it from that reference
+    /// price, so the boundary's first warm sweep books it (rather than deferring forever on "no priced
+    /// candidates"). Without the fallback this strands the regime-blind book in 100% cash indefinitely.
+    @Test func booksARecommendedNameFromItsOwnPriceWhenNoScreenerCarriesIt() async {
+        let (s, m, p) = makeStores()                              // screener prices BBCA/TLKM, never GOTO
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in SelectionOutcome(recommendations: [self.rec("GOTO", price: 80)],
+                                                               skipped: []) },
+                                config: .regimeBlind)
+        await bot.runIfDue(now: day(17, 9))                       // 09:00 open
+
+        #expect(p.state.positions["GOTO"] != nil)                 // booked from the recommendation's own price
+        #expect(p.state.lastAutoRebalanceAt == day(17, 9))        // a real decision → boundary consumed
     }
 
     // MARK: - Asymmetric defense: exits run every warm sweep, not just at boundaries

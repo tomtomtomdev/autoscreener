@@ -42,13 +42,22 @@ nonisolated enum AllocationEngine {
         // books (RAPaTS) map the score onto the stance exposure band.
         let exposure = config.fixedExposure ?? config.exposure(forScore: score)
 
-        let equity = state.equity(prices: prices)
+        // Effective price per name: prefer the live screener price; fall back to the candidate's own
+        // reference price (the close the selection engine valued it at). A recommended name is therefore
+        // sizeable even when the screener snapshot hasn't surfaced a last price for it this sweep — the
+        // fix for the regime-blind book stranding in cash. Held-only names keep the external price only.
+        var px = prices
+        for c in universe where (px[c.symbol] ?? 0) <= 0 {
+            if let rp = c.referencePrice, rp > 0 { px[c.symbol] = rp }
+        }
+
+        let equity = state.equity(prices: px)
         let cashTarget = equity * (1 - exposure)
 
         // Layer 2 — rank priced candidates by conviction, take top-N. A Gate-5 `.exit` name is never a
         // candidate, so it can't consume a slot or be re-bought (the held side is forced out below).
         let priced: [AllocationCandidate] = universe.filter {
-            (prices[$0.symbol] ?? 0) > 0 && exitDecisions[$0.symbol] != .exit
+            (px[$0.symbol] ?? 0) > 0 && exitDecisions[$0.symbol] != .exit
         }
         let ranked: [AllocationCandidate] = priced.sorted { lhs, rhs in
             lhs.conviction != rhs.conviction ? lhs.conviction > rhs.conviction : lhs.symbol < rhs.symbol
@@ -61,7 +70,7 @@ nonisolated enum AllocationEngine {
         // Build target shares (lot-rounded) for the names we want to hold.
         var targetShares: [String: Double] = [:]
         for (row, weight) in zip(candidates, weights) {
-            guard let price = prices[row.symbol], price > 0 else { continue }
+            guard let price = px[row.symbol], price > 0 else { continue }
             let lot = Double(config.execution.lotSize)
             let lots = ((weight * equity) / (price * lot)).rounded(.down)
             targetShares[row.symbol] = max(0, lots) * lot
@@ -77,7 +86,7 @@ nonisolated enum AllocationEngine {
 
         var lines: [AllocationLine] = []
         for symbol in names {
-            guard let price = prices[symbol], price > 0 else { continue } // can't value → skip
+            guard let price = px[symbol], price > 0 else { continue } // can't value → skip
             let current = state.positions[symbol]?.shares ?? 0
             // Gate-5 overlay on the regime-weighted target (`.exit` names were already excluded from
             // `targetShares` above, so their target is 0 — the held side is forced out here).

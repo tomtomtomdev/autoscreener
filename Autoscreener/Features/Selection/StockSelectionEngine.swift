@@ -988,6 +988,12 @@ struct Recommendation: Sendable, Codable {
     let ticker: Ticker
     let compositeScore: Double
     let intrinsicValue: Double
+    /// The price the selection engine valued this name at (the company price-feed close used to compute
+    /// `intrinsicValue`/`marginOfSafety`). Carried so the paper-trading allocator can size the name from
+    /// the engine's own price when the screener snapshot hasn't surfaced a last price. Optional and
+    /// defaulted so older persisted snapshots (which lack it) still decode, and existing call sites that
+    /// don't have a price keep compiling.
+    var price: Double? = nil
     let marginOfSafety: Ratio
     let conviction: Double
     let suggestedWeight: Ratio
@@ -1149,6 +1155,7 @@ struct StockSelectionEngine: Sendable {
             var trail = item.audit; trail.append("→ conviction \(round2(conviction)) weight \(pct(weight))")
             out.append(.init(ticker: s.ticker, compositeScore: item.composite,
                              intrinsicValue: item.valuator.intrinsicValue(s, config: config),
+                             price: nsDouble(s.price),
                              marginOfSafety: item.marginOfSafety, conviction: conviction,
                              suggestedWeight: weight, audit: trail))
         }

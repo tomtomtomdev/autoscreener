@@ -16,7 +16,8 @@ nonisolated enum PaperTradingPlanner {
             AllocationCandidate(symbol: r.ticker,
                                 name: names[r.ticker] ?? r.ticker,
                                 conviction: r.conviction,
-                                suggestedWeight: r.suggestedWeight)
+                                suggestedWeight: r.suggestedWeight,
+                                referencePrice: r.price)
         }
     }
 

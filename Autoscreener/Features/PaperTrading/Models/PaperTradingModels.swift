@@ -127,6 +127,11 @@ nonisolated struct AllocationCandidate: Sendable, Hashable {
     let name: String
     let conviction: Double
     let suggestedWeight: Double
+    /// The price the selection engine valued this name at, carried from the `Recommendation`. Used as a
+    /// fallback when the live screener price map has no entry for the symbol — so a recommended name can
+    /// still be sized even before its last price lands in a screener snapshot. `nil` ⇒ no fallback (the
+    /// allocator then skips the name, as before, when the external price map also lacks it).
+    var referencePrice: Double? = nil
 }
 
 /// Which per-name signal the allocator sizes by (Layer 3). See `AllocationConfig.sizingBasis`.
