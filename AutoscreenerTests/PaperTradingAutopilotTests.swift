@@ -211,6 +211,34 @@ import Testing
         #expect(p.state.lastAutoRebalanceAt == day(17, 10))
     }
 
+    /// Regression for the RiBeTS "stuck at 100% cash" variant of the above: the boundary's first warm
+    /// sweep produced a recommendation whose price hadn't landed in the screener cache yet, so the plan
+    /// had a candidate but no PRICED trade. That's a no-trade plan for a *data* reason, not a "nothing to
+    /// do" one — so it must NOT consume the boundary (the empty-candidate guard didn't catch it because the
+    /// candidate set was non-empty). The book must stay due so the next sweep (price warmed) books. Run
+    /// regime-blind, the book most affected: it always wants to deploy, so a stranded boundary is pure lost
+    /// exposure rather than a defensible cash stance.
+    @Test func unpricedCandidateDoesNotConsumeTheBoundaryThenBooksWhenPriced() async {
+        let (s, m, p) = makeStores()                              // screener prices BBCA/TLKM, NOT GOTO
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in SelectionOutcome(recommendations: [self.rec("GOTO")], skipped: []) },
+                                config: .regimeBlind)
+        await bot.runIfDue(now: day(17, 9))                       // 09:00 open — GOTO recommended but unpriced
+
+        #expect(p.state.positions.isEmpty)                        // nothing booked (no price → no trade)
+        #expect(p.state.lastAutoRebalanceAt == nil)               // boundary NOT consumed
+        #expect(bot.isDue(now: day(17, 10)))                      // still due in the same open window
+
+        // GOTO's price lands in the screener cache on the next warm sweep.
+        let warm = ScreenerSnapshot(config: ScreenerConfig(),
+                                    rows: [row("GOTO", price: 60)], fetchedAt: Date(timeIntervalSince1970: 1))
+        for kind in BandarScreenerKind.allCases { s.apply(warm, for: kind) }
+        await bot.runIfDue(now: day(17, 10))
+
+        #expect(p.state.positions["GOTO"] != nil)                 // now it books on the same boundary
+        #expect(p.state.lastAutoRebalanceAt == day(17, 10))
+    }
+
     // MARK: - Asymmetric defense: exits run every warm sweep, not just at boundaries
 
     /// The core of the buy/sell asymmetry: a name that breaks after entry is liquidated on the very next

@@ -130,21 +130,25 @@ final class PaperTradingAutopilot {
 
         let candidates = PaperTradingPlanner.candidates(
             from: Array(recommendationsStore.byTicker.values), names: nameMap)
+        let priceMap = prices
         let plan = AllocationEngine.plan(
             state: store.state, candidates: candidates, regime: marketStore.regimeRead,
-            prices: prices, exitDecisions: exitDecisionsStore.byTicker, config: config)
+            prices: priceMap, exitDecisions: exitDecisionsStore.byTicker, config: config)
 
         if autoExecute, plan.hasTrades {
             let theses = PaperTradingPlanner.theses(
                 for: plan, recommendations: recommendationsStore.byTicker, at: now)
             store.apply(plan: plan, theses: theses, config: config, at: now)
             autopilotLog.info("auto-rebalanced: booked \(plan.lines.count) order(s)")
-        } else if autoExecute, candidates.isEmpty {
-            // No priced recommendations yet — the per-symbol selection cache is still warming on this
-            // sweep. Treat it like a failed fetch: don't consume this boundary's slot, just return so the
-            // next (warm) sweep retries. Without this a cold first sweep of the boundary strands the book
-            // in cash until the *next* boundary.
-            autopilotLog.info("auto-rebalance: no candidates yet (cache warming) — deferring to next sweep")
+        } else if autoExecute, !candidates.contains(where: { (priceMap[$0.symbol] ?? 0) > 0 }) {
+            // No *priced* recommendations yet — the per-symbol selection cache or the screener price cache
+            // is still warming on this sweep. This covers both a fully empty candidate set AND the partial
+            // warm where a few names rank but none can be valued: in either case the empty plan is a DATA
+            // gap, not a "nothing to do" verdict, so booking nothing here is not a real decision. Treat it
+            // like a failed fetch — don't consume this boundary's slot, just return so the next (warm)
+            // sweep retries. Without this a cold/partial first sweep of the boundary strands the book in
+            // cash until the *next* boundary (the RiBeTS "stuck at 100% cash" regression).
+            autopilotLog.info("auto-rebalance: no priced candidates yet (cache warming) — deferring to next sweep")
             return
         } else {
             autopilotLog.info("auto-rebalance: no trades (autoExecute=\(self.autoExecute), trades=\(plan.hasTrades))")
