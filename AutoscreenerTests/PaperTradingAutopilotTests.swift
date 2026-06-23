@@ -74,14 +74,16 @@ import Testing
                                review: @escaping (SelectionConfig) async throws -> ReviewOutcome
                                   = { _ in ReviewOutcome(decisions: [], skipped: []) },
                                config: AllocationConfig = .standard,
-                               autoExecute: Bool = true) -> PaperTradingAutopilot {
+                               autoExecute: Bool = true,
+                               continuousRebalance: Bool = false) -> PaperTradingAutopilot {
         PaperTradingAutopilot(
             store: paper, screenerStore: screener, marketStore: market,
             recommendationsStore: recs, exitDecisionsStore: exits,
             picksSource: picks,
             reviewSource: review,
             config: config,
-            autoExecute: autoExecute, calendar: gregorian, clock: clock)
+            autoExecute: autoExecute, continuousRebalance: continuousRebalance,
+            calendar: gregorian, clock: clock)
     }
 
     /// Stores like `makeStores()` but with a deeply RISK-OFF regime, to contrast the two books.
@@ -268,6 +270,24 @@ import Testing
 
         #expect(p.state.positions["GOTO"] != nil)                 // booked from the recommendation's own price
         #expect(p.state.lastAutoRebalanceAt == day(17, 9))        // a real decision → boundary consumed
+    }
+
+    // MARK: - Continuous rebalance (RiBeTS): offense runs every warm sweep, not boundary-gated
+
+    /// With `continuousRebalance` on, the rebalance pass is NOT boundary-gated — it stays due and
+    /// re-fetches picks on every warm sweep within the same session, so the book re-evaluates buys
+    /// continuously rather than only at 09:00 / 13:30 / 16:00.
+    @Test func continuousRebalanceReRunsWithinTheSameBoundary() async {
+        let (s, m, p) = makeStores()
+        let counter = PicksCounter([rec("BBCA")])
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: counter.source, continuousRebalance: true)
+        await bot.runIfDue(now: day(17, 10))                      // 10:00 — open boundary
+        #expect(bot.isDue(now: day(17, 11)))                      // still due 11:00, same boundary
+        await bot.runIfDue(now: day(17, 11))                      // re-evaluates anyway
+
+        #expect(counter.calls == 2)                               // picks re-fetched continuously
+        #expect(p.state.lastAutoRebalanceAt == day(17, 11))       // timestamp advances each pass
     }
 
     // MARK: - Asymmetric defense: exits run every warm sweep, not just at boundaries

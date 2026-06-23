@@ -200,14 +200,17 @@ final class AppDependencies {
             recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.exitDecisionsStore,
             clock: clock)
         self.paperTradingAutopilot = autopilot
-        // The RiBeTS sibling: same buy picks (shared `recommendationsStore`) and cadence, but it books
-        // into `ribetsBook` under `.regimeBlind` and reviews its OWN holdings (`reviewPositions(holdings:)`)
-        // into its own verdict cache so it never clobbers the RAPaTS-facing shared store.
+        // The RiBeTS sibling: same buy picks (shared `recommendationsStore`), but it books into
+        // `ribetsBook` under `.regimeBlind` and reviews its OWN holdings (`reviewPositions(holdings:)`)
+        // into its own verdict cache so it never clobbers the RAPaTS-facing shared store. Unlike RAPaTS
+        // it rebalances CONTINUOUSLY (`continuousRebalance: true`) — buys are re-evaluated on every warm
+        // sweep rather than only at the session boundaries, so the regime-blind book deploys drift the
+        // moment picks/prices move.
         let ribetsAutopilot = PaperTradingAutopilot(
             store: ribetsBook, screenerStore: cacheStore, marketStore: marketStore,
             recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.ribetsExitDecisionsStore,
             reviewSource: { try await AppDependencies.shared.reviewPositions(holdings: ribetsBook, config: $0) },
-            config: .regimeBlind, clock: clock)
+            config: .regimeBlind, continuousRebalance: true, clock: clock)
         self.ribetsAutopilot = ribetsAutopilot
         // Live only: after each full IDX sweep, run BOTH autopilots — the exit (defense) pass every warm
         // sweep plus the once-per-session-boundary rebalance (offense). Disabled under fixtures/tests so

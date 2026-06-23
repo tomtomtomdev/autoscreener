@@ -29,6 +29,13 @@ final class PaperTradingAutopilot {
     /// hands-free trading; a once-per-day guard bounds it.
     var autoExecute: Bool
 
+    /// When true, the rebalance (offense) pass is NOT boundary-gated — `isDue` stays true on every warm
+    /// sweep, so the book re-evaluates buys continuously (5–10 min cadence) instead of only at the
+    /// session boundaries. The RiBeTS book runs this way; RAPaTS keeps the patient boundary cadence.
+    /// Over-trading is still bounded by the `AllocationEngine` plan: a book already at target produces
+    /// no trades, so a continuous sweep is a no-op until picks or prices actually drift.
+    let continuousRebalance: Bool
+
     private let store: PaperTradingStore
     private let screenerStore: ScreenerStore
     private let marketStore: MarketDataStore
@@ -53,6 +60,7 @@ final class PaperTradingAutopilot {
          config: AllocationConfig = .standard,
          selectionConfig: SelectionConfig = .balanced,
          autoExecute: Bool = true,
+         continuousRebalance: Bool = false,
          calendar: Calendar = .current,
          clock: MarketClock = MarketClock()) {
         self.store = store
@@ -65,6 +73,7 @@ final class PaperTradingAutopilot {
         self.config = config
         self.selectionConfig = selectionConfig
         self.autoExecute = autoExecute
+        self.continuousRebalance = continuousRebalance
         self.calendar = calendar
         self.clock = clock
     }
@@ -74,7 +83,10 @@ final class PaperTradingAutopilot {
     /// day, so the book is re-evaluated at the open, after the lunch break, and on the official close.
     /// Due when no run has happened since the most recent boundary (or never). Falls back to the
     /// calendar-day check only if the clock can't place a boundary (no weekday within range).
+    /// In `continuousRebalance` mode the boundary gate is removed entirely — always due, so the book
+    /// re-evaluates buys on every warm sweep.
     func isDue(now: Date) -> Bool {
+        if continuousRebalance { return true }
         guard let last = store.state.lastAutoRebalanceAt else { return true }
         guard let boundary = clock.mostRecentBoundary(asOf: now) else {
             return !calendar.isDate(last, inSameDayAs: now)
