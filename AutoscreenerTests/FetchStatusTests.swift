@@ -169,18 +169,18 @@ import Testing
     }
 
     @Test func warmingLabelShowsProgress() {
-        #expect(FetchStatus.warming(loaded: 37, total: 142).displayLabel == "Warming 37/142…")
+        #expect(FetchStatus.warming(loaded: 37, total: 142).displayLabel == "Considering 37/142…")
     }
 
     @Test func warmingLabelNamesTheCurrentTickerWhenPresent() {
         #expect(FetchStatus.warming(loaded: 3, total: 20, current: "BBCA").displayLabel
-                == "Warming BBCA 3/20…")
+                == "Considering BBCA 3/20…")
     }
 
     @Test func warmingLabelFallsBackToBareCountWhenNoTicker() {
         // nil or empty ticker (between names / final tick) renders the plain counter.
-        #expect(FetchStatus.warming(loaded: 3, total: 20, current: nil).displayLabel == "Warming 3/20…")
-        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "").displayLabel == "Warming 3/20…")
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: nil).displayLabel == "Considering 3/20…")
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "").displayLabel == "Considering 3/20…")
     }
 
     @Test func throttlingLabelIsBareRegardlessOfProgress() {

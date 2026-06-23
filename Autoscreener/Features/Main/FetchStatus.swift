@@ -18,10 +18,10 @@ nonisolated enum FetchStatus: Equatable {
     /// "Throttling…" (no counts/page) so the brief pause reads as waiting, not progress.
     case throttling(loaded: Int, total: Int, page: Int? = nil)
     /// A sweep is in flight and past the screeners — warming the per-symbol selection cache
-    /// (`SecurityCacheWarmer`): `loaded` of `total` names so far. Surfaced as its own "Warming x/y"
+    /// (`SecurityCacheWarmer`): `loaded` of `total` names so far. Surfaced as its own "Considering x/y"
     /// label so the bar reflects the real phase instead of freezing on the completed screener count.
     /// `current` is the ticker whose data is being fetched this instant (nil between names / at the
-    /// final tick), surfaced as a "Warming BBCA x/y" label so the bar names the stock in flight.
+    /// final tick), surfaced as a "Considering BBCA x/y" label so the bar names the stock in flight.
     case warming(loaded: Int, total: Int, current: String? = nil)
     /// The last sweep surfaced a fetch error.
     case error(String)
@@ -82,8 +82,8 @@ nonisolated enum FetchStatus: Equatable {
         case let .fetching(loaded, total, page):   return "Fetching \(loaded)/\(total)…" + Self.pageSuffix(page)
         case .throttling:                          return "Throttling…"
         case let .warming(loaded, total, current):
-            guard let current, !current.isEmpty else { return "Warming \(loaded)/\(total)…" }
-            return "Warming \(current) \(loaded)/\(total)…"
+            guard let current, !current.isEmpty else { return "Considering \(loaded)/\(total)…" }
+            return "Considering \(current) \(loaded)/\(total)…"
         case let .error(message):                  return message
         case let .paywall(message):                return message
         case let .updated(date):                   return "Updated \(Self.timeFormatter.string(from: date))"
