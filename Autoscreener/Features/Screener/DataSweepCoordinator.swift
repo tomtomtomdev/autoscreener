@@ -40,6 +40,12 @@ final class DataSweepCoordinator {
     /// The per-symbol name whose data is being fetched this instant during the warming phase — what
     /// the title bar names ("Warming BBCA x/y"). Nil between names, at completion, and outside a warm.
     private(set) var currentlyWarmingTicker: Ticker?
+    /// The API leg being fetched this instant for `currentlyWarmingTicker` (e.g. "insider activity",
+    /// "key stats"), surfaced as a suffix: "Considering BBCA insider activity… x/y". Nil between names,
+    /// at completion, and outside a warm — kept in lockstep with `currentlyWarmingTicker`. Read ONLY by
+    /// `GlobalFetchStatusView`, so its ~per-leg churn doesn't invalidate other observers (no extra
+    /// engine re-ranks, which key off `warmedSecurityCount` — once per name, not per leg).
+    private(set) var currentlyWarmingStep: String?
     /// Page currently being pulled within a multi-page screener fetch. 1 on the first page
     /// (and 0 between screeners / on the non-paginated market+regime legs); ≥2 once a screener
     /// runs deep, which the title-bar status surfaces as a "page x" suffix.
@@ -121,7 +127,7 @@ final class DataSweepCoordinator {
     /// Warms the per-symbol selection cache. Reports incremental `(done, total)` progress so the
     /// title bar can show real warming progress, and returns `true` if it aborted early because the
     /// feed looked unreachable (so the bar can surface an offline error rather than a silent stall).
-    typealias SecuritySweep = @MainActor (_ progress: @escaping @MainActor (_ done: Int, _ total: Int, _ current: Ticker?) -> Void) async -> Bool
+    typealias SecuritySweep = @MainActor (_ progress: @escaping @MainActor (_ done: Int, _ total: Int, _ current: Ticker?, _ step: String?) -> Void) async -> Bool
 
     @ObservationIgnored private var loopTask: Task<Void, Never>?
     @ObservationIgnored private var didStart = false
@@ -330,7 +336,7 @@ final class DataSweepCoordinator {
         currentPage = 0
         hasIssuedFirstRequest = false
         lastError = nil
-        defer { isSweeping = false; isWarming = false; currentlyWarmingTicker = nil }
+        defer { isSweeping = false; isWarming = false; currentlyWarmingTicker = nil; currentlyWarmingStep = nil }
 
         let idx = includeIDX ?? clock.isOpen()
 
@@ -357,13 +363,16 @@ final class DataSweepCoordinator {
             warmedSecurityCount = 0
             securityUniverseCount = 0
             currentlyWarmingTicker = nil
-            let abortedOffline = await securitySweep { [weak self] done, total, current in
+            currentlyWarmingStep = nil
+            let abortedOffline = await securitySweep { [weak self] done, total, current, step in
                 self?.warmedSecurityCount = done
                 self?.securityUniverseCount = total
                 self?.currentlyWarmingTicker = current
+                self?.currentlyWarmingStep = step
             }
             isWarming = false
             currentlyWarmingTicker = nil
+            currentlyWarmingStep = nil
             // The warmer bailed because the feed was unreachable — say so (and let the next loop tick
             // retry) instead of landing a misleading "Updated" with a half-warmed cache.
             if abortedOffline { lastError = "Couldn’t reach the data feed — will retry." }

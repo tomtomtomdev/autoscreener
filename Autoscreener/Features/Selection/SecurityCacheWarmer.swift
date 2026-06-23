@@ -43,10 +43,10 @@ struct SecurityCacheWarmer {
               onFundamentals: (Ticker, FundamentalSlice) -> Void = { _, _ in },
               onData: (Ticker, SecurityData) -> Void,
               cachedFundamentals: (Ticker) -> FundamentalSlice? = { _ in nil },
-              onProgress: (_ done: Int, _ total: Int, _ current: Ticker?) -> Void = { _, _, _ in }) async -> Outcome {
+              onProgress: @escaping (_ done: Int, _ total: Int, _ current: Ticker?, _ step: String?) -> Void = { _, _, _, _ in }) async -> Outcome {
         let total = universe.count
         guard total > 0 else { return Outcome(warmed: 0, total: 0, abortedOffline: false) }
-        onProgress(0, total, nil)
+        onProgress(0, total, nil, nil)
 
         var consecutiveFailures = 0
 
@@ -68,22 +68,25 @@ struct SecurityCacheWarmer {
             // Announce the name being fetched (1-based, so the count matches the named stock's
             // ordinal) so the title bar can show "Warming BBCA 3/20" — which stock is in flight,
             // not just a bare counter.
-            onProgress(index + 1, total, t)
+            onProgress(index + 1, total, t, nil)
+            // Forward the in-flight API leg the provider is fetching (key stats / insider activity / …)
+            // so the bar reads "Considering BBCA insider activity… 3/20", keeping the same done/total/t.
+            let onStep: @MainActor (String) -> Void = { step in onProgress(index + 1, total, t, step) }
             do {
                 if let cached = cachedFundamentals(t) {
                     // INTRADAY reuse: the slow leg is still fresh in cache → fetch ONLY the fast leg
                     // (~4 requests) and recompose against the cached fundamentals. No fundamentals
                     // re-fetch, and no re-store (its age stays meaningful so the close-capture sweep
                     // still knows when to refresh it).
-                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: cached.sectorIndexSymbol)
+                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: cached.sectorIndexSymbol, onStep: onStep)
                     onData(t, StockbitDataProvider.compose(t, fundamentals: cached, live: live))
                 } else {
                     // FULL warm: a cold/stale name, or a close-capture refresh. Fetch both cadence legs
                     // (same total request count as the old single `data(for:)`), cache the slow slice for
                     // later intraday reuse, and compose. All-or-nothing per name: a throw in either leg
                     // writes neither store, exactly as the old single-fetch did.
-                    let fundamentals = try await provider.fundamentals(for: t)
-                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: fundamentals.sectorIndexSymbol)
+                    let fundamentals = try await provider.fundamentals(for: t, onStep: onStep)
+                    let live = try await provider.liveSignals(for: t, sectorIndexSymbol: fundamentals.sectorIndexSymbol, onStep: onStep)
                     onFundamentals(t, fundamentals)
                     onData(t, StockbitDataProvider.compose(t, fundamentals: fundamentals, live: live))
                 }
@@ -97,7 +100,7 @@ struct SecurityCacheWarmer {
         }
         // The universe drained cleanly — report completion and clear the in-flight ticker so the bar
         // shows a bare "Warming n/n" instead of leaving the last name's label lingering.
-        onProgress(total, total, nil)
+        onProgress(total, total, nil, nil)
         return Outcome(warmed: warmed, total: total, abortedOffline: false)
     }
 

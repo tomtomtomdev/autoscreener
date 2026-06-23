@@ -86,7 +86,7 @@ extension AppDependencies {
     /// reports `(done, total)` so the sweep coordinator can surface real warming progress.
     @discardableResult
     func warmSecurityCache(config: SelectionConfig = .balanced,
-                           progress: @escaping @MainActor (_ done: Int, _ total: Int, _ current: Ticker?) -> Void = { _, _, _ in }) async -> Bool {
+                           progress: @escaping @MainActor (_ done: Int, _ total: Int, _ current: Ticker?, _ step: String?) -> Void = { _, _, _, _ in }) async -> Bool {
         let watchlist = await watchlistUniverse()
         let held = Array(paperTradingStore.state.positions.keys)
         let universe = Array(Set(watchlist + held)).sorted()

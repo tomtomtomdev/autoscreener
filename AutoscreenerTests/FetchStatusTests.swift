@@ -183,6 +183,30 @@ import Testing
         #expect(FetchStatus.warming(loaded: 3, total: 20, current: "").displayLabel == "Considering 3/20…")
     }
 
+    @Test func warmingLabelAppendsTheInFlightStepWhenPresent() {
+        // The API leg in flight is appended after the stock, before the counts.
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "MBMA", step: "insider activity").displayLabel
+                == "Considering MBMA insider activity… 3/20")
+    }
+
+    @Test func warmingLabelFallsBackToTickerOnlyWhenStepNil() {
+        // No step (between legs / at the per-name boundary) keeps the existing ticker-only label.
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "MBMA", step: nil).displayLabel
+                == "Considering MBMA 3/20…")
+        #expect(FetchStatus.warming(loaded: 3, total: 20, current: "MBMA", step: "").displayLabel
+                == "Considering MBMA 3/20…")
+    }
+
+    @Test func warmingStepCarriesThroughResolve() {
+        let status = FetchStatus.resolve(
+            isSweeping: true,
+            loaded: 0, total: 0,
+            isWarming: true, warmedCount: 3, warmingTotal: 20, warmingTicker: "MBMA",
+            warmingStep: "insider activity",
+            lastError: nil, paywall: nil, lastSweepAt: nil)
+        #expect(status == .warming(loaded: 3, total: 20, current: "MBMA", step: "insider activity"))
+    }
+
     @Test func throttlingLabelIsBareRegardlessOfProgress() {
         // The throttle gap is a brief pause between requests; it shows just "Throttling…"
         // without counts or page, so the bar reads as "waiting" rather than progressing.

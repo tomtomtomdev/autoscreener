@@ -23,11 +23,11 @@ import Testing
             self.contextError = contextError
         }
 
-        func fundamentals(for t: Ticker) async throws -> FundamentalSlice {
+        func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice {
             dataCallCount += 1
             throw dataError
         }
-        func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice {
+        func liveSignals(for t: Ticker, sectorIndexSymbol: String?, onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice {
             throw dataError   // unreached (the slow leg throws first); present for conformance.
         }
         func marketContext() async throws -> MarketContext { throw contextError }
@@ -46,7 +46,7 @@ import Testing
             self.contextError = contextError
         }
 
-        func fundamentals(for t: Ticker) async throws -> FundamentalSlice {
+        func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice {
             defer { dataCallCount += 1 }
             let result = index < results.count ? results[index] : .failure(URLError(.timedOut))
             index += 1
@@ -55,7 +55,7 @@ import Testing
             case .failure(let e):   throw e
             }
         }
-        func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice {
+        func liveSignals(for t: Ticker, sectorIndexSymbol: String?, onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice {
             Self.barrenLive()   // only reached after a successful slow leg; no result consumed
         }
         func marketContext() async throws -> MarketContext { throw contextError }
@@ -82,8 +82,8 @@ import Testing
     private struct OneNameProvider: LegProvider {
         let fundamental: FundamentalSlice
         let live: LiveSlice
-        func fundamentals(for t: Ticker) async throws -> FundamentalSlice { fundamental }
-        func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice { live }
+        func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice { fundamental }
+        func liveSignals(for t: Ticker, sectorIndexSymbol: String?, onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice { live }
         func marketContext() async throws -> MarketContext { throw SelectionProviderError.noRegimeInputs }
     }
 
@@ -98,10 +98,10 @@ import Testing
             self.fundamental = fundamental
             self.live = live
         }
-        func fundamentals(for t: Ticker) async throws -> FundamentalSlice {
+        func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice {
             fundamentalsCalls += 1; return fundamental
         }
-        func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice {
+        func liveSignals(for t: Ticker, sectorIndexSymbol: String?, onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice {
             liveCalls += 1; return live
         }
         func marketContext() async throws -> MarketContext { throw SelectionProviderError.noRegimeInputs }
@@ -152,7 +152,7 @@ import Testing
         var progress: [(Int, Int)] = []
         let outcome = await warmer.warm(
             universe: Self.universe(50), onContext: { _ in }, onData: { _, _ in },
-            onProgress: { done, total, _ in progress.append((done, total)) })
+            onProgress: { done, total, _, _ in progress.append((done, total)) })
 
         #expect(!outcome.abortedOffline)
         let calls = await provider.dataCallCount
@@ -172,7 +172,7 @@ import Testing
         var ticks: [(Int, Ticker?)] = []
         let outcome = await warmer.warm(
             universe: ["AAA", "BBB", "CCC"], onContext: { _ in }, onData: { _, _ in },
-            onProgress: { done, _, current in ticks.append((done, current)) })
+            onProgress: { done, _, current, _ in ticks.append((done, current)) })
 
         #expect(!outcome.abortedOffline)
         // Each name announced in order, paired with its 1-based ordinal.
@@ -181,6 +181,40 @@ import Testing
         #expect(ticks.contains { $0 == (3, "CCC") })
         #expect(ticks.compactMap { $0.1 } == ["AAA", "BBB", "CCC"])   // order preserved, no extras
         #expect(ticks.last?.1 == nil)                                 // completion clears the ticker
+    }
+
+    // MARK: - Progress forwards the in-flight API leg (title bar shows "Considering BBCA insider activity… x/y")
+
+    /// Announces two slow-leg steps then one fast-leg step per name, to prove the warmer forwards the
+    /// provider's `onStep` through `onProgress` (same done/total/ticker, varying step).
+    private struct SteppingProvider: LegProvider {
+        let fundamental: FundamentalSlice
+        let live: LiveSlice
+        func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice {
+            await onStep?("key stats"); await onStep?("insider activity"); return fundamental
+        }
+        func liveSignals(for t: Ticker, sectorIndexSymbol: String?, onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice {
+            await onStep?("broker flow"); return live
+        }
+        func marketContext() async throws -> MarketContext { throw SelectionProviderError.noRegimeInputs }
+    }
+
+    @Test func progressForwardsTheInFlightStepForTheCurrentTickerThenClearsIt() async {
+        let warmer = SecurityCacheWarmer(provider: SteppingProvider(
+            fundamental: fundamentalSlice(sector: "S", sectorIndexSymbol: nil), live: liveSlice(price: 1)))
+
+        var ticks: [(Int, Ticker?, String?)] = []
+        let outcome = await warmer.warm(
+            universe: ["AAA"], onContext: { _ in }, onData: { _, _ in },
+            onProgress: { done, _, current, step in ticks.append((done, current, step)) })
+
+        #expect(!outcome.abortedOffline)
+        // The per-name announce (step nil) precedes the leg steps, each carrying the SAME ticker + ordinal.
+        #expect(ticks.contains { $0 == (1, "AAA", nil) })
+        #expect(ticks.contains { $0 == (1, "AAA", "key stats") })
+        #expect(ticks.contains { $0 == (1, "AAA", "insider activity") })
+        #expect(ticks.contains { $0 == (1, "AAA", "broker flow") })
+        #expect(ticks.last?.1 == nil && ticks.last?.2 == nil)   // completion clears both ticker and step
     }
 
     // MARK: - An intermittent success resets the breaker (a slow-but-alive feed warms fully)

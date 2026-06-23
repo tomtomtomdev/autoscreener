@@ -589,7 +589,8 @@ private actor LoopGapGate {
         let coord = SweepTestKit.coordinator(
             store: SweepTestKit.store(), commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog,
-            securitySweep: { progress in progress(3, 10, "BBCA"); return true })   // 3/10 warmed, then offline
+            // 3/10 warmed, fetching BBCA's insider leg, then offline
+            securitySweep: { progress in progress(3, 10, "BBCA", "insider activity"); return true })
 
         await coord.runSweep(includeIDX: true)
 
@@ -597,6 +598,7 @@ private actor LoopGapGate {
         #expect(coord.securityUniverseCount == 10)
         #expect(coord.isWarming == false)   // cleared once the phase ends
         #expect(coord.currentlyWarmingTicker == nil)   // in-flight name cleared with the phase
+        #expect(coord.currentlyWarmingStep == nil)     // …and the in-flight API leg cleared in lockstep
         #expect(coord.lastError == "Couldn’t reach the data feed — will retry.")
     }
 
@@ -605,7 +607,7 @@ private actor LoopGapGate {
         let coord = SweepTestKit.coordinator(
             store: SweepTestKit.store(), commodity: RecordingCommodityService(),
             catalog: SweepTestKit.mixedCatalog,
-            securitySweep: { progress in progress(10, 10, nil); return false })
+            securitySweep: { progress in progress(10, 10, nil, nil); return false })
 
         await coord.runSweep(includeIDX: true)
 

@@ -39,6 +39,7 @@ struct GlobalFetchStatusView: View {
             warmedCount: coordinator.warmedSecurityCount,
             warmingTotal: coordinator.securityUniverseCount,
             warmingTicker: coordinator.currentlyWarmingTicker,
+            warmingStep: coordinator.currentlyWarmingStep,
             lastError: coordinator.lastError,
             paywall: coordinator.paywallMessage,
             lastSweepAt: marketStore.lastSweepAt,

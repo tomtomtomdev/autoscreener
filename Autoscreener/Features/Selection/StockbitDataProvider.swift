@@ -81,9 +81,31 @@ struct LiveSlice: Sendable {
 /// `DataProvider`) so splitting the per-symbol fetch by cadence never touches the engine's read-side
 /// conformers (`CachedDataProvider`, the test stubs).
 protocol LegProvider: Sendable {
-    func fundamentals(for t: Ticker) async throws -> FundamentalSlice
-    func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice
+    func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)?) async throws -> FundamentalSlice
+    func liveSignals(for t: Ticker, sectorIndexSymbol: String?,
+                     onStep: (@MainActor (String) -> Void)?) async throws -> LiveSlice
     func marketContext() async throws -> MarketContext
+}
+
+/// Friendly, user-facing label for the API leg the provider is currently fetching, surfaced in the
+/// warming status bar ("Considering MBMA insider activity… 3/120"). The order mirrors the per-stock
+/// fetch sequence in `fundamentals` (slow leg) then `liveSignals` (fast leg). `onStep` reports the
+/// label just before each throttled request, so the bar names what's in flight rather than freezing
+/// on the stock code for the second-plus it takes to fetch one name.
+nonisolated enum WarmStep: String {
+    case companyInfo = "company info"
+    case keyStats = "key stats"
+    case financials = "financials"
+    case balanceSheet = "balance sheet"
+    case freeFloat = "free float"
+    case peers = "peers"
+    case analystCoverage = "analyst coverage"
+    case insider = "insider activity"
+    case priceHistory = "price history"
+    case brokerFlow = "broker flow"
+    case orderFlow = "order flow"
+
+    var label: String { rawValue }
 }
 
 actor StockbitDataProvider: DataProvider, LegProvider {
@@ -228,18 +250,27 @@ actor StockbitDataProvider: DataProvider, LegProvider {
     /// SLOW leg — fundamentals that change at most quarterly. Essential legs (sector from
     /// `/emitten/info`, keystats→TTM, fundachart annuals) propagate; best-effort overlays degrade to
     /// nil. Resolves `sectorIndexSymbol` from info so the fast leg can run alone on an intraday pass.
-    func fundamentals(for t: Ticker) async throws -> FundamentalSlice {
+    func fundamentals(for t: Ticker, onStep: (@MainActor (String) -> Void)? = nil) async throws -> FundamentalSlice {
+        // Announce the leg about to be fetched (status bar), then run it through the shared throttle.
+        // The label fires once per leg, just before the request — so the bar names what's in flight.
+        func step<T>(_ s: WarmStep, _ body: () async throws -> T) async throws -> T {
+            if let onStep { await onStep(s.label) }
+            return try await paced(body)
+        }
+
         // Classify by sector FIRST. A bank's keystats omits current ratio / D-E ("-"), so the TTM
         // adapter must know the archetype to relax the right required fields (§14 / Phase 3.6):
         // otherwise it throws `missingField` and the name never reaches the engine to be routed to
         // the financial profile. `/emitten/info` is fetched essential.
-        let info = try await paced { try await self.emitten.info(symbol: t) }
+        let info = try await step(.companyInfo) { try await self.emitten.info(symbol: t) }
         let archetype = CompanyArchetype.classify(sector: info.sector)
 
-        let fields = try await paced { try await self.keystats.fields(symbol: t) }
+        let fields = try await step(.keyStats) { try await self.keystats.fields(symbol: t) }
         let ttm = try SelectionFundamentals.ttm(fromKeystats: fields, archetype: archetype)
 
-        let income = try await paced {
+        // The three fundachart annuals share one "financials" label (announced once on the first call)
+        // so three near-instant fetches don't flicker the status bar.
+        let income = try await step(.financials) {
             try await self.fundachart.financials(symbol: t, dataset: .incomeStatement, report: .annual)
         }
         let balance = try await paced {
@@ -251,7 +282,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         var annuals = SelectionFundamentals.annualFinancials(income: income, balance: balance, cashFlow: cashFlow)
 
         // Balance-sheet overlay (the 3 tree-only items). Absent ⇒ keep the fundachart annuals as-is.
-        if let balanceSheet = try? await paced({
+        if let balanceSheet = try? await step(.balanceSheet, {
             try await self.statements.load(symbol: t, report: .balanceSheet, basis: .annual)
         }) {
             annuals = SelectionFundamentals.merging(annuals, balanceSheet: balanceSheet)
@@ -265,7 +296,7 @@ actor StockbitDataProvider: DataProvider, LegProvider {
 
         // Free float: an unverifiable float defaults to 0 so `LiquidityGate` conservatively screens
         // the name out (we don't recommend a position whose float we can't confirm).
-        let profile = try? await paced { try await self.emitten.profile(symbol: t) }
+        let profile = try? await step(.freeFloat) { try await self.emitten.profile(symbol: t) }
         let freeFloat = profile.flatMap(SelectionFundamentals.freeFloat(fromProfile:)) ?? 0
 
         // Resolve the sector-index symbol here (it comes from `/emitten/info`) so the FAST leg can
@@ -274,15 +305,15 @@ actor StockbitDataProvider: DataProvider, LegProvider {
 
         // Captured-endpoint overlays (Slice 4) — carried context only, each best-effort: a paywall /
         // no-coverage / failure degrades the leg to nil rather than aborting the name's valuation.
-        let peers = try? await paced { try await self.comparisonService.comparison(symbol: t) }
+        let peers = try? await step(.peers) { try await self.comparisonService.comparison(symbol: t) }
         // Phase 5: the seasonality tilt was dropped from the engine, so the slow leg no longer fetches
         // it (one fewer request per name); the slice's `seasonality` is left nil.
         // Gate-3 consensus: sell-side coverage. `coverage` already yields nil for an uncovered name,
         // so the double-optional from `try?` is flattened to a single "no coverage / no fetch" nil.
-        let coverage: AnalystCoverage? = (try? await paced { try await self.analyst.coverage(symbol: t) }) ?? nil
+        let coverage: AnalystCoverage? = (try? await step(.analystCoverage) { try await self.analyst.coverage(symbol: t) }) ?? nil
         // Gate-2 governance: assemble the facts, then assess them with the pure rules (clock injected
         // here so the engine stays deterministic). A failed/paywalled fetch ⇒ nil ⇒ no veto.
-        let govReport = try? await paced { try await self.governance.report(symbol: t, period: config.governance.period) }
+        let govReport = try? await step(.insider) { try await self.governance.report(symbol: t, period: config.governance.period) }
         let governanceAssessment = govReport.map { GovernanceRules.assess($0, now: now()) }
 
         return FundamentalSlice(
@@ -300,11 +331,17 @@ actor StockbitDataProvider: DataProvider, LegProvider {
 
     /// FAST leg — price/flow signals that move intraday. `sectorIndexSymbol` comes from the slow leg
     /// so this can run alone on an intraday-only sweep. A missing price is an essential failure.
-    func liveSignals(for t: Ticker, sectorIndexSymbol: String?) async throws -> LiveSlice {
+    func liveSignals(for t: Ticker, sectorIndexSymbol: String?,
+                     onStep: (@MainActor (String) -> Void)? = nil) async throws -> LiveSlice {
+        func step<T>(_ s: WarmStep, _ body: () async throws -> T) async throws -> T {
+            if let onStep { await onStep(s.label) }
+            return try await paced(body)
+        }
+
         let from = now().addingTimeInterval(-history)
         let to = now()
 
-        let stockBars = try await paced { try await self.priceFeed.dailyBars(symbol: t, from: from, to: to) }
+        let stockBars = try await step(.priceHistory) { try await self.priceFeed.dailyBars(symbol: t, from: from, to: to) }
         let dailyBars = stockBars.ohlcvSeries
         guard let price = dailyBars.last?.close else { throw SelectionProviderError.noPriceData(t) }
 
@@ -316,11 +353,11 @@ actor StockbitDataProvider: DataProvider, LegProvider {
         let marketIndexBars = (try? await indexBars(Self.marketIndexSymbol, from: from, to: to)) ?? []
 
         // Broker accumulation signal → 0 on failure / no activity (no information → no tilt).
-        let brokerRecords = (try? await paced { try await self.broker.dailyActivity(symbol: t) }) ?? []
+        let brokerRecords = (try? await step(.brokerFlow) { try await self.broker.dailyActivity(symbol: t) }) ?? []
         let brokerSignal = SelectionFundamentals.brokerAccumulationSignal(
             from: brokerRecords, window: config.flow.foreignWindow)
 
-        let distribution = try? await paced { try await self.orderFlowService.distribution(symbol: t) }
+        let distribution = try? await step(.orderFlow) { try await self.orderFlowService.distribution(symbol: t) }
 
         return LiveSlice(
             price: price,
