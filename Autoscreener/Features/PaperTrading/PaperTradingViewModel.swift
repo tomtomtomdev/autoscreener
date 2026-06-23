@@ -58,6 +58,15 @@ final class PaperTradingViewModel {
     /// Live regime read (the Layer-1 signal). Reading it is observation-tracked.
     var regime: RegimeRead? { marketStore.regimeRead }
 
+    /// True when this book ignores the regime exposure band (the RiBeTS book) — drives the screen's
+    /// badge so a regime-blind book doesn't advertise a regime stance it doesn't act on.
+    var isRegimeBlind: Bool { config.fixedExposure != nil }
+
+    /// The fraction of equity this book targets deploying: the fixed full-deployment for the regime-blind
+    /// book, otherwise the regime-aware exposure for the current score. The badge reads this (instead of
+    /// hardcoding `.standard`) so it stays truthful for both RAPaTS and RiBeTS.
+    var targetExposure: Double { config.fixedExposure ?? config.exposure(forScore: regime?.score ?? 0) }
+
     /// Ranked, veto-filtered watchlist composed from the cached screener snapshots. Still the source of
     /// display names + prices for the plan, but no longer the buy universe (that's the recommendations).
     var watchlist: [WatchlistRow] { WatchlistComposer.compose(screenerStore.snapshots).rows }

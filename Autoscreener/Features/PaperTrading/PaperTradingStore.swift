@@ -96,14 +96,21 @@ final class PaperTradingStore {
     }
 
     /// `Application Support/Autoscreener/paper-trading-cache.json`, alongside the other
-    /// caches. Nil only if the directory can't be resolved (persistence then off).
-    nonisolated static var defaultFileURL: URL? {
+    /// caches. Nil only if the directory can't be resolved (persistence then off). This is the
+    /// regime-aware RAPaTS book; the regime-blind RiBeTS book persists separately (`ribetsFileURL`).
+    nonisolated static var defaultFileURL: URL? { fileURL(named: "paper-trading-cache.json") }
+
+    /// The regime-blind RiBeTS book's own file, alongside the RAPaTS book so the two portfolios
+    /// persist independently and never share state.
+    nonisolated static var ribetsFileURL: URL? { fileURL(named: "paper-trading-ribets-cache.json") }
+
+    private nonisolated static func fileURL(named name: String) -> URL? {
         guard let dir = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask,
             appropriateFor: nil, create: true) else { return nil }
         return dir
             .appendingPathComponent("Autoscreener", isDirectory: true)
-            .appendingPathComponent("paper-trading-cache.json")
+            .appendingPathComponent(name)
     }
 }
 

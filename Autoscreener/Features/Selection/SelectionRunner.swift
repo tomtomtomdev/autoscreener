@@ -138,14 +138,19 @@ extension AppDependencies {
             config: config)
     }
 
-    /// The "Positions to Review" screen source: hold/trim/exit verdicts for the current paper book under
-    /// `config`. Under `-UITestFixtures` returns canned decisions so the screen renders offline; an empty
-    /// book short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
-    func reviewPositions(config: SelectionConfig = .balanced) async throws -> ReviewOutcome {
+    /// The "Positions to Review" screen source: hold/trim/exit verdicts for a paper book under `config`.
+    /// `holdings` selects which book to review — defaulted to the regime-aware RAPaTS singleton
+    /// (`paperTradingStore`), so the Recommendations screen and the RAPaTS autopilot are unchanged; the
+    /// RiBeTS autopilot passes its own store so each book's exits key off its OWN positions. Under
+    /// `-UITestFixtures` returns canned decisions so the screen renders offline; an empty book
+    /// short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
+    func reviewPositions(holdings: PaperTradingStore? = nil,
+                         config: SelectionConfig = .balanced) async throws -> ReviewOutcome {
         if ProcessInfo.processInfo.isUITestFixtures {
             return ReviewOutcome(decisions: UITestFixtures.exitDecisions, skipped: [])
         }
-        let held = Array(paperTradingStore.state.positions.keys)
+        let book = holdings ?? paperTradingStore
+        let held = Array(book.state.positions.keys)
         guard !held.isEmpty else {
             return ReviewOutcome(decisions: [], skipped: [])
         }
@@ -162,7 +167,7 @@ extension AppDependencies {
             return ReviewOutcome(decisions: [], skipped: [], awaitingData: true, asOf: asOf)
         }
         let reviewer = PositionReviewer(
-            holdings: paperTradingStore,
+            holdings: book,
             provider: CachedDataProvider(cached: snapshot.data, context: snapshot.context, tickers: held),
             evaluator: ExitEvaluator(config: config))
         let collector = SkipCollector()

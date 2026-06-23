@@ -95,12 +95,23 @@ struct PaperTradingView: View {
     }
 
     @ViewBuilder private var regimeBadge: some View {
-        if let regime = vm.regime {
+        if vm.isRegimeBlind {
+            // The RiBeTS book ignores the regime — say so rather than advertise a stance it won't act on.
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("Regime-blind")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text("fully deployed · target \(Self.pct(vm.targetExposure))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityIdentifier("PaperTradingRegimeBadge")
+        } else if let regime = vm.regime {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(regime.stance.rawValue)
                     .font(.headline)
                     .foregroundStyle(RegimeColors.color(regime.stance))
-                Text("target \(Self.pct(targetExposure(for: regime)))")
+                Text("target \(Self.pct(vm.targetExposure))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -234,10 +245,6 @@ struct PaperTradingView: View {
     // MARK: - Helpers
 
     private func tint(_ value: Double) -> Color { value > 0 ? .green : (value < 0 ? .red : .secondary) }
-
-    private func targetExposure(for regime: RegimeRead) -> Double {
-        AllocationConfig.standard.exposure(forScore: regime.score)
-    }
 
     // Compact IDR / share / percent formatters (no Foundation currency dependency).
 

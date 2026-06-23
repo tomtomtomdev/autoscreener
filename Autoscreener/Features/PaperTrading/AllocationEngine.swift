@@ -38,7 +38,9 @@ nonisolated enum AllocationEngine {
                      config: AllocationConfig = .standard) -> AllocationPlan {
         let score = regime?.score ?? 0
         let stance = regime?.stance ?? .neutral
-        let exposure = config.exposure(forScore: score)
+        // Regime-blind books (RiBeTS) pin exposure to `fixedExposure`, ignoring the score; regime-aware
+        // books (RAPaTS) map the score onto the stance exposure band.
+        let exposure = config.fixedExposure ?? config.exposure(forScore: score)
 
         let equity = state.equity(prices: prices)
         let cashTarget = equity * (1 - exposure)

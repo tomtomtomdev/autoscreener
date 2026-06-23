@@ -24,6 +24,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
     case intradayLiquidity
     case markets
     case paperTrading
+    case ribets
 
     var id: Self { self }
     var title: String {
@@ -50,7 +51,8 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .liquidityFloor:     return "Liquidity Floor"
         case .intradayLiquidity:  return "Intraday Liquidity"
         case .markets:            return "Markets"
-        case .paperTrading:       return "Paper Trading"
+        case .paperTrading:       return "RAPaTS (Regime-Aware)"
+        case .ribets:             return "RiBeTS (Regime-Blind)"
         }
     }
     var systemImage: String {
@@ -78,6 +80,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .intradayLiquidity:  return "bolt.fill"
         case .markets:            return "chart.bar.xaxis"
         case .paperTrading:       return "banknote"
+        case .ribets:             return "banknote.fill"
         }
     }
     var templateID: String? {
@@ -105,6 +108,7 @@ nonisolated enum SidebarItem: Hashable, CaseIterable, Identifiable {
         case .intradayLiquidity:  return "6676320"
         case .markets:            return nil
         case .paperTrading:       return nil
+        case .ribets:             return nil
         }
     }
 }
@@ -147,6 +151,9 @@ struct MainSidebarView: View {
     // Paper trading projects the same shared stores (portfolio + regime + screeners);
     // held here so switching tabs preserves the pending plan binding.
     @State private var paperTradingVM: PaperTradingViewModel
+    // The regime-blind RiBeTS book — a second paper-trading screen bound to its own store + the
+    // regime-blind allocation config, run side-by-side with the regime-aware RAPaTS book above.
+    @State private var ribetsVM: PaperTradingViewModel
     // Tier-A selection surface: the unified Recommendations inbox merges the buy-side picks and the
     // Gate-5 sell-side review into one ranked list. Held here (like the screeners) so switching tabs
     // preserves its loaded state and doesn't re-run the engine each time.
@@ -185,6 +192,13 @@ struct MainSidebarView: View {
         _paperTradingVM = State(initialValue: PaperTradingViewModel(
             store: deps.paperTradingStore, screenerStore: store,
             marketStore: deps.marketDataStore, coordinator: coordinator))
+        // RiBeTS: same screen, bound to the regime-blind book + config + its own verdict cache, with a
+        // review source that reviews the RiBeTS holdings (not RAPaTS). Buy picks are shared.
+        _ribetsVM = State(initialValue: PaperTradingViewModel(
+            store: deps.ribetsStore, screenerStore: store,
+            marketStore: deps.marketDataStore, coordinator: coordinator,
+            exitDecisionsStore: deps.ribetsExitDecisionsStore, config: .regimeBlind,
+            reviewSource: { try await deps.reviewPositions(holdings: deps.ribetsStore, config: $0) }))
         // Default-wired to the shared sources/stores (incl. the shared RecommendationsStore the paper
         // flow reads at fill time), so the buy picks and the sell review stay in lock-step. The unified
         // VM owns one of each child VM, so both stores are still fed exactly as before.
@@ -210,10 +224,13 @@ struct MainSidebarView: View {
                           systemImage: SidebarItem.markets.systemImage)
                         .tag(SidebarItem.markets)
                 }
-                Section {
+                Section("Paper Trading") {
                     Label(SidebarItem.paperTrading.title,
                           systemImage: SidebarItem.paperTrading.systemImage)
                         .tag(SidebarItem.paperTrading)
+                    Label(SidebarItem.ribets.title,
+                          systemImage: SidebarItem.ribets.systemImage)
+                        .tag(SidebarItem.ribets)
                 }
             }
             .listStyle(.sidebar)
@@ -320,6 +337,9 @@ struct MainSidebarView: View {
         case .paperTrading:
             PaperTradingView(vm: paperTradingVM, title: SidebarItem.paperTrading.title)
                 .id(SidebarItem.paperTrading)
+        case .ribets:
+            PaperTradingView(vm: ribetsVM, title: SidebarItem.ribets.title)
+                .id(SidebarItem.ribets)
         case .none:
             ContentUnavailableView("Pick a screener", systemImage: "sidebar.left")
         }

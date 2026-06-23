@@ -73,13 +73,29 @@ import Testing
                                picks: @escaping (SelectionConfig) async throws -> SelectionOutcome,
                                review: @escaping (SelectionConfig) async throws -> ReviewOutcome
                                   = { _ in ReviewOutcome(decisions: [], skipped: []) },
+                               config: AllocationConfig = .standard,
                                autoExecute: Bool = true) -> PaperTradingAutopilot {
         PaperTradingAutopilot(
             store: paper, screenerStore: screener, marketStore: market,
             recommendationsStore: recs, exitDecisionsStore: exits,
             picksSource: picks,
             reviewSource: review,
+            config: config,
             autoExecute: autoExecute, calendar: gregorian, clock: clock)
+    }
+
+    /// Stores like `makeStores()` but with a deeply RISK-OFF regime, to contrast the two books.
+    private func makeRiskOffStores() -> (ScreenerStore, MarketDataStore) {
+        let screener = SweepTestKit.store()
+        let snap = ScreenerSnapshot(config: ScreenerConfig(),
+                                    rows: [row("BBCA", price: 9_500), row("TLKM", price: 2_800)],
+                                    fetchedAt: Date(timeIntervalSince1970: 0))
+        for kind in BandarScreenerKind.allCases { screener.apply(snap, for: kind) }
+        let market = SweepTestKit.marketStore()
+        market.apply(regimeRead: RegimeRead(stance: .riskOff, score: -0.9,
+                                            factors: [RegimeFactor(kind: .breadth, signal: .riskOff, detail: "t")],
+                                            asOf: "2026-06-17", valuationCapped: false))
+        return (screener, market)
     }
 
     /// Review source whose verdicts can change between sweeps — models a thesis breaking after entry.
@@ -214,6 +230,48 @@ import Testing
 
         #expect(p.state.positions["BBCA"] == nil)                 // sold now — didn't wait for the next boundary
         #expect(p.state.trades.contains { $0.symbol == "BBCA" && $0.side == .sell })
+    }
+
+    // MARK: - Regime-blind (RiBeTS) book
+
+    /// The defining RiBeTS behaviour: under a deeply risk-off regime, the regime-AWARE book parks in cash
+    /// while the regime-BLIND book (`.regimeBlind`) still deploys off the same recommendations. Each books
+    /// into its OWN store, so the two run independently.
+    @Test func regimeBlindBookDeploysInRiskOffWhileTheAwareBookStaysInCash() async {
+        let (s, m) = makeRiskOffStores()
+        let rapats = PaperTradingStore(fileURL: nil, loadFromDisk: false)
+        let ribets = PaperTradingStore(fileURL: nil, loadFromDisk: false)
+        let picks: (SelectionConfig) async throws -> SelectionOutcome = { _ in
+            SelectionOutcome(recommendations: [self.rec("BBCA"), self.rec("TLKM")], skipped: [])
+        }
+        let aware = makeAutopilot(s, m, rapats, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                  picks: picks, config: .standard)
+        let blind = makeAutopilot(s, m, ribets, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                  picks: picks, config: .regimeBlind)
+
+        await aware.runIfDue(now: day(17))
+        await blind.runIfDue(now: day(17))
+
+        #expect(!ribets.state.positions.isEmpty)              // blind deploys despite risk-off
+        #expect(ribets.state.cash < rapats.state.cash)        // …and holds far less cash than the aware book
+        // Independence: each autopilot only touched its own book.
+        #expect(rapats.state.cash <= PaperPortfolioState.seed.cash)
+    }
+
+    /// The two books are fully independent: running the RiBeTS autopilot never mutates the RAPaTS book.
+    @Test func runningTheRiBeTSBookLeavesTheRAPaTSBookUntouched() async {
+        let (s, m) = makeRiskOffStores()
+        let rapats = PaperTradingStore(fileURL: nil, loadFromDisk: false)
+        let ribets = PaperTradingStore(fileURL: nil, loadFromDisk: false)
+        let blind = makeAutopilot(s, m, ribets, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                  picks: { _ in SelectionOutcome(recommendations: [self.rec("BBCA")], skipped: []) },
+                                  config: .regimeBlind)
+
+        await blind.run(now: day(17))
+
+        #expect(!ribets.state.positions.isEmpty)              // RiBeTS booked
+        #expect(rapats.state.positions.isEmpty)               // RAPaTS untouched (separate store)
+        #expect(rapats.state.lastAutoRebalanceAt == nil)
     }
 
     /// The exit pass is sell-only and verdict-driven: an unflagged holding is left completely alone

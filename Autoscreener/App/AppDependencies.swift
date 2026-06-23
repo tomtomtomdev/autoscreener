@@ -59,7 +59,12 @@ final class AppDependencies {
     let marketDataStore: MarketDataStore
     // Paper-trading portfolio (100M IDR sim). Records confirmed allocations only;
     // reads regime + watchlist from the two stores above, never fetches itself.
+    // This is the regime-aware RAPaTS book; `ribetsStore` is the parallel regime-blind RiBeTS book.
     let paperTradingStore: PaperTradingStore
+    // The regime-blind RiBeTS book — a second, fully independent 100M portfolio (own disk file) that
+    // follows the SAME recommendation actions but ignores the regime exposure band (always fully
+    // deployed toward the suggested weights). Run side-by-side with RAPaTS to measure the regime overlay.
+    let ribetsStore: PaperTradingStore
     let marketClock: MarketClock
     // User control over open-hours sweep cadence (continuous vs boundary-only). Read live by the
     // coordinator's loop and bound to the toggle in the ⌘, Settings "Data" section.
@@ -71,8 +76,13 @@ final class AppDependencies {
     let recommendationsStore = RecommendationsStore()
     // Latest Gate-5 exit verdicts, cached by `PositionReviewViewModel` on review. The paper-trading
     // allocator reads it when building a plan so a flagged name is forced out / not re-bought — without
-    // re-running the expensive holdings review on every rebalance.
+    // re-running the expensive holdings review on every rebalance. Reflects the RAPaTS book (and drives
+    // the Recommendations screen's sell side).
     let exitDecisionsStore = ExitDecisionsStore()
+    // RiBeTS's own exit-verdict cache — its book holds DIFFERENT names than RAPaTS, so its Gate-5
+    // verdicts are kept separate to avoid clobbering the shared store above (which the Recommendations
+    // screen reads). The buy picks are book-agnostic, so RiBeTS shares `recommendationsStore`.
+    let ribetsExitDecisionsStore = ExitDecisionsStore()
     // Disk-backed cache of the LAST displayed Recommendations inbox (ranked picks + Gate-5 verdicts).
     // On a cold launch the screen renders this last-known list instead of a spinner while the fresh load
     // runs (stale-while-revalidate). Display-only — the two allocator-facing stores above stay in-memory,
@@ -90,6 +100,9 @@ final class AppDependencies {
     // auto-rebalances the book off the recommendations once per trading day. The manual screen drives it
     // too. Its engine sources default to the `shared` closures (resolved lazily, post-init).
     let paperTradingAutopilot: PaperTradingAutopilot
+    // The RiBeTS autopilot — same cadence + recommendation actions as `paperTradingAutopilot`, but books
+    // into `ribetsStore` under the regime-blind `.regimeBlind` config and reviews ITS OWN holdings.
+    let ribetsAutopilot: PaperTradingAutopilot
 
     static let shared = AppDependencies()
 
@@ -170,6 +183,10 @@ final class AppDependencies {
         // Same headless rule as the other stores: under fixtures/tests start from a
         // fresh 100M seed rather than reading a real user's portfolio file.
         self.paperTradingStore = PaperTradingStore(loadFromDisk: !headless)
+        // The parallel regime-blind RiBeTS book, persisted to its own file so it never shares state
+        // with the RAPaTS book above.
+        let ribetsBook = PaperTradingStore(fileURL: PaperTradingStore.ribetsFileURL, loadFromDisk: !headless)
+        self.ribetsStore = ribetsBook
         // Display-only inbox cache: persist live so a cold launch shows the last list; empty under
         // fixtures/tests (same headless rule) so screens render from canned data deterministically.
         self.recommendationsSnapshotStore = RecommendationsSnapshotStore(loadFromDisk: !headless)
@@ -183,12 +200,25 @@ final class AppDependencies {
             recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.exitDecisionsStore,
             clock: clock)
         self.paperTradingAutopilot = autopilot
-        // Live only: after each full IDX sweep, run the autopilot — the exit (defense) pass every warm
+        // The RiBeTS sibling: same buy picks (shared `recommendationsStore`) and cadence, but it books
+        // into `ribetsBook` under `.regimeBlind` and reviews its OWN holdings (`reviewPositions(holdings:)`)
+        // into its own verdict cache so it never clobbers the RAPaTS-facing shared store.
+        let ribetsAutopilot = PaperTradingAutopilot(
+            store: ribetsBook, screenerStore: cacheStore, marketStore: marketStore,
+            recommendationsStore: self.recommendationsStore, exitDecisionsStore: self.ribetsExitDecisionsStore,
+            reviewSource: { try await AppDependencies.shared.reviewPositions(holdings: ribetsBook, config: $0) },
+            config: .regimeBlind, clock: clock)
+        self.ribetsAutopilot = ribetsAutopilot
+        // Live only: after each full IDX sweep, run BOTH autopilots — the exit (defense) pass every warm
         // sweep plus the once-per-session-boundary rebalance (offense). Disabled under fixtures/tests so
-        // the seed sweep leaves the paper book deterministic (UI tests drive manually).
+        // the seed sweep leaves the paper books deterministic (UI tests drive manually). Both re-read the
+        // in-memory cached engine, so the second run is cheap.
         var postSweep: DataSweepCoordinator.PostSweep? = nil
         if !headless {
-            postSweep = { [autopilot, clock] in await autopilot.run(now: clock.now()) }
+            postSweep = { [autopilot, ribetsAutopilot, clock] in
+                await autopilot.run(now: clock.now())
+                await ribetsAutopilot.run(now: clock.now())
+            }
         }
 
         // Live only: after each full IDX sweep, warm the per-symbol selection cache so the

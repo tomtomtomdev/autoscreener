@@ -163,7 +163,17 @@ nonisolated struct AllocationConfig: Codable, Sendable {
     var sizingBasis: SizingBasis = .suggestedWeight
     var execution: ExecutionModel = .standardIDX
 
+    /// Layer-1 override for the **regime-blind** book (RiBeTS). When non-nil, the allocator ignores the
+    /// regime score entirely and deploys exactly this fraction of equity regardless of stance — `1.0`
+    /// fully invests toward the sum of the candidates' `suggestedWeight`s (the binding constraint becomes
+    /// the weights + per-name cap, not the regime). Nil ⇒ the regime-aware exposure band (RAPaTS).
+    var fixedExposure: Double? = nil
+
     static let standard = AllocationConfig()
+
+    /// The RiBeTS preset: same ranking/sizing/caps as `.standard`, but regime-blind — always fully
+    /// deployed toward the recommendation weights instead of scaling exposure to the regime.
+    static let regimeBlind = AllocationConfig(fixedExposure: 1.0)
 
     /// The stance-band endpoints used by the score → exposure map.
     var scoreRiskOff: Double { -0.33 }

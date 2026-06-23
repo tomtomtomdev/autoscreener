@@ -43,6 +43,24 @@ import Testing
         #expect(plan.targetExposure >= 0.50 && plan.targetExposure <= 0.60)
     }
 
+    @Test func regimeBlindConfigIgnoresTheScoreAndDeploysFully() {
+        // The RiBeTS book (`.regimeBlind`) overrides Layer 1: a deeply risk-off regime that parks the
+        // regime-aware RAPaTS book in cash still deploys the blind book toward its suggested weights.
+        let (rows, prices) = scoredUniverse(8)
+        let riskOff = read(.riskOff, score: -0.9)
+        let blind = AllocationEngine.plan(state: seed, candidates: rows, regime: riskOff,
+                                          prices: prices, config: .regimeBlind)
+        let aware = AllocationEngine.plan(state: seed, candidates: rows, regime: riskOff,
+                                          prices: prices, config: .standard)
+
+        #expect(blind.targetExposure == 1.0)            // fixed full deployment, regardless of risk-off
+        #expect(aware.targetExposure <= 0.30)           // regime-aware parks in cash
+        #expect(blind.cashTarget < aware.cashTarget)    // blind keeps far less cash
+
+        let buys: (AllocationPlan) -> Double = { $0.lines.filter { $0.side == .buy }.reduce(0) { $0 + $1.estValue } }
+        #expect(buys(blind) > buys(aware))              // and actually buys more
+    }
+
     // MARK: - Layer 3: sizing, caps, diversification
 
     @Test func noNameExceedsThePerNameCap() {
