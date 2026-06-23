@@ -190,6 +190,20 @@ import Testing
         #expect(bot.isDue(now: day(17)))
     }
 
+    /// A cancelled picks fetch (sweep torn down mid-run) is the benign sibling of a hard failure: like any
+    /// throw it must leave the boundary un-stamped so the next sweep retries — it just isn't a fault. Locks
+    /// the dedicated `catch is CancellationError` arm so a refactor can't accidentally consume the boundary.
+    @Test func cancelledPicksFetchLeavesTheBoundaryDueForRetry() async {
+        let (s, m, p) = makeStores()
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in throw CancellationError() })
+        await bot.runIfDue(now: day(17))
+
+        #expect(p.state.positions.isEmpty)
+        #expect(p.state.lastAutoRebalanceAt == nil)               // cancellation didn't consume the boundary
+        #expect(bot.isDue(now: day(17)))
+    }
+
     /// Regression for the "stuck at 100% cash" bug: the first sweep of a boundary fired while the
     /// per-symbol cache was still cold (selection returned nothing). The autopilot must NOT consume the
     /// boundary on an empty, no-candidate plan — it should leave it due so the next (warm) sweep books.

@@ -121,9 +121,19 @@ final class PaperTradingAutopilot {
         if let review = try? await reviewSource(selectionConfig) {
             exitDecisionsStore.update(review.decisions)
         }
-        // Picks are required to plan; a failed fetch aborts without stamping the day (retry next sweep).
-        guard let picks = try? await picksSource(selectionConfig) else {
-            autopilotLog.error("auto-rebalance aborted — picks fetch failed; will retry next sweep")
+        // Picks are required to plan; a failed fetch aborts without stamping the boundary (retry next
+        // sweep). A `CancellationError` is the benign case — the sweep task was torn down mid-fetch (a
+        // newer sweep superseded it, or the app is quitting) — so it's an expected deferral, not a fault.
+        // Any OTHER error is logged in full (`String(reflecting:)`) so the actual cause is visible rather
+        // than swallowed by a bare `try?` (which is what hid this in the first place).
+        let picks: SelectionOutcome
+        do {
+            picks = try await picksSource(selectionConfig)
+        } catch is CancellationError {
+            autopilotLog.info("auto-rebalance deferred — picks fetch cancelled (sweep superseded); will retry next sweep")
+            return
+        } catch {
+            autopilotLog.error("auto-rebalance aborted — picks fetch failed: \(String(reflecting: error), privacy: .public); will retry next sweep")
             return
         }
         recommendationsStore.update(picks.recommendations)
