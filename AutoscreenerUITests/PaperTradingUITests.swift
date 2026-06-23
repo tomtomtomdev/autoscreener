@@ -41,9 +41,9 @@ final class PaperTradingUITests: XCTestCase {
 
         let app = launchWithFixtures()
 
-        // Navigate the sidebar to Paper Trading (the app lands on the Watchlist).
-        let item = sidebarItem(app, "Paper Trading")
-        XCTAssertTrue(item.waitForExistence(timeout: 15), "Paper Trading sidebar item should appear")
+        // Navigate the sidebar to the regime-aware (RAPaTS) book (the app lands on the Watchlist).
+        let item = sidebarItem(app, "RAPaTS (Regime-Aware)")
+        XCTAssertTrue(item.waitForExistence(timeout: 15), "RAPaTS sidebar item should appear")
         item.click()
 
         XCTAssertTrue(element(app, "PaperTradingView").waitForExistence(timeout: 10),
@@ -59,5 +59,34 @@ final class PaperTradingUITests: XCTestCase {
                        "There should be no manual Generate button")
         XCTAssertFalse(element(app, "PaperTradingExecuteButton").exists,
                        "There should be no manual Execute button")
+    }
+
+    /// The second, regime-blind book (RiBeTS) is its own sidebar tab over its own portfolio. It reuses
+    /// `PaperTradingView`, so this verifies the tab navigates, the screen renders, the badge advertises
+    /// "Regime-blind" (not a regime stance), and the read-only preview computes its own plan.
+    @MainActor
+    func testRiBeTSTabRendersItsOwnRegimeBlindBook() throws {
+        #if canImport(AppKit)
+        try XCTSkipIf(NSScreen.screens.count > 1,
+                      "XCUITest can't drive windows across separate Spaces on a multi-display setup")
+        #endif
+
+        let app = launchWithFixtures()
+
+        let item = sidebarItem(app, "RiBeTS (Regime-Blind)")
+        XCTAssertTrue(item.waitForExistence(timeout: 15), "RiBeTS sidebar item should appear")
+        item.click()
+
+        XCTAssertTrue(element(app, "PaperTradingView").waitForExistence(timeout: 10),
+                      "RiBeTS paper-trading screen should render")
+
+        // The defining tell that this is the regime-blind book: the badge reads "Regime-blind" instead of
+        // a regime stance (risk-on/neutral/risk-off). The regime-aware RAPaTS screen never shows this.
+        XCTAssertTrue(app.staticTexts["Regime-blind"].waitForExistence(timeout: 10),
+                      "The RiBeTS badge should advertise the regime-blind stance")
+
+        // Same hands-free preview: a buy line for a priced name computes on its own (regime-blind sizing).
+        XCTAssertTrue(element(app, "PaperTradingPlanRow_BBCA").waitForExistence(timeout: 15),
+                      "The RiBeTS preview should propose a buy for a priced watchlist name automatically")
     }
 }

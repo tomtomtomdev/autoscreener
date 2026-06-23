@@ -38,14 +38,17 @@ final class SidebarUITests: XCTestCase {
 
         // Anchor on a stable surviving item so we know the sidebar finished rendering
         // before making the negative assertion below.
-        let paperTrading = sidebarItem(app, "Paper Trading")
+        let paperTrading = sidebarItem(app, "RAPaTS (Regime-Aware)")
         XCTAssertTrue(paperTrading.waitForExistence(timeout: 15),
-                      "Paper Trading sidebar item should still appear")
+                      "RAPaTS paper-trading sidebar item should still appear")
 
         // The remaining navigation surfaces are intact. (Watchlist is no longer its own sidebar item —
         // it was merged into the Recommendations screen as a lower section — so it's not asserted here.)
         XCTAssertTrue(sidebarItem(app, "Recommendations").exists, "Recommendations should remain")
         XCTAssertTrue(sidebarItem(app, "Markets").exists, "Markets should remain")
+        // The two paper-trading books are each their own tab.
+        XCTAssertTrue(sidebarItem(app, "RiBeTS (Regime-Blind)").exists,
+                      "The regime-blind RiBeTS book should have its own sidebar item")
 
         // The Settings tab is gone from the sidebar.
         XCTAssertFalse(app.buttons["Settings"].exists,
