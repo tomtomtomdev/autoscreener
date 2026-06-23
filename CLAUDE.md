@@ -39,6 +39,15 @@ To confirm a UI change actually renders/behaves, **always write or run an XCUITe
 
 Rationale: accessibility-driven screenshotting is flaky on this multi-display macOS setup and proves nothing repeatable. An XCUITest is the committed, re-runnable proof.
 
+## Explaining behavior ("why does X happen?") — non-negotiable workflow
+
+Whenever the user asks **why** something happens — a behavior, an outcome, a bug, "why did X not Y", "why is this empty/stuck/missing" — do **not** answer from code-reading or on-disk state alone. The explanation is only trustworthy once a test confirms it.
+
+1. **Find the test that pins the behavior.** Search the matching `*Tests.swift` for the unit/characterization test that specifies it. If one exists, it *is* the specification — name it in the answer.
+2. **Run it and confirm the result.** Execute it (`xcodebuild test -project Autoscreener.xcodeproj -scheme Autoscreener -destination 'platform=macOS' -only-testing:AutoscreenerTests/<Suite>/<test>`) and quote the green/red outcome. Never claim "the test confirms this" without having run it this session.
+3. **If no such test exists, write one** (Kent Beck *Regression/Characterization Test* per `tdd-kent-beck` / `legacy-code`) that reproduces the behavior, run it, and confirm — the test becomes the proof of the explanation.
+4. **Only then state the "why,"** grounded in the confirmed test result, not in priors or unverified reasoning. On-disk caches/state may illustrate the live symptom, but the *test* is what proves the mechanism.
+
 ## Combination rules
 
 - **New feature, test-first** → `tdd-kent-beck` (drive cycle) + `xunit-test-patterns` (test design) + the architecture skill matching the layer.
