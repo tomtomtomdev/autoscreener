@@ -170,7 +170,7 @@ struct PaperTradingView: View {
                     .frame(width: 42, alignment: .leading)
                 Text(line.symbol).font(.body.weight(.semibold))
                 Spacer()
-                Text("\(Self.shares(abs(line.deltaShares))) sh").foregroundStyle(.secondary)
+                Text("\(Self.lots(abs(line.deltaShares))) lot").foregroundStyle(.secondary)
                 Text(Self.idr(line.estValue)).frame(minWidth: 90, alignment: .trailing)
                 Text(Self.pct(line.targetWeight)).foregroundStyle(.secondary)
                     .frame(width: 56, alignment: .trailing)
@@ -195,7 +195,7 @@ struct PaperTradingView: View {
         let detail = "avg \(Self.idr(h.avgCost)) · last \(Self.idr(h.last))"
         return HStack {
             Text(h.symbol).font(.body.weight(.semibold)).frame(width: 70, alignment: .leading)
-            Text("\(Self.shares(h.shares)) sh").foregroundStyle(.secondary)
+            Text("\(Self.lots(h.shares)) lot").foregroundStyle(.secondary)
             Spacer()
             VStack(alignment: .trailing, spacing: 1) {
                 Text(Self.idr(h.marketValue))
@@ -219,7 +219,7 @@ struct PaperTradingView: View {
     }
 
     private func tradeRow(_ t: PaperTrade) -> some View {
-        let fill = "\(Self.shares(t.shares)) @ \(Self.idr(t.price))"
+        let fill = "\(Self.lots(t.shares)) lot @ \(Self.idr(t.price))"
         let when = t.date.formatted(date: .abbreviated, time: .shortened)
         return HStack {
             Text(t.side == .buy ? "BUY" : "SELL")
@@ -246,24 +246,26 @@ struct PaperTradingView: View {
 
     private func tint(_ value: Double) -> Color { value > 0 ? .green : (value < 0 ? .red : .secondary) }
 
-    // Compact IDR / share / percent formatters (no Foundation currency dependency).
+    // IDR / lot / percent formatters (no Foundation currency dependency). Amounts and lot counts
+    // render as full numbers with Indonesian "." thousands separators — no K/M/B/T abbreviation.
 
-    static func idr(_ value: Double) -> String { "Rp " + compact(value) }
+    static func idr(_ value: Double) -> String { "Rp " + grouped(value) }
     static func signedIdr(_ value: Double) -> String {
-        (value >= 0 ? "+Rp " : "−Rp ") + compact(abs(value))
+        (value >= 0 ? "+Rp " : "−Rp ") + grouped(abs(value))
     }
-    static func compact(_ value: Double) -> String {
-        let a = abs(value)
-        switch a {
-        case 1_000_000_000...: return String(format: "%.2fB", value / 1_000_000_000)
-        case 1_000_000...:     return String(format: "%.1fM", value / 1_000_000)
-        case 1_000...:         return String(format: "%.0fK", value / 1_000)
-        default:               return String(format: "%.0f", value)
+    /// Whole number with "." every three digits, e.g. 100_000_000 → "100.000.000".
+    static func grouped(_ value: Double) -> String {
+        let n = Int(value.rounded())
+        let digits = String(abs(n))
+        var out = ""
+        for (offset, ch) in digits.reversed().enumerated() {
+            if offset > 0 && offset.isMultiple(of: 3) { out.append(".") }
+            out.append(ch)
         }
+        return (n < 0 ? "−" : "") + String(out.reversed())
     }
-    static func shares(_ value: Double) -> String {
-        String(format: "%.0f", value)
-    }
+    /// IDX lots: 1 lot = 100 shares.
+    static func lots(_ shares: Double) -> String { grouped((shares / 100).rounded()) }
     static func pct(_ value: Double) -> String { String(format: "%.0f%%", value * 100) }
     static func signedPct(_ value: Double) -> String { String(format: "%+.1f%%", value * 100) }
 }
