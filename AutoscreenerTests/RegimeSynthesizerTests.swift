@@ -183,9 +183,15 @@ import Testing
             factor(.trend, .riskOff),         // IHSG below its 200dma
             factor(.breadth, .riskOff)]       // <40% of LQ45 above their 200dma
         let read = RegimeSynthesizer.read(factors: factors, asOf: nil)
-        #expect(read.score > -RegimeSynthesizer.Threshold.stanceBand)  // raw read is neutral
-        #expect(read.stance == .riskOff)                               // …guard forces defense
+        #expect(read.stance == .riskOff)                               // guard forces defense
         #expect(read.tapeFloored == true)
+        // …and the score is pulled into the risk-off band so every score-based consumer
+        // agrees with the stance. Before the fix the raw vote stayed neutral (+1/7 ≈ +0.14),
+        // so the paper-trading allocator sized off it and deployed the NEUTRAL band (~56%)
+        // under a risk-off banner (the live screenshot). It must map to the risk-off band.
+        #expect(read.score <= -RegimeSynthesizer.Threshold.stanceBand)
+        #expect(AllocationConfig.standard.exposure(forScore: read.score)
+                <= AllocationConfig.standard.riskOffMax + 1e-9)
     }
 
     @Test func oneWeakTapeLegDoesNotTripTheGuard() {

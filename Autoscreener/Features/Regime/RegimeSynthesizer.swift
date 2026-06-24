@@ -190,7 +190,7 @@ nonisolated enum RegimeSynthesizer {
             return RegimeRead(stance: .neutral, score: 0, factors: factors, asOf: asOf, valuationCapped: false)
         }
         let weighted = factors.reduce(0) { $0 + $1.signal.vote * $1.kind.weight }
-        let score = Double(weighted) / Double(totalWeight)
+        var score = Double(weighted) / Double(totalWeight)
         var stance = stance(forScore: score)
 
         // Late-cycle guard. Marks: "being too aggressive when prices are high is
@@ -219,6 +219,17 @@ nonisolated enum RegimeSynthesizer {
             stance = .riskOff
             tapeFloored = true
         }
+
+        // A guard that forces a more defensive stance must also pull the SCORE into that
+        // stance's band — every score-based consumer (the paper-trading exposure map,
+        // `AllocationConfig.exposure(forScore:)`) sizes off `score`, not `stance`. Leaving the
+        // raw neutral vote was the "Risk-off · target 56%" bug: the tape-floored read kept a
+        // +0.14 score, so the allocator deployed the NEUTRAL band under a risk-off banner.
+        // Clamp to the band boundary — the least-defensive point of the overridden stance
+        // (top of risk-off, ≈ 30% exposure). (`valuationCapped` has the same latent divergence
+        // in the risk-on→neutral direction; left as a separate decision since it's untriggered.)
+        if tapeFloored { score = Swift.min(score, -Threshold.stanceBand) }
+
         return RegimeRead(stance: stance, score: score, factors: factors, asOf: asOf,
                           valuationCapped: capped, tapeFloored: tapeFloored)
     }
