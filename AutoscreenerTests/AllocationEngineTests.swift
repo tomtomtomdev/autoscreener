@@ -103,6 +103,41 @@ import Testing
         #expect(abs(aaa / bbb - 3.0) < 0.2)          // 0.30 / 0.10 ≈ 3:1
     }
 
+    @Test func regimeBlindMirrorsSuggestedWeightsVerbatim() {
+        // The RiBeTS book sizes each name at the selection engine's own `suggestedWeight` — same level
+        // AND tilt. `fixedExposure` is a ceiling, not a forced 100% deployment, so the per-name
+        // diversification cap must NOT flatten the tilt: AAA's 3× weight survives verbatim.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.30),
+            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.8, suggestedWeight: 0.10),
+            AllocationCandidate(symbol: "CCC", name: "CCC Co", conviction: 0.7, suggestedWeight: 0.10),
+            AllocationCandidate(symbol: "DDD", name: "DDD Co", conviction: 0.6, suggestedWeight: 0.10),
+        ]
+        let prices = Dictionary(uniqueKeysWithValues: candidates.map { ($0.symbol, 1_000.0) })
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOff, score: -0.9), prices: prices,
+                                         config: .regimeBlind)
+        let weight: (String) -> Double = { sym in plan.lines.first { $0.symbol == sym }?.targetWeight ?? 0 }
+        #expect(abs(weight("AAA") - 0.30) < 0.01)        // verbatim, not flattened to the ~0.167 cap
+        #expect(abs(weight("AAA") / weight("BBB") - 3.0) < 0.2)   // 0.30 / 0.10 tilt preserved
+    }
+
+    @Test func regimeBlindHoldsCashWhenSuggestedWeightsUnderDeploy() {
+        // The suggested weights sum to 0.60 — RiBeTS deploys exactly that and parks the remaining 40% in
+        // cash. `fixedExposure` is a ceiling, so it never inflates the weights to fill the book.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.30),
+            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.8, suggestedWeight: 0.10),
+            AllocationCandidate(symbol: "CCC", name: "CCC Co", conviction: 0.7, suggestedWeight: 0.10),
+            AllocationCandidate(symbol: "DDD", name: "DDD Co", conviction: 0.6, suggestedWeight: 0.10),
+        ]
+        let prices = Dictionary(uniqueKeysWithValues: candidates.map { ($0.symbol, 1_000.0) })
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOff, score: -0.9), prices: prices,
+                                         config: .regimeBlind)
+        #expect(abs(plan.cashTarget - plan.equity * 0.40) < plan.equity * 0.02)
+    }
+
     @Test func suggestedWeightZeroFallsBackToConviction() {
         // A candidate with no suggestedWeight is sized on conviction-Kelly instead of being dropped.
         let candidates = [

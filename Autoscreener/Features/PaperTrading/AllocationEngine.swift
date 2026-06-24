@@ -52,7 +52,6 @@ nonisolated enum AllocationEngine {
         }
 
         let equity = state.equity(prices: px)
-        let cashTarget = equity * (1 - exposure)
 
         // Layer 2 — rank priced candidates by conviction, take top-N. A Gate-5 `.exit` name is never a
         // candidate, so it can't consume a slot or be re-bought (the held side is forced out below).
@@ -64,8 +63,11 @@ nonisolated enum AllocationEngine {
         }
         let candidates: [AllocationCandidate] = Array(ranked.prefix(config.topN))
 
-        // Layer 3 — weights as a fraction of *total equity*, summing to `exposure`.
+        // Layer 3 — weights as a fraction of *total equity*, summing to ≤ `exposure`.
         let weights = targetWeights(candidates: candidates, exposure: exposure, config: config)
+        // Cash target reflects what's actually deployed, not just the exposure ceiling — a regime-blind
+        // book that mirrors under-deploying suggested weights legitimately holds the residual in cash.
+        let cashTarget = equity * (1 - min(exposure, weights.reduce(0, +)))
 
         // Build target shares (lot-rounded) for the names we want to hold.
         var targetShares: [String: Double] = [:]
@@ -178,6 +180,20 @@ nonisolated enum AllocationEngine {
         guard !candidates.isEmpty, exposure > 0 else {
             return Array(repeating: 0, count: candidates.count)
         }
+
+        // Regime-blind books (RiBeTS) mirror the selection engine's own per-name weights verbatim — same
+        // level AND tilt. `fixedExposure` (here `exposure`) is a CEILING, not a forced target: deploy the
+        // suggested weights as-is, scaling the vector down only if it would over-deploy past the ceiling
+        // (never inflate, never flatten). The engine already applied its per-name/sector/liquidity caps,
+        // so the allocator's diversification cap is not re-applied. An all-zero vector (no suggested-weight
+        // signal) falls through to the conviction-Kelly path below.
+        if config.fixedExposure != nil, config.sizingBasis == .suggestedWeight {
+            let mirrored = candidates.map { Swift.max($0.suggestedWeight, 0) }
+            let sum = mirrored.reduce(0, +)
+            if sum > exposure { return mirrored.map { $0 / sum * exposure } }
+            if sum > 0 { return mirrored }
+        }
+
         let cap = config.effectivePerNameCap
 
         // Raw sizing signal per name. `.suggestedWeight` honours the engine's own target verbatim; a
