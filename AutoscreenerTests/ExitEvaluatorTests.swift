@@ -100,6 +100,10 @@ private let neutral = RegimePolicy(regime: .neutral, minMarginOfSafety: 0.30, ma
 // Deep risk-off: the cycle has collapsed target exposure to zero.
 private let zeroExposure = RegimePolicy(regime: .riskOff, minMarginOfSafety: 0.99, maxTotalExposure: 0.0,
                                         maxPositionPct: 0, maxSectorPct: 0, maxNames: 0, weightTilt: [:])
+// `.balanced` NORMAL risk-off: target exposure is throttled (0.35), not zero. Gate-5 must still flag the
+// intent to de-risk here — the AllocationEngine sizes the actual reduction toward the band.
+private let normalRiskOff = RegimePolicy(regime: .riskOff, minMarginOfSafety: 0.45, maxTotalExposure: 0.35,
+                                         maxPositionPct: 0.07, maxSectorPct: 0.20, maxNames: 6, weightTilt: [:])
 
 private let anyPosition = HeldPosition(ticker: "HELD", shares: 1000, avgCost: 1000)
 
@@ -210,6 +214,14 @@ private let anyPosition = HeldPosition(ticker: "HELD", shares: 1000, avgCost: 10
     @Test func deepRiskOffTrimsTheName() {
         // Intact name, but the cycle collapsed target exposure to zero ⇒ trim (defer sizing to AllocationEngine).
         let d = ExitEvaluator().evaluate(anyPosition, data: makeSecurity(price: 1000), policy: zeroExposure)
+        #expect(d.action == .trim)
+    }
+
+    @Test func normalRiskOffTrimsAnIntactName() {
+        // Intact name in NORMAL risk-off (exposure throttled to 0.35, not zero). The regime calls for
+        // de-risking even though exposure hasn't collapsed to zero ⇒ trim, not hold. The AllocationEngine
+        // performs the actual sizing toward the band; Gate-5 surfaces the actionable intent in the inbox.
+        let d = ExitEvaluator().evaluate(anyPosition, data: makeSecurity(price: 1000), policy: normalRiskOff)
         #expect(d.action == .trim)
     }
 }

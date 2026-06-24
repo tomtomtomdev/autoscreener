@@ -88,7 +88,12 @@ nonisolated enum AllocationEngine {
 
         var lines: [AllocationLine] = []
         for symbol in names {
-            guard let price = px[symbol], price > 0 else { continue } // can't value → skip
+            // A held name with no live/reference price (it dropped out of the candidate set) falls back to
+            // its avg cost so it can still be sized down/exited instead of being stranded — mirroring
+            // `PaperPortfolioState.equity`. A candidate-only name keeps the strict price guard (no position
+            // ⇒ no fallback), so `nameWithoutAPriceIsSkipped` is unchanged.
+            let price = (px[symbol] ?? 0) > 0 ? px[symbol]! : (state.positions[symbol]?.avgCost ?? 0)
+            guard price > 0 else { continue } // can't value → skip
             let current = state.positions[symbol]?.shares ?? 0
             // Gate-5 overlay on the regime-weighted target (`.exit` names were already excluded from
             // `targetShares` above, so their target is 0 — the held side is forced out here).
@@ -134,13 +139,16 @@ nonisolated enum AllocationEngine {
                               equity: equity, cashTarget: cashTarget, lines: lines)
     }
 
-    /// The responsive **defense** pass: liquidate only the names Gate-5 flagged `.exit` (broken thesis,
-    /// failed hard gate, governance breach, or price run past intrinsic value). Unlike `plan`, a held
-    /// name with no `.exit` verdict is left ALONE — this pass never rebalances, trims toward regime
-    /// targets, or drops a name for falling out of the buy set. That asymmetry is deliberate: exits are
-    /// run on every warm sweep (cut losers fast — Zweig; defense before offense — Marks), while buys and
-    /// regime trims wait for the boundary-gated `plan`. A forced exit overrides the anti-churn band.
-    /// `names` supplies display labels for the held symbols (falls back to the ticker).
+    /// The responsive **defense** pass, run on every warm sweep (cut risk fast — Zweig; defense before
+    /// offense — Marks). It handles two verdict-driven, sell-only cases without waiting for a boundary:
+    ///   • `.exit` (any stance) — liquidate the name in full (broken thesis, failed gate, governance, or
+    ///     price past IV). A forced exit overrides the anti-churn band.
+    ///   • `.trim` **in risk-off only** — reduce the name toward its risk-off target (the tighter of the
+    ///     exposure band and the per-name cap), so a lone/over-concentrated holding de-risks now rather
+    ///     than sitting at full size until the next session boundary. Off risk-off a `.trim` is left to
+    ///     the boundary-gated `plan`, so the two passes never double-count the de-risking.
+    /// A held name with no actionable verdict is left ALONE — this pass never rebalances the whole book or
+    /// drops a name for falling out of the buy set. `names` supplies display labels (falls back to ticker).
     static func exitPlan(state: PaperPortfolioState,
                          prices: [String: Double],
                          exitDecisions: [String: ExitAction],
@@ -152,17 +160,46 @@ nonisolated enum AllocationEngine {
         let exposure = config.exposure(forScore: score)
         let equity = state.equity(prices: prices)
         let cashTarget = equity * (1 - exposure)
+        // A held name often has no fresh screener price (it isn't a buy candidate in risk-off); fall back
+        // to its avg cost so it can still be sized down — mirroring `PaperPortfolioState.equity`.
+        func price(_ symbol: String) -> Double? {
+            if let p = prices[symbol], p > 0 { return p }
+            if let c = state.positions[symbol]?.avgCost, c > 0 { return c }
+            return nil
+        }
 
         var lines: [AllocationLine] = []
-        for (symbol, position) in state.positions where exitDecisions[symbol] == .exit {
-            guard let price = prices[symbol], price > 0 else { continue } // can't value → skip
+        for (symbol, position) in state.positions {
+            let action = exitDecisions[symbol]
+            let isExit = action == .exit
+            let isRiskOffTrim = action == .trim && stance == .riskOff
+            guard isExit || isRiskOffTrim else { continue }              // only actionable defense verdicts
+            guard let price = price(symbol), price > 0 else { continue } // can't value → skip
             let current = position.shares
             guard current > 0 else { continue }
+
+            if isExit {
+                lines.append(AllocationLine(
+                    symbol: symbol, name: names[symbol] ?? symbol, side: .sell,
+                    currentShares: current, targetShares: 0, deltaShares: -current,
+                    price: price, estValue: current * price, targetWeight: 0,
+                    rationale: "Gate-5: \(symbol) flagged for exit — full sale."))
+                continue
+            }
+
+            // Risk-off trim: target the tighter of the exposure band and the per-name cap, lot-rounded.
+            let targetWeight = Swift.min(exposure, config.effectivePerNameCap)
+            let lot = Double(config.execution.lotSize)
+            let targetByWeight = ((targetWeight * equity) / (price * lot)).rounded(.down) * lot
+            let target = Swift.min(current, Swift.max(0, targetByWeight))
+            let delta = target - current
+            if abs(delta) * price < config.rebalanceBandPct * equity { continue } // anti-churn
+            if abs(delta) < lot { continue }                                       // sub-lot residue
             lines.append(AllocationLine(
                 symbol: symbol, name: names[symbol] ?? symbol, side: .sell,
-                currentShares: current, targetShares: 0, deltaShares: -current,
-                price: price, estValue: current * price, targetWeight: 0,
-                rationale: "Gate-5: \(symbol) flagged for exit — full sale."))
+                currentShares: current, targetShares: target, deltaShares: delta,
+                price: price, estValue: abs(delta) * price, targetWeight: targetWeight,
+                rationale: "\(stance.rawValue): trim \(symbol) toward its \(String(format: "%.0f%%", targetWeight * 100)) risk-off target."))
         }
         lines.sort { $0.estValue > $1.estValue }                          // larger liquidations first
         return AllocationPlan(stance: stance, score: score, targetExposure: exposure,

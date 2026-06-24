@@ -208,11 +208,14 @@ struct ExitEvaluator: Sendable {
             return decide(.exit, "price ran past intrinsic value (MoS \(pctString(mos)))")
         }
 
-        // TIER 3 — REGIME (Marks). Deep risk-off has collapsed target exposure to zero ⇒ trim. Normal
-        // risk-off SIZING is the paper-trading AllocationEngine's job (exposure bands); this is only
-        // the floor case, so Gate-5 never double-counts that de-risking.
-        if config.exit.regimeTrimOnRiskOff, policy.maxTotalExposure <= 0 {
-            audit.append("regime \(policy.regime.rawValue): target exposure 0 → trim")
+        // TIER 3 — REGIME (Marks). Any risk-off stance calls for de-risking ⇒ flag the name to trim. This
+        // is the INTENT to de-risk, surfaced as an actionable verdict (a `.hold` is silent in the inbox);
+        // the actual SIZING toward the risk-off exposure band is the paper-trading AllocationEngine's job,
+        // so Gate-5 still never computes the reduction itself — it just stops a held name from sitting at
+        // full size, ignored, while the cycle has turned defensive. (Deep risk-off — target exposure 0 —
+        // is the strongest case of this same signal.)
+        if config.exit.regimeTrimOnRiskOff, policy.regime == .riskOff {
+            audit.append("regime \(policy.regime.rawValue): de-risk → trim")
             return decide(.trim, "risk-off de-risking")
         }
 

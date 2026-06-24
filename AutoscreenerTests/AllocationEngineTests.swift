@@ -355,6 +355,55 @@ import Testing
         #expect(exit?.deltaShares == -200)
     }
 
+    // MARK: - exitPlan: risk-off de-risks a flagged held name continuously (defense pass)
+
+    @Test func riskOffTrimReducesALoneConcentratedHeldName() {
+        // The live RAPaTS bug: a single over-concentrated holding flagged `.trim` in risk-off. The
+        // continuous defense pass must reduce it toward the risk-off band, not wait for a boundary.
+        var state = PaperPortfolioState.seed
+        state.positions["BMRI"] = PaperPosition(shares: 4_000, avgCost: 4_162)   // ~16.6M, the only position
+        let plan = AllocationEngine.exitPlan(state: state, prices: ["BMRI": 4_200],
+                                             exitDecisions: ["BMRI": .trim],
+                                             regime: read(.riskOff, score: -0.9))
+        let line = plan.lines.first { $0.symbol == "BMRI" }
+        #expect(line?.side == .sell)
+        #expect((line?.targetShares ?? .infinity) < 4_000)        // trimmed toward the band
+        #expect(line?.targetShares ?? -1 >= 0)                    // never oversells
+    }
+
+    @Test func riskOffTrimSizesAHeldNameThatHasNoLivePrice() {
+        // A held-only name (not a buy candidate in risk-off) often has no fresh screener price. It must
+        // still be sizeable via the avgCost fallback, or the trim would be silently skipped.
+        var state = PaperPortfolioState.seed
+        state.positions["BMRI"] = PaperPosition(shares: 4_000, avgCost: 4_162)
+        let plan = AllocationEngine.exitPlan(state: state, prices: [:],   // no live price for BMRI
+                                             exitDecisions: ["BMRI": .trim],
+                                             regime: read(.riskOff, score: -0.9))
+        #expect(plan.lines.contains { $0.symbol == "BMRI" && $0.side == .sell })
+    }
+
+    @Test func neutralLeavesTrimFlaggedNamesToTheBoundaryPlan() {
+        // Off risk-off, the defense pass stays exit-only: a `.trim` is the boundary `plan`'s job, so the
+        // continuous pass must not act on it (no double-counting of the de-risking).
+        var state = PaperPortfolioState.seed
+        state.positions["BMRI"] = PaperPosition(shares: 4_000, avgCost: 4_162)
+        let plan = AllocationEngine.exitPlan(state: state, prices: ["BMRI": 4_200],
+                                             exitDecisions: ["BMRI": .trim],
+                                             regime: read(.neutral, score: 0))
+        #expect(!plan.lines.contains { $0.symbol == "BMRI" })
+    }
+
+    @Test func riskOffExitPassStillIgnoresHeldNamesWithNoVerdict() {
+        // The risk-off trim is verdict-driven: an unflagged holding is left alone even in risk-off, so the
+        // defense pass never silently rebalances the whole book.
+        var state = PaperPortfolioState.seed
+        state.positions["BMRI"] = PaperPosition(shares: 4_000, avgCost: 4_162)
+        let plan = AllocationEngine.exitPlan(state: state, prices: ["BMRI": 4_200],
+                                             exitDecisions: [:],
+                                             regime: read(.riskOff, score: -0.9))
+        #expect(!plan.lines.contains { $0.symbol == "BMRI" })
+    }
+
     // MARK: - Helpers
 
     /// `n` ranked candidates SYM00…, strictly descending conviction (index 0 highest), each priced at

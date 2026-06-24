@@ -113,6 +113,20 @@ import Testing
         ExitDecision(ticker: ticker, action: .exit, reason: "test break", audit: [])
     }
 
+    private func trim(_ ticker: String) -> ExitDecision {
+        ExitDecision(ticker: ticker, action: .trim, reason: "risk-off de-risking", audit: [])
+    }
+
+    /// Books a buy so the store holds `shares` of `ticker` (the legitimate seeding path — `state` is
+    /// not externally mutable). Uses a 100% neutral plan so all of it fills.
+    private func seedHolding(_ store: PaperTradingStore, _ ticker: String, shares: Double, price: Double) {
+        let line = AllocationLine(symbol: ticker, name: ticker, side: .buy, currentShares: 0,
+                                  targetShares: shares, deltaShares: shares, price: price,
+                                  estValue: shares * price, targetWeight: 0, rationale: "seed")
+        store.apply(plan: AllocationPlan(stance: .neutral, score: 0, targetExposure: 1,
+                                         equity: 100_000_000, cashTarget: 0, lines: [line]))
+    }
+
     @Test func aDueRunBooksTradesFromTheRecommendations() async {
         let (s, m, p) = makeStores()
         let recs = RecommendationsStore(), exits = ExitDecisionsStore()
@@ -369,5 +383,27 @@ import Testing
         await bot.runExits(now: day(17, 11))
 
         #expect(p.state.positions["BBCA"]?.shares == sharesAfterBuy)  // untouched by the defense pass
+    }
+
+    /// The RAPaTS de-risking fix: a lone over-concentrated holding flagged `.trim` in risk-off is reduced
+    /// on the very next warm sweep, without waiting for a session boundary. The store drives the
+    /// paper-trading screen; `exitDecisionsStore` (updated here) drives the Recommendations inbox — so the
+    /// behaviour shows in both surfaces.
+    @Test func riskOffTrimReducesALoneConcentratedHoldingWithoutWaitingForABoundary() async {
+        let (s, m) = makeRiskOffStores()
+        let p = PaperTradingStore(fileURL: nil, loadFromDisk: false)
+        seedHolding(p, "BBCA", shares: 4_000, price: 9_500)       // lone, over-concentrated holding (~38%)
+        p.recordAutoRebalance(at: day(17, 10))                    // boundary already done this session
+        let staged = StagedReview([trim("BBCA")])                 // risk-off de-risk verdict
+        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
+                                picks: { _ in SelectionOutcome(recommendations: [], skipped: []) },
+                                review: staged.source)
+        #expect(!bot.isDue(now: day(17, 11)))                     // mid-session: rebalance NOT due
+        await bot.runExits(now: day(17, 11))                      // defense pass only
+
+        let shares = p.state.positions["BBCA"]?.shares
+        #expect(shares != nil)                                    // not fully exited — it's a trim
+        #expect((shares ?? .infinity) < 4_000)                    // …but reduced toward the risk-off band
+        #expect(p.state.trades.contains { $0.symbol == "BBCA" && $0.side == .sell })
     }
 }

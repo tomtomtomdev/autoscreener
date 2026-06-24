@@ -225,9 +225,10 @@ struct SelectionConfig: Sendable, Codable {
         var honorGovernanceVeto: Bool = true
         /// Re-run the buy-side hard gates on CURRENT data; a name that now fails one has deteriorated.
         var honorHardGates: Bool = true
-        /// Flag held names to TRIM when the regime de-risks to zero target exposure. Position SIZING in
-        /// risk-off is owned by the paper-trading `AllocationEngine`'s exposure bands — this is only the
-        /// deep-risk-off acknowledgement, not a duplicate of that sizing.
+        /// Flag held names to TRIM whenever the regime stance is risk-off — the actionable signal that an
+        /// intact name should be de-risked while the cycle is defensive. Position SIZING toward the
+        /// risk-off exposure band is owned by the paper-trading `AllocationEngine`, so Gate-5 still never
+        /// duplicates that sizing; it only surfaces the intent (a `.hold` would be silent in the inbox).
         var regimeTrimOnRiskOff: Bool = true
         // --- Phase 2: entry-thesis–aware exits (see `EntryThesis` / `ExitEvaluator` Tier 1c). All three
         // are inert unless the held position carries an `EntryThesis`, so Phase-1 behaviour is unchanged.
