@@ -267,12 +267,10 @@ final class DataSweepCoordinator {
     /// (`needsClosingCapture`), the loop forces one full sweep to lock in the official closing figures —
     /// the regular session ends at 15:50, so the in-hours sweeps never saw the closing-auction print, and
     /// without this the selection cache would either hold pre-close numbers or age out entirely over a
-    /// weekend/holiday (stranding the Recommendations screen). The forced sweep ALSO runs the autopilot
-    /// (`runAutopilot: open || capturingClose`): the closing capture carries the fresh official close, so
-    /// the once-per-trading-day rebalance books off it for a hands-free book even when the user only opens
-    /// the app after the bell (the autopilot's own `isDue` guard keeps it to one rebalance per day). It's
-    /// one-shot: `lastFullSweepAt` then sits past the close, so later closed ticks fall through to
-    /// around-the-clock legs (which still never trade — `runSweep(includeIDX: false)`).
+    /// weekend/holiday (stranding the Recommendations screen). The closing capture does NOT run the
+    /// autopilot (`runAutopilot: open`): the paper book auto-executes during market hours only, so a
+    /// post-close capture warms the data without trading on it. It's one-shot: `lastFullSweepAt` then sits
+    /// past the close, so later closed ticks fall through to around-the-clock legs.
     func runLoop() async {
         while !Task.isCancelled {
             // Boundary-only mode: the user turned continuous auto-fetch off and we're inside the
@@ -290,7 +288,9 @@ final class DataSweepCoordinator {
 
             let open = clock.isOpen()
             let capturingClose = !open && needsClosingCapture()
-            await runSweep(includeIDX: open || capturingClose, runAutopilot: open || capturingClose)
+            // Still capture the official close for display/data, but the autopilot runs only while the
+            // market is open (`runAutopilot: open`) — no post-close trading.
+            await runSweep(includeIDX: open || capturingClose, runAutopilot: open)
             let gap = open ? UInt64.random(in: openGapRange) : UInt64.random(in: closedGapRange)
             do { try await sleeper(gap) } catch { return }
         }
@@ -329,10 +329,10 @@ final class DataSweepCoordinator {
     /// (screeners, composite/index/sector quotes, regime read) run or are left frozen;
     /// the around-the-clock legs (global/commodity/FX quotes) always run. Re-entrancy
     /// guarded so a manual refresh can't overlap a loop sweep.
-    /// `runAutopilot` gates the once-a-day autopilot rebalance. The loop passes `open || capturingClose`,
-    /// so it runs during live sessions AND on the post-close closing-capture sweep (fresh official close);
-    /// it's `false` only on around-the-clock closed ticks (`includeIDX: false`). Every other caller keeps
-    /// the default `true` so a manual refresh always offers the autopilot a (still `isDue`-guarded) run.
+    /// `runAutopilot` gates the autopilot rebalance. The loop passes `open`, so the book auto-executes
+    /// during market hours only — never on the post-close closing-capture sweep (that warms the official
+    /// close without trading) nor on around-the-clock closed ticks. Every other caller keeps the default
+    /// `true` so a manual refresh always offers the autopilot a (still `isDue`-guarded) run.
     func runSweep(includeIDX: Bool? = nil, runAutopilot: Bool = true) async {
         guard !isSweeping else { return }
         isSweeping = true

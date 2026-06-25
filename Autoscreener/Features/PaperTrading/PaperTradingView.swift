@@ -95,18 +95,7 @@ struct PaperTradingView: View {
     }
 
     @ViewBuilder private var regimeBadge: some View {
-        if vm.isRegimeBlind {
-            // The RiBeTS book ignores the regime — say so rather than advertise a stance it won't act on.
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("Regime-blind")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
-                Text("fully deployed · target \(Self.pct(vm.targetExposure))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityIdentifier("PaperTradingRegimeBadge")
-        } else if let regime = vm.regime {
+        if let regime = vm.regime {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(regime.stance.rawValue)
                     .font(.headline)

@@ -138,10 +138,9 @@ extension AppDependencies {
             config: config)
     }
 
-    /// The "Positions to Review" screen source: hold/trim/exit verdicts for a paper book under `config`.
-    /// `holdings` selects which book to review — defaulted to the regime-aware RAPaTS singleton
-    /// (`paperTradingStore`), so the Recommendations screen and the RAPaTS autopilot are unchanged; the
-    /// RiBeTS autopilot passes its own store so each book's exits key off its OWN positions. Under
+    /// The "Positions to Review" screen source: hold/trim/exit verdicts for the paper book under `config`.
+    /// `holdings` selects which book to review — defaulted to the paper-trading singleton
+    /// (`paperTradingStore`), so the Recommendations screen and the autopilot review the same book. Under
     /// `-UITestFixtures` returns canned decisions so the screen renders offline; an empty book
     /// short-circuits (no fetch, no review). Mirrors `todaysPicks(config:)`.
     func reviewPositions(holdings: PaperTradingStore? = nil,

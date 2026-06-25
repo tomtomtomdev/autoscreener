@@ -119,9 +119,9 @@ nonisolated struct PaperPortfolioState: Codable, Sendable {
 // MARK: - Allocation candidate (the buy universe)
 
 /// One ranked buy candidate the allocator sizes — a flattened view of a Tier-A `Recommendation`
-/// (gate-filtered pick) carrying just what Layer 3 needs: the engine's `suggestedWeight` (the primary
-/// sizing signal) and `conviction` (the ranking key and the sizing fallback). The allocator depends on
-/// this DTO, not on `Recommendation` or `WatchlistRow`, so it stays a pure, layer-free value type.
+/// (gate-filtered pick) carrying just what Layer 3 needs: the engine's `suggestedWeight` (the sizing
+/// signal) and `conviction` (the ranking key). The allocator depends on this DTO, not on
+/// `Recommendation` or `WatchlistRow`, so it stays a pure, layer-free value type.
 nonisolated struct AllocationCandidate: Sendable, Hashable {
     let symbol: String
     let name: String
@@ -134,17 +134,11 @@ nonisolated struct AllocationCandidate: Sendable, Hashable {
     var referencePrice: Double? = nil
 }
 
-/// Which per-name signal the allocator sizes by (Layer 3). See `AllocationConfig.sizingBasis`.
-nonisolated enum SizingBasis: String, Codable, Sendable {
-    case suggestedWeight
-    case conviction
-}
-
 // MARK: - Allocation config
 
-/// The knobs of the regime-gated, conviction-weighted, risk-capped allocator. The
-/// defaults encode the framework: Zweig-style exposure bands (Layer 1), a fractional
-/// Kelly damp + per-name cap + position-count floor (Layer 3), and IDX execution costs.
+/// The knobs of the regime-gated, suggested-weight, risk-capped allocator. The defaults encode the
+/// framework: Zweig-style exposure bands as the risk cap (Layer 1), `suggestedWeight × riskCap` sizing
+/// under a per-name cap + position-count floor (Layer 3), and IDX execution costs.
 nonisolated struct AllocationConfig: Codable, Sendable {
     // Layer 1 — equity-exposure band endpoints by stance (fraction of total equity
     // deployed; the rest is cash). Risk-on never reaches 100% — a survive-first floor.
@@ -159,26 +153,10 @@ nonisolated struct AllocationConfig: Codable, Sendable {
     var topN: Int = 12
     var perNameCap: Double = 0.20       // max fraction of total equity in one name
     var minPositions: Int = 6           // diversification target when fully deployed
-    var kellyFraction: Double = 0.5     // damp conviction: weightᵏ, k < 1 (√ by default)
     var rebalanceBandPct: Double = 0.02 // skip a delta smaller than this × equity (anti-churn)
-    /// Which signal each candidate is sized by (Layer 3). `.suggestedWeight` honours the selection
-    /// engine's own per-name target weight verbatim (the engine already did the sizing); `.conviction`
-    /// uses the fractional-Kelly damp of raw conviction. A candidate missing the chosen signal falls
-    /// back to conviction-Kelly, and an all-zero signal vector degrades to an even split.
-    var sizingBasis: SizingBasis = .suggestedWeight
     var execution: ExecutionModel = .standardIDX
 
-    /// Layer-1 override for the **regime-blind** book (RiBeTS). When non-nil, the allocator ignores the
-    /// regime score entirely and deploys exactly this fraction of equity regardless of stance — `1.0`
-    /// fully invests toward the sum of the candidates' `suggestedWeight`s (the binding constraint becomes
-    /// the weights + per-name cap, not the regime). Nil ⇒ the regime-aware exposure band (RAPaTS).
-    var fixedExposure: Double? = nil
-
     static let standard = AllocationConfig()
-
-    /// The RiBeTS preset: same ranking/sizing/caps as `.standard`, but regime-blind — always fully
-    /// deployed toward the recommendation weights instead of scaling exposure to the regime.
-    static let regimeBlind = AllocationConfig(fixedExposure: 1.0)
 
     /// The stance-band endpoints used by the score → exposure map.
     var scoreRiskOff: Double { -0.33 }

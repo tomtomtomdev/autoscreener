@@ -67,8 +67,8 @@ final class GlobalFetchStatusUITests: XCTestCase {
 
         // Screen 2 — Paper Trading (the Watchlist is now a section of screen 1, not its own tab). The
         // same single indicator persists across the shared NavigationStack on a different screen.
-        let paperTrading = sidebarItem(app, "RAPaTS (Regime-Aware)")
-        XCTAssertTrue(paperTrading.waitForExistence(timeout: 10), "RAPaTS sidebar item should appear")
+        let paperTrading = sidebarItem(app, "Paper Trading")
+        XCTAssertTrue(paperTrading.waitForExistence(timeout: 10), "Paper Trading sidebar item should appear")
         paperTrading.click()
 
         XCTAssertTrue(element(app, "PaperTradingView").waitForExistence(timeout: 10),

@@ -43,22 +43,51 @@ import Testing
         #expect(plan.targetExposure >= 0.50 && plan.targetExposure <= 0.60)
     }
 
-    @Test func regimeBlindConfigIgnoresTheScoreAndDeploysFully() {
-        // The RiBeTS book (`.regimeBlind`) overrides Layer 1: a deeply risk-off regime that parks the
-        // regime-aware RAPaTS book in cash still deploys the blind book toward its suggested weights.
-        let (rows, prices) = scoredUniverse(8)
-        let riskOff = read(.riskOff, score: -0.9)
-        let blind = AllocationEngine.plan(state: seed, candidates: rows, regime: riskOff,
-                                          prices: prices, config: .regimeBlind)
-        let aware = AllocationEngine.plan(state: seed, candidates: rows, regime: riskOff,
-                                          prices: prices, config: .standard)
+    // MARK: - Layer 3: weight × cap (the risk cap is a ceiling)
 
-        #expect(blind.targetExposure == 1.0)            // fixed full deployment, regardless of risk-off
-        #expect(aware.targetExposure <= 0.30)           // regime-aware parks in cash
-        #expect(blind.cashTarget < aware.cashTarget)    // blind keeps far less cash
+    @Test func suggestedWeightTimesRiskCapSizesTheName() {
+        // The contract: a 10%-weight pick at a 30% risk cap on a 100M book → 3M deployed, regardless of
+        // the rest of the book. Score −0.33 maps to the risk-off ceiling of exactly 30%.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.8, suggestedWeight: 0.10),
+            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.7, suggestedWeight: 0.10),
+        ]
+        let prices = ["AAA": 1_000.0, "BBB": 1_000.0]
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOff, score: -0.33), prices: prices)
+        #expect(abs(plan.targetExposure - 0.30) < 1e-9)              // −0.33 → 30% risk-off ceiling
+        let aaa = plan.lines.first { $0.symbol == "AAA" }
+        #expect(abs((aaa?.targetWeight ?? 0) - 0.03) < 1e-6)        // 0.10 × 0.30 = 0.03
+        #expect(abs((aaa?.estValue ?? 0) - 3_000_000) < 1)          // exactly 3M on a 100M book (lot-clean)
+    }
 
-        let buys: (AllocationPlan) -> Double = { $0.lines.filter { $0.side == .buy }.reduce(0) { $0 + $1.estValue } }
-        #expect(buys(blind) > buys(aware))              // and actually buys more
+    @Test func riskCapIsACeilingSoTotalDeploymentCanSitBelowIt() {
+        // Suggested weights sum to 0.40; at a 30% cap the book deploys only 0.40 × 0.30 = 12% and parks
+        // the rest in cash — the cap is a ceiling the weights ride below, not a target to fill.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.20),
+            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.8, suggestedWeight: 0.20),
+        ]
+        let prices = ["AAA": 1_000.0, "BBB": 1_000.0]
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOff, score: -0.33), prices: prices)
+        let deployed = plan.lines.filter { $0.side == .buy }.reduce(0) { $0 + $1.estValue }
+        #expect(abs(deployed - 12_000_000) < 1)         // 0.40 × 0.30 × 100M = 12M, not the full 30M cap
+        #expect(plan.cashTarget > plan.equity * 0.85)   // ~88% stays in cash
+    }
+
+    @Test func aLargeSuggestedWeightIsClampedAtThePerNameCap() {
+        // A single name with a 60% suggested weight at full risk-on (95%) would want 0.57 of equity; the
+        // per-name diversification cap holds it to ~16.7% instead.
+        let candidates = [
+            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.60),
+        ]
+        let prices = ["AAA": 1_000.0]
+        let cfg = AllocationConfig.standard
+        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
+                                         regime: read(.riskOn, score: 1.0), prices: prices, config: cfg)
+        let aaa = plan.lines.first { $0.symbol == "AAA" }
+        #expect(abs((aaa?.targetWeight ?? 0) - cfg.effectivePerNameCap) < 1e-6)   // clamped at the per-name cap
     }
 
     // MARK: - Layer 3: sizing, caps, diversification
@@ -103,80 +132,6 @@ import Testing
         #expect(abs(aaa / bbb - 3.0) < 0.2)          // 0.30 / 0.10 ≈ 3:1
     }
 
-    @Test func regimeBlindMirrorsSuggestedWeightsVerbatim() {
-        // The RiBeTS book sizes each name at the selection engine's own `suggestedWeight` — same level
-        // AND tilt. `fixedExposure` is a ceiling, not a forced 100% deployment, so the per-name
-        // diversification cap must NOT flatten the tilt: AAA's 3× weight survives verbatim.
-        let candidates = [
-            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.30),
-            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.8, suggestedWeight: 0.10),
-            AllocationCandidate(symbol: "CCC", name: "CCC Co", conviction: 0.7, suggestedWeight: 0.10),
-            AllocationCandidate(symbol: "DDD", name: "DDD Co", conviction: 0.6, suggestedWeight: 0.10),
-        ]
-        let prices = Dictionary(uniqueKeysWithValues: candidates.map { ($0.symbol, 1_000.0) })
-        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
-                                         regime: read(.riskOff, score: -0.9), prices: prices,
-                                         config: .regimeBlind)
-        let weight: (String) -> Double = { sym in plan.lines.first { $0.symbol == sym }?.targetWeight ?? 0 }
-        #expect(abs(weight("AAA") - 0.30) < 0.01)        // verbatim, not flattened to the ~0.167 cap
-        #expect(abs(weight("AAA") / weight("BBB") - 3.0) < 0.2)   // 0.30 / 0.10 tilt preserved
-    }
-
-    @Test func regimeBlindHoldsCashWhenSuggestedWeightsUnderDeploy() {
-        // The suggested weights sum to 0.60 — RiBeTS deploys exactly that and parks the remaining 40% in
-        // cash. `fixedExposure` is a ceiling, so it never inflates the weights to fill the book.
-        let candidates = [
-            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 0.9, suggestedWeight: 0.30),
-            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 0.8, suggestedWeight: 0.10),
-            AllocationCandidate(symbol: "CCC", name: "CCC Co", conviction: 0.7, suggestedWeight: 0.10),
-            AllocationCandidate(symbol: "DDD", name: "DDD Co", conviction: 0.6, suggestedWeight: 0.10),
-        ]
-        let prices = Dictionary(uniqueKeysWithValues: candidates.map { ($0.symbol, 1_000.0) })
-        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
-                                         regime: read(.riskOff, score: -0.9), prices: prices,
-                                         config: .regimeBlind)
-        #expect(abs(plan.cashTarget - plan.equity * 0.40) < plan.equity * 0.02)
-    }
-
-    @Test func suggestedWeightZeroFallsBackToConviction() {
-        // A candidate with no suggestedWeight is sized on conviction-Kelly instead of being dropped.
-        let candidates = [
-            AllocationCandidate(symbol: "AAA", name: "AAA Co", conviction: 4, suggestedWeight: 0),
-            AllocationCandidate(symbol: "BBB", name: "BBB Co", conviction: 1, suggestedWeight: 0),
-        ]
-        let prices = ["AAA": 1_000.0, "BBB": 1_000.0]
-        var cfg = AllocationConfig.standard
-        cfg.perNameCap = 1.0; cfg.minPositions = 1
-        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
-                                         regime: read(.riskOn, score: 1.0), prices: prices, config: cfg)
-        let aaa = plan.lines.first { $0.symbol == "AAA" }?.targetWeight ?? 0
-        let bbb = plan.lines.first { $0.symbol == "BBB" }?.targetWeight ?? 0
-        #expect(aaa > bbb)                           // √4 / √1 = 2× before normalisation
-        #expect(abs(aaa / bbb - 2.0) < 0.2)
-    }
-
-    @Test func fractionalKellyDampsTheTopNameVsRawProportional() {
-        // Conviction basis: the top name has 4× the conviction of the rest. √-damping must pull its
-        // weight well below the 57% a raw-proportional split would hand it.
-        let candidates = [
-            AllocationCandidate(symbol: "AAA", name: "AAA", conviction: 4, suggestedWeight: 0),
-            AllocationCandidate(symbol: "BBB", name: "BBB", conviction: 1, suggestedWeight: 0),
-            AllocationCandidate(symbol: "CCC", name: "CCC", conviction: 1, suggestedWeight: 0),
-            AllocationCandidate(symbol: "DDD", name: "DDD", conviction: 1, suggestedWeight: 0),
-        ]
-        let prices = Dictionary(uniqueKeysWithValues: candidates.map { ($0.symbol, 1_000.0) })
-        var cfg = AllocationConfig.standard
-        cfg.sizingBasis = .conviction
-        cfg.perNameCap = 1.0; cfg.minPositions = 1   // disable caps to isolate the damping
-        let plan = AllocationEngine.plan(state: seed, candidates: candidates,
-                                         regime: read(.riskOn, score: 1.0), prices: prices, config: cfg)
-        let top = plan.lines.first { $0.symbol == "AAA" }
-        #expect(top != nil)
-        let rawShare = 4.0 / (4.0 + 1 + 1 + 1)      // 0.571 of the deployed sleeve
-        // √-damped: √4 / (√4 + 3·√1) = 2/5 = 0.40 of the sleeve → well under raw.
-        #expect((top!.targetWeight / plan.targetExposure) < rawShare - 0.1)
-    }
-
     @Test func lotRoundingProducesWholeLots() {
         let (rows, prices) = scoredUniverse(8, price: 333)   // awkward price forces rounding
         let plan = AllocationEngine.plan(state: seed, candidates: rows,
@@ -209,7 +164,7 @@ import Testing
     @Test func aCandidateIsPricedFromItsReferencePriceWhenTheMapHasNone() {
         // The screener snapshot carried no last price for AAA this sweep, but the recommendation knows the
         // price the selection engine valued it at. The allocator must still size and buy it from that
-        // reference price — otherwise a fully-recommended name is stranded unbought (the RiBeTS bug).
+        // reference price — otherwise a fully-recommended name is stranded unbought.
         let candidates = [
             AllocationCandidate(symbol: "AAA", name: "AAA", conviction: 1, suggestedWeight: 0.1,
                                 referencePrice: 1_000),
@@ -242,9 +197,10 @@ import Testing
         var cfg = AllocationConfig.standard
         cfg.execution = ExecutionModel(lotSize: 100, buyFeePct: 0, sellFeePct: 0,
                                        slippagePct: 0, fillAt: .nextOpen, araArbLimit: 0.25)
-        // Neutral, single name → weight is the per-name cap. Seed the holding at exactly that capped
-        // target so the recomputed delta is ~0 and falls inside the rebalance band.
-        let target = cfg.effectivePerNameCap * state.equity(prices: prices) / 1_000
+        // Neutral, single name → target weight is suggestedWeight × the neutral exposure (the risk cap).
+        // Seed the holding at exactly that target so the recomputed delta is ~0 and falls in the band.
+        let targetWeight = 0.1 * cfg.exposure(forScore: 0)
+        let target = targetWeight * state.equity(prices: prices) / 1_000
         let lots = (target / 100).rounded(.down) * 100
         state.apply(side: .buy, symbol: "AAA", shares: lots, price: 1_000, feePct: 0,
                     date: Date(timeIntervalSince1970: 0))
@@ -358,7 +314,7 @@ import Testing
     // MARK: - exitPlan: risk-off de-risks a flagged held name continuously (defense pass)
 
     @Test func riskOffTrimReducesALoneConcentratedHeldName() {
-        // The live RAPaTS bug: a single over-concentrated holding flagged `.trim` in risk-off. The
+        // The live de-risking bug: a single over-concentrated holding flagged `.trim` in risk-off. The
         // continuous defense pass must reduce it toward the risk-off band, not wait for a boundary.
         var state = PaperPortfolioState.seed
         state.positions["BMRI"] = PaperPosition(shares: 4_000, avgCost: 4_162)   // ~16.6M, the only position
@@ -407,16 +363,17 @@ import Testing
     // MARK: - Helpers
 
     /// `n` ranked candidates SYM00…, strictly descending conviction (index 0 highest), each priced at
-    /// `price`. `suggestedWeight` tracks conviction so the default sizing basis has a positive signal.
+    /// `price`. `suggestedWeight` is a small, strictly-descending FRACTION (like the engine's own output,
+    /// `(n−i)·0.01`), so the `weight × cap` sizing yields distinct per-name weights.
     private func scoredUniverse(_ n: Int, price: Double = 1_000)
         -> (candidates: [AllocationCandidate], prices: [String: Double]) {
         var candidates: [AllocationCandidate] = []
         var prices: [String: Double] = [:]
         for i in 0..<n {
             let sym = String(format: "SYM%02d", i)
-            let conviction = Double(n - i)           // strictly descending, positive
+            let rank = Double(n - i)                  // strictly descending, positive
             candidates.append(AllocationCandidate(symbol: sym, name: "\(sym) Co",
-                                                  conviction: conviction, suggestedWeight: conviction))
+                                                  conviction: rank, suggestedWeight: rank * 0.01))
             prices[sym] = price
         }
         return (candidates, prices)

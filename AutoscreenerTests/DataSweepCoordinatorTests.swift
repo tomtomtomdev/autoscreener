@@ -661,7 +661,7 @@ private actor LoopGapGate {
 
     // MARK: - Closing capture: one full sweep after the close to lock in the official figures.
 
-    @Test func closedLoopClosingCaptureWarmsAndRunsTheAutopilot() async {
+    @Test func closedLoopClosingCaptureWarmsButDoesNotRunTheAutopilot() async {
         let warm = PostSweepCounter()
         let auto = PostSweepCounter()
         let gate = LoopGapGate()
@@ -674,8 +674,8 @@ private actor LoopGapGate {
 
         await coord.runLoop()  // one closed tick: capture the close, then the gap sleep ends the loop
 
-        #expect(warm.calls == 1)               // selection cache warmed with the settled close
-        #expect(auto.calls == 1)               // and the autopilot rebalances off the fresh official close
+        #expect(warm.calls == 1)               // selection cache still warmed with the settled close (display/data)
+        #expect(auto.calls == 0)               // but the autopilot trades during market hours only — not post-close
         #expect(coord.lastFullSweepAt != nil)  // capture recorded so it won't repeat
     }
 

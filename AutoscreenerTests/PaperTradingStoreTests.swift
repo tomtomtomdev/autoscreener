@@ -28,13 +28,6 @@ import Testing
         #expect(store.state.positions.isEmpty)
     }
 
-    @Test func rapatsAndRibetsPersistToDifferentFiles() {
-        // The two books must never share a file, or one would overwrite the other's portfolio.
-        #expect(PaperTradingStore.defaultFileURL != PaperTradingStore.ribetsFileURL)
-        #expect(PaperTradingStore.defaultFileURL?.lastPathComponent == "paper-trading-cache.json")
-        #expect(PaperTradingStore.ribetsFileURL?.lastPathComponent == "paper-trading-ribets-cache.json")
-    }
-
     @Test func applyBuysSpendCashAndOpenPositions() {
         let store = PaperTradingStore(fileURL: nil, loadFromDisk: false)
         let v0 = store.version

@@ -4,15 +4,15 @@ import Foundation
 /// (the same shape as `RegimeSynthesizer`). It turns *(portfolio, candidates, regime,
 /// prices)* into a proposed `AllocationPlan` via three layers:
 ///
-///   1. **How much to deploy** — map `RegimeRead.score` to a target equity exposure
-///      (Zweig: don't fight the Fed/tape). The rest stays in cash.
+///   1. **How much to deploy** — map `RegimeRead.score` to a target equity exposure, the
+///      *risk cap* (e.g. ≤30% in risk-off; Zweig: don't fight the Fed/tape). The rest stays in cash.
 ///   2. **What to hold** — rank veto-clean, priced buy candidates (the gate-filtered
 ///      Tier-A `Recommendation`s) by conviction, take the top-N.
-///   3. **How much of each** — size by the engine's own `suggestedWeight` (or, per
-///      `config.sizingBasis`, fractional-Kelly-damped conviction), then water-fill under
-///      a per-name cap (which also enforces a position-count floor), lot-round, and
-///      suppress sub-band deltas to curb churn (Against the Gods: size for survival,
-///      diversify, don't chase the extreme).
+///   3. **How much of each** — size each name as `suggestedWeight × riskCap` (the engine's own
+///      per-name weight scaled by the deployment cap), clamped at a per-name cap, then lot-round and
+///      suppress sub-band deltas to curb churn. The risk cap is a **ceiling**, not a target: the
+///      weights ride below it and the residual stays in cash (Against the Gods: size for survival,
+///      diversify, don't chase the extreme). So a 10%-weight pick at a 30% cap on a 100M book is 3M.
 nonisolated enum AllocationEngine {
 
     /// Builds the proposed rebalance. `prices` is keyed by symbol; a candidate with no positive price
@@ -38,14 +38,14 @@ nonisolated enum AllocationEngine {
                      config: AllocationConfig = .standard) -> AllocationPlan {
         let score = regime?.score ?? 0
         let stance = regime?.stance ?? .neutral
-        // Regime-blind books (RiBeTS) pin exposure to `fixedExposure`, ignoring the score; regime-aware
-        // books (RAPaTS) map the score onto the stance exposure band.
-        let exposure = config.fixedExposure ?? config.exposure(forScore: score)
+        // Layer 1 — the risk cap: map the regime score onto the stance exposure band (the ceiling on how
+        // much of the book is deployed). A nil regime degrades to the neutral band.
+        let exposure = config.exposure(forScore: score)
 
         // Effective price per name: prefer the live screener price; fall back to the candidate's own
         // reference price (the close the selection engine valued it at). A recommended name is therefore
-        // sizeable even when the screener snapshot hasn't surfaced a last price for it this sweep — the
-        // fix for the regime-blind book stranding in cash. Held-only names keep the external price only.
+        // sizeable even when the screener snapshot hasn't surfaced a last price for it this sweep.
+        // Held-only names keep the external price only.
         var px = prices
         for c in universe where (px[c.symbol] ?? 0) <= 0 {
             if let rp = c.referencePrice, rp > 0 { px[c.symbol] = rp }
@@ -63,10 +63,11 @@ nonisolated enum AllocationEngine {
         }
         let candidates: [AllocationCandidate] = Array(ranked.prefix(config.topN))
 
-        // Layer 3 — weights as a fraction of *total equity*, summing to ≤ `exposure`.
+        // Layer 3 — weights as a fraction of *total equity*: each name's suggested weight scaled by the
+        // risk cap, summing to ≤ `exposure` (the cap is a ceiling, not a target).
         let weights = targetWeights(candidates: candidates, exposure: exposure, config: config)
-        // Cash target reflects what's actually deployed, not just the exposure ceiling — a regime-blind
-        // book that mirrors under-deploying suggested weights legitimately holds the residual in cash.
+        // Cash target reflects what's actually deployed, not the exposure ceiling — a book whose suggested
+        // weights under-deploy the cap legitimately holds the residual in cash.
         let cashTarget = equity * (1 - min(exposure, weights.reduce(0, +)))
 
         // Build target shares (lot-rounded) for the names we want to hold.
@@ -208,67 +209,24 @@ nonisolated enum AllocationEngine {
 
     // MARK: - Layer 3 weighting
 
-    /// Per-name weights as a fraction of total equity, summing to `exposure`: take each candidate's raw
-    /// sizing signal (`config.sizingBasis`), normalise to `exposure`, then water-fill under
-    /// `effectivePerNameCap` so no name dominates and at least `minPositions` names share the book once
-    /// exposure is high enough.
+    /// Per-name weights as a fraction of total equity: each candidate's own `suggestedWeight` scaled by the
+    /// regime `exposure` (the risk cap), then clamped at `effectivePerNameCap` so no single name dominates.
+    /// The risk cap is a **ceiling**, not a target — the weights ride below it and the residual stays in
+    /// cash; there is no renormalisation to "fill" the band. So a 10%-weight pick at a 30% cap → 3% of
+    /// equity. The pathological input where suggested weights sum past the cap (Σ > 1) is scaled back down
+    /// so the book never over-deploys; ranked picks always carry a positive `suggestedWeight`, so a name
+    /// without one (≤ 0) simply contributes nothing.
     private static func targetWeights(candidates: [AllocationCandidate], exposure: Double,
                                       config: AllocationConfig) -> [Double] {
         guard !candidates.isEmpty, exposure > 0 else {
             return Array(repeating: 0, count: candidates.count)
         }
-
-        // Regime-blind books (RiBeTS) mirror the selection engine's own per-name weights verbatim — same
-        // level AND tilt. `fixedExposure` (here `exposure`) is a CEILING, not a forced target: deploy the
-        // suggested weights as-is, scaling the vector down only if it would over-deploy past the ceiling
-        // (never inflate, never flatten). The engine already applied its per-name/sector/liquidity caps,
-        // so the allocator's diversification cap is not re-applied. An all-zero vector (no suggested-weight
-        // signal) falls through to the conviction-Kelly path below.
-        if config.fixedExposure != nil, config.sizingBasis == .suggestedWeight {
-            let mirrored = candidates.map { Swift.max($0.suggestedWeight, 0) }
-            let sum = mirrored.reduce(0, +)
-            if sum > exposure { return mirrored.map { $0 / sum * exposure } }
-            if sum > 0 { return mirrored }
-        }
-
         let cap = config.effectivePerNameCap
-
-        // Raw sizing signal per name. `.suggestedWeight` honours the engine's own target verbatim; a
-        // name missing it (≤ 0) falls back to conviction-Kelly so it's never silently dropped. The
-        // proportion is what matters — the vector is renormalised to `exposure` below.
-        let raw = candidates.map { rawSignal(for: $0, config: config) }
-        let rawSum = raw.reduce(0, +)
-        guard rawSum > 0 else {
-            // No conviction signal — spread the exposure evenly (still cap-bounded).
-            let even = min(cap, exposure / Double(candidates.count))
-            return Array(repeating: even, count: candidates.count)
-        }
-
-        // Start proportional to `exposure`, then water-fill the cap.
-        var weights = raw.map { $0 / rawSum * exposure }
-        for _ in 0..<candidates.count {           // converges in ≤ N passes
-            var overflow = 0.0
-            var freeSum = 0.0
-            for i in weights.indices where weights[i] > cap {
-                overflow += weights[i] - cap
-                weights[i] = cap
-            }
-            guard overflow > 1e-12 else { break }
-            for i in weights.indices where weights[i] < cap { freeSum += weights[i] }
-            guard freeSum > 1e-12 else { break }   // everyone capped → remainder stays cash
-            for i in weights.indices where weights[i] < cap {
-                weights[i] += overflow * (weights[i] / freeSum)
-            }
-        }
+        var weights = candidates.map { Swift.min(Swift.max($0.suggestedWeight, 0) * exposure, cap) }
+        // Never deploy past the risk cap — guards the pathological Σ suggestedWeight > 1 input.
+        let sum = weights.reduce(0, +)
+        if sum > exposure { weights = weights.map { $0 / sum * exposure } }
         return weights
-    }
-
-    /// The raw (pre-normalisation) sizing signal for one candidate under `config.sizingBasis`.
-    /// `.suggestedWeight` honours the engine's own per-name weight; when that's ≤ 0 (or the basis is
-    /// `.conviction`) it falls back to the fractional-Kelly damp of conviction, `convictionᵏ`, k < 1.
-    private static func rawSignal(for c: AllocationCandidate, config: AllocationConfig) -> Double {
-        if config.sizingBasis == .suggestedWeight, c.suggestedWeight > 0 { return c.suggestedWeight }
-        return pow(max(c.conviction, 0.0001), config.kellyFraction)
     }
 
     private static func rationale(side: TradeSide, symbol: String, weight: Double, stance: RegimeStance,
@@ -277,7 +235,7 @@ nonisolated enum AllocationEngine {
         switch side {
         case .buy:
             let cap = capped ? ", at per-name cap" : ""
-            return "\(stance.rawValue): deploy \(pct(exposure)) of equity; \(symbol) sized to \(pct(weight)) on conviction\(cap)."
+            return "\(stance.rawValue): deploy up to \(pct(exposure)) of equity; \(symbol) sized to \(pct(weight)) on its suggested weight\(cap)."
         case .sell:
             if forcedExit { return "Gate-5: \(symbol) flagged for exit — full sale." }
             return weight <= 0

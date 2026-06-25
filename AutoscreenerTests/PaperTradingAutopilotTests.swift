@@ -74,19 +74,18 @@ import Testing
                                review: @escaping (SelectionConfig) async throws -> ReviewOutcome
                                   = { _ in ReviewOutcome(decisions: [], skipped: []) },
                                config: AllocationConfig = .standard,
-                               autoExecute: Bool = true,
-                               continuousRebalance: Bool = false) -> PaperTradingAutopilot {
+                               autoExecute: Bool = true) -> PaperTradingAutopilot {
         PaperTradingAutopilot(
             store: paper, screenerStore: screener, marketStore: market,
             recommendationsStore: recs, exitDecisionsStore: exits,
             picksSource: picks,
             reviewSource: review,
             config: config,
-            autoExecute: autoExecute, continuousRebalance: continuousRebalance,
+            autoExecute: autoExecute,
             calendar: gregorian, clock: clock)
     }
 
-    /// Stores like `makeStores()` but with a deeply RISK-OFF regime, to contrast the two books.
+    /// Stores like `makeStores()` but with a deeply RISK-OFF regime (the de-risking tests need it).
     private func makeRiskOffStores() -> (ScreenerStore, MarketDataStore) {
         let screener = SweepTestKit.store()
         let snap = ScreenerSnapshot(config: ScreenerConfig(),
@@ -241,18 +240,15 @@ import Testing
         #expect(p.state.lastAutoRebalanceAt == day(17, 10))
     }
 
-    /// Regression for the RiBeTS "stuck at 100% cash" variant of the above: the boundary's first warm
-    /// sweep produced a recommendation whose price hadn't landed in the screener cache yet, so the plan
-    /// had a candidate but no PRICED trade. That's a no-trade plan for a *data* reason, not a "nothing to
-    /// do" one — so it must NOT consume the boundary (the empty-candidate guard didn't catch it because the
-    /// candidate set was non-empty). The book must stay due so the next sweep (price warmed) books. Run
-    /// regime-blind, the book most affected: it always wants to deploy, so a stranded boundary is pure lost
-    /// exposure rather than a defensible cash stance.
+    /// Regression for the "stuck in cash" variant of the above: the boundary's first warm sweep produced a
+    /// recommendation whose price hadn't landed in the screener cache yet, so the plan had a candidate but
+    /// no PRICED trade. That's a no-trade plan for a *data* reason, not a "nothing to do" one — so it must
+    /// NOT consume the boundary (the empty-candidate guard didn't catch it because the candidate set was
+    /// non-empty). The book must stay due so the next sweep (price warmed) books.
     @Test func unpricedCandidateDoesNotConsumeTheBoundaryThenBooksWhenPriced() async {
         let (s, m, p) = makeStores()                              // screener prices BBCA/TLKM, NOT GOTO
         let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
-                                picks: { _ in SelectionOutcome(recommendations: [self.rec("GOTO")], skipped: []) },
-                                config: .regimeBlind)
+                                picks: { _ in SelectionOutcome(recommendations: [self.rec("GOTO")], skipped: []) })
         await bot.runIfDue(now: day(17, 9))                       // 09:00 open — GOTO recommended but unpriced
 
         #expect(p.state.positions.isEmpty)                        // nothing booked (no price → no trade)
@@ -269,39 +265,20 @@ import Testing
         #expect(p.state.lastAutoRebalanceAt == day(17, 10))
     }
 
-    /// The fix for the live RiBeTS "no book file" gap: the recommended name (GOTO) NEVER appears in any
-    /// screener snapshot, so the screener-derived price map can't value it — but the recommendation
-    /// carries the price the selection engine valued it at. The allocator sizes it from that reference
-    /// price, so the boundary's first warm sweep books it (rather than deferring forever on "no priced
-    /// candidates"). Without the fallback this strands the regime-blind book in 100% cash indefinitely.
+    /// The fix for the "no book file" gap: the recommended name (GOTO) NEVER appears in any screener
+    /// snapshot, so the screener-derived price map can't value it — but the recommendation carries the
+    /// price the selection engine valued it at. The allocator sizes it from that reference price, so the
+    /// boundary's first warm sweep books it (rather than deferring forever on "no priced candidates").
+    /// Without the fallback this strands the book in cash indefinitely.
     @Test func booksARecommendedNameFromItsOwnPriceWhenNoScreenerCarriesIt() async {
         let (s, m, p) = makeStores()                              // screener prices BBCA/TLKM, never GOTO
         let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
                                 picks: { _ in SelectionOutcome(recommendations: [self.rec("GOTO", price: 80)],
-                                                               skipped: []) },
-                                config: .regimeBlind)
+                                                               skipped: []) })
         await bot.runIfDue(now: day(17, 9))                       // 09:00 open
 
         #expect(p.state.positions["GOTO"] != nil)                 // booked from the recommendation's own price
         #expect(p.state.lastAutoRebalanceAt == day(17, 9))        // a real decision → boundary consumed
-    }
-
-    // MARK: - Continuous rebalance (RiBeTS): offense runs every warm sweep, not boundary-gated
-
-    /// With `continuousRebalance` on, the rebalance pass is NOT boundary-gated — it stays due and
-    /// re-fetches picks on every warm sweep within the same session, so the book re-evaluates buys
-    /// continuously rather than only at 09:00 / 13:30 / 16:00.
-    @Test func continuousRebalanceReRunsWithinTheSameBoundary() async {
-        let (s, m, p) = makeStores()
-        let counter = PicksCounter([rec("BBCA")])
-        let bot = makeAutopilot(s, m, p, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
-                                picks: counter.source, continuousRebalance: true)
-        await bot.runIfDue(now: day(17, 10))                      // 10:00 — open boundary
-        #expect(bot.isDue(now: day(17, 11)))                      // still due 11:00, same boundary
-        await bot.runIfDue(now: day(17, 11))                      // re-evaluates anyway
-
-        #expect(counter.calls == 2)                               // picks re-fetched continuously
-        #expect(p.state.lastAutoRebalanceAt == day(17, 11))       // timestamp advances each pass
     }
 
     // MARK: - Asymmetric defense: exits run every warm sweep, not just at boundaries
@@ -325,47 +302,6 @@ import Testing
         #expect(p.state.trades.contains { $0.symbol == "BBCA" && $0.side == .sell })
     }
 
-    // MARK: - Regime-blind (RiBeTS) book
-
-    /// The defining RiBeTS behaviour: under a deeply risk-off regime, the regime-AWARE book parks in cash
-    /// while the regime-BLIND book (`.regimeBlind`) still deploys off the same recommendations. Each books
-    /// into its OWN store, so the two run independently.
-    @Test func regimeBlindBookDeploysInRiskOffWhileTheAwareBookStaysInCash() async {
-        let (s, m) = makeRiskOffStores()
-        let rapats = PaperTradingStore(fileURL: nil, loadFromDisk: false)
-        let ribets = PaperTradingStore(fileURL: nil, loadFromDisk: false)
-        let picks: (SelectionConfig) async throws -> SelectionOutcome = { _ in
-            SelectionOutcome(recommendations: [self.rec("BBCA"), self.rec("TLKM")], skipped: [])
-        }
-        let aware = makeAutopilot(s, m, rapats, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
-                                  picks: picks, config: .standard)
-        let blind = makeAutopilot(s, m, ribets, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
-                                  picks: picks, config: .regimeBlind)
-
-        await aware.runIfDue(now: day(17))
-        await blind.runIfDue(now: day(17))
-
-        #expect(!ribets.state.positions.isEmpty)              // blind deploys despite risk-off
-        #expect(ribets.state.cash < rapats.state.cash)        // …and holds far less cash than the aware book
-        // Independence: each autopilot only touched its own book.
-        #expect(rapats.state.cash <= PaperPortfolioState.seed.cash)
-    }
-
-    /// The two books are fully independent: running the RiBeTS autopilot never mutates the RAPaTS book.
-    @Test func runningTheRiBeTSBookLeavesTheRAPaTSBookUntouched() async {
-        let (s, m) = makeRiskOffStores()
-        let rapats = PaperTradingStore(fileURL: nil, loadFromDisk: false)
-        let ribets = PaperTradingStore(fileURL: nil, loadFromDisk: false)
-        let blind = makeAutopilot(s, m, ribets, recs: RecommendationsStore(), exits: ExitDecisionsStore(),
-                                  picks: { _ in SelectionOutcome(recommendations: [self.rec("BBCA")], skipped: []) },
-                                  config: .regimeBlind)
-
-        await blind.run(now: day(17))
-
-        #expect(!ribets.state.positions.isEmpty)              // RiBeTS booked
-        #expect(rapats.state.positions.isEmpty)               // RAPaTS untouched (separate store)
-        #expect(rapats.state.lastAutoRebalanceAt == nil)
-    }
 
     /// The exit pass is sell-only and verdict-driven: an unflagged holding is left completely alone
     /// (no rebalancing/trimming leaks into the every-sweep cadence).
@@ -385,7 +321,7 @@ import Testing
         #expect(p.state.positions["BBCA"]?.shares == sharesAfterBuy)  // untouched by the defense pass
     }
 
-    /// The RAPaTS de-risking fix: a lone over-concentrated holding flagged `.trim` in risk-off is reduced
+    /// The de-risking fix: a lone over-concentrated holding flagged `.trim` in risk-off is reduced
     /// on the very next warm sweep, without waiting for a session boundary. The store drives the
     /// paper-trading screen; `exitDecisionsStore` (updated here) drives the Recommendations inbox — so the
     /// behaviour shows in both surfaces.
